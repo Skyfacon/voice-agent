@@ -1,0 +1,9 @@
+# Local debug and replay artifacts
+diagnostics/
+traces/
+replays/local/
+audio/raw/
+
+# Environment and secrets
+.env
+.env.*
