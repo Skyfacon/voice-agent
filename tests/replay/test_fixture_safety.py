@@ -161,6 +161,14 @@ def test_empty_session_fixture_is_synthetic_minimal_and_github_safe() -> None:
     assert fixture["events"] == []
 
 
+@pytest.mark.parametrize("fixture_path", sorted(MVP0_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))
+def test_all_mvp0_replay_fixtures_are_github_safe(fixture_path) -> None:
+    assert fixture_path.parent == MVP0_REPLAY_FIXTURE_DIR
+    assert "replays/local" not in fixture_path.as_posix()
+
+    assert_fixture_is_github_safe(load_json_fixture(fixture_path))
+
+
 @pytest.mark.parametrize(
     "payload",
     [
