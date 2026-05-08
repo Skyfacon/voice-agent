@@ -7,3 +7,7 @@ audio/raw/
 # Environment and secrets
 .env
 .env.*
+
+# Python bytecode cache
+__pycache__/
+*.py[cod]
