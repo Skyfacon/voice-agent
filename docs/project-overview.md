@@ -22,7 +22,8 @@
 - 前端 demo。
 - 真实模型 adapter。
 - demo tool backend。
-- `.git` 元数据。当前目录看起来不是一个已初始化的 Git working tree，或者只是拷贝出来的文档包。
+
+备注：当前 checkout 已经是一个 Git working tree；早期“没有 `.git` metadata”的描述已过时。
 
 因此，本项目现在最准确的阶段描述是：
 
@@ -302,7 +303,7 @@ Backlog 预期实现形态像一个 Python package：
 
 ## 11. 当前值得注意的问题
 
-1. **没有 Git repository metadata。** 当前目录执行 `git status` 会失败。这不影响读文档，但会影响后续分支、diff、commit、PR 工作流。
+1. **当前已有 Git repository metadata。** 可以使用 `git status`、diff、commit 等工作流；早期规划包中“没有 git metadata”的判断已不适用。
 
 2. **当前还没有实现代码。** 所有 `src/voice_agent`、`tests`、fixture 和 runner 都还停留在 backlog 设计中。
 
@@ -314,7 +315,7 @@ Backlog 预期实现形态像一个 Python package：
 
 如果要开始实现，建议严格从 `docs/implementation/mvp0-backlog.md` 的 Slice 0 开始：
 
-1. 初始化 Git 仓库或确认真实仓库根目录。
+1. 确认当前分支和未提交文档改动范围。
 2. 创建最小 Python package skeleton 和测试目录。
 3. 先写 fixture safety tests，确保 `.gitignore` 和 synthetic fixture 规则生效。
 4. 再实现 event envelope、registry validator、append-only journal。

@@ -1,71 +1,71 @@
-# Model Adapter Capability Contract
+# Model Adapter Capability Contract / 模型 Adapter 能力契约
 
-Source of truth: frozen ADR Baseline v0.4. This document carries P1-B-004. It is a spec detail, derived from ADR baseline.
+Source of truth: frozen ADR Baseline v0.4。本文件承载 P1-B-004，是从 ADR baseline 派生的实现规格。
 
-All model services must be accessed through adapters. Business modules must not call provider endpoints directly. [ADR-011, AGENTS.md]
+所有模型服务必须通过 adapter 访问。业务模块不得直接调用 provider endpoint。
 
 ## 1. Capability Matrix Schema
 
-Every adapter declares a capability matrix at startup and healthcheck time. [ADR-011]
+每个 adapter 在 startup 和 healthcheck 时都必须声明 capability matrix。
 
-Required adapter identity fields:
+### Adapter identity fields
 
-| Field | Required | Meaning |
+| 字段 | 必填 | 含义 |
 | --- | --- | --- |
-| `adapter_id` | yes | Stable adapter id. |
-| `adapter_type` | yes | ASR, Thinker, Composer, Slow LLM, TTS/Talker, Duplex model, Embedding/RAG, Mock. |
-| `provider` | yes | Provider or `mock`. |
-| `model_name` | yes | Model/deployment name or mock profile. |
-| `deployment_mode` | yes | `mock`, `local`, `remote_api`, `self_hosted`, or equivalent. |
-| `endpoint` | yes | Endpoint ref, not credential-bearing URL. |
-| `health_status` | yes | Current health. |
-| `capability_version` | yes | Capability schema version. |
-| `latency_class` | yes | Declared latency class. |
-| `error_model` | yes | Error taxonomy/ref. |
-| `timeout_policy` | yes | Timeout policy/ref. |
-| `retry_policy` | yes | Retry policy/ref. |
-| `output_mode` | yes | `real`, `mock`, `fallback`, or `degraded`. |
+| `adapter_id` | yes | 稳定 adapter id。 |
+| `adapter_type` | yes | ASR, Thinker, Composer, Slow LLM, TTS/Talker, Duplex model, Embedding/RAG, Mock。 |
+| `provider` | yes | provider 或 `mock`。 |
+| `model_name` | yes | 模型/部署名或 mock profile。 |
+| `deployment_mode` | yes | `mock`, `local`, `remote_api`, `self_hosted` 或等价值。 |
+| `endpoint` | yes | endpoint ref，不得是带 credential 的 URL。 |
+| `health_status` | yes | 当前健康状态。 |
+| `capability_version` | yes | capability schema version。 |
+| `latency_class` | yes | 延迟类别。 |
+| `error_model` | yes | error taxonomy/ref。 |
+| `timeout_policy` | yes | timeout policy/ref。 |
+| `retry_policy` | yes | retry policy/ref。 |
+| `output_mode` | yes | `real`, `mock`, `fallback`, `degraded`。 |
 
-Required capability fields:
+### Required capability fields
 
 | Capability | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `supports_streaming_input` | boolean | yes | Adapter can consume streaming input. |
-| `supports_streaming_output` | boolean | yes | Adapter can produce streaming output. |
-| `supports_audio_input` | boolean | yes | Adapter accepts audio input. |
-| `supports_audio_output` | boolean | yes | Adapter emits audio output. |
-| `supports_audio_timestamps` | boolean | yes | Adapter can provide timing offsets. |
-| `supports_structured_json` | boolean | yes | Adapter can produce validated structured JSON. |
-| `supports_tool_calling` | boolean | yes | Adapter can produce tool-call-like structured intent, if allowed. |
-| `supports_cancellation` | boolean | yes | Adapter supports request/tool cancellation. |
-| `supports_emotion` | boolean | yes | Adapter can infer emotion. |
-| `supports_audio_caption` | boolean | yes | Adapter can produce audio captions. |
-| `supports_tts` | boolean | yes | Adapter can synthesize speech. |
-| `supports_tts_truncate` | boolean | yes | Talker/TTS can stop playback for truncate flow. |
-| `supports_tts_pause_resume` | boolean | yes | Pause/resume support; not required in MVP. |
-| `supports_semantic_close` | boolean | yes | Adapter/Duplex model can infer semantic close. |
-| `supports_assistant_directedness` | boolean | yes | Adapter/Duplex model can infer assistant-directedness. |
-| `latency_class` | enum/ref | yes | Development latency category or measured bucket. |
-| `max_audio_seconds` | integer/null | yes | Maximum input audio duration. |
-| `max_context_tokens` | integer/null | yes | Maximum context tokens. |
-| `max_output_tokens` | integer/null | yes | Maximum output tokens. |
-| `expected_first_token_latency_ms` | integer/null | yes | Expected first-token latency. |
-| `expected_first_audio_latency_ms` | integer/null | yes | Expected first-audio latency. |
+| `supports_streaming_input` | boolean | yes | 是否消费 streaming input。 |
+| `supports_streaming_output` | boolean | yes | 是否产生 streaming output。 |
+| `supports_audio_input` | boolean | yes | 是否接受 audio input。 |
+| `supports_audio_output` | boolean | yes | 是否输出 audio。 |
+| `supports_audio_timestamps` | boolean | yes | 是否提供 timing offsets。 |
+| `supports_structured_json` | boolean | yes | 是否输出可验证 structured JSON。 |
+| `supports_tool_calling` | boolean | yes | 是否输出 tool-call-like structured intent；执行权仍属于 Tool Executor。 |
+| `supports_cancellation` | boolean | yes | 是否支持 request/tool cancellation。 |
+| `supports_emotion` | boolean | yes | 是否识别或控制 emotion。 |
+| `supports_audio_caption` | boolean | yes | 是否产生 audio captions。 |
+| `supports_tts` | boolean | yes | 是否合成 speech。 |
+| `supports_tts_truncate` | boolean | yes | TTS/Talker 是否支持 truncate flow。 |
+| `supports_tts_pause_resume` | boolean | yes | pause/resume；MVP 非必需。 |
+| `supports_semantic_close` | boolean | yes | 是否能推断 semantic close。 |
+| `supports_assistant_directedness` | boolean | yes | 是否能推断 assistant-directedness。 |
+| `latency_class` | enum/ref | yes | development latency bucket 或 measured bucket。 |
+| `max_audio_seconds` | integer/null | yes | 最大音频输入长度。 |
+| `max_context_tokens` | integer/null | yes | 最大上下文长度。 |
+| `max_output_tokens` | integer/null | yes | 最大输出长度。 |
+| `expected_first_token_latency_ms` | integer/null | yes | 预期 first-token latency。 |
+| `expected_first_audio_latency_ms` | integer/null | yes | 预期 first-audio latency。 |
 
 Mock-specific fields:
 
-- `mocked=true` for capabilities simulated by mock behavior.
-- `mock_profile_ref` for deterministic fixture behavior.
-- `target_architecture_validation=false` when the mock lacks required real interface evidence, such as playback reference for barge-in. [ADR-003, ADR-011]
+- 被 mock 行为模拟的能力必须标 `mocked=true`。
+- 使用 `mock_profile_ref` 指向 deterministic fixture behavior。
+- 当 mock 缺少目标架构真实接口证据时，例如 barge-in 没有 playback reference，必须 `target_architecture_validation=false`。
 
 ## 2. Startup Capability Snapshot
 
-At session startup, Session Runtime / Adapter Registry MUST record:
+Session startup 必须记录：
 
 - `SESSION_STARTED`
 - `ADAPTER_CAPABILITY_SNAPSHOT_RECORDED`
 
-`ADAPTER_CAPABILITY_SNAPSHOT_RECORDED` includes:
+`ADAPTER_CAPABILITY_SNAPSHOT_RECORDED` 至少包含：
 
 - `capability_snapshot_ref`
 - `adapter_ids`
@@ -73,11 +73,11 @@ At session startup, Session Runtime / Adapter Registry MUST record:
 - `deployment_modes`
 - `output_modes`
 
-Spec detail, derived from ADR baseline: the snapshot ref must resolve to matrices for all configured adapters in the session. Replay uses the snapshot to distinguish real/mock/fallback/degraded state without probing adapters.
+Replay 使用 snapshot 区分 real / mock / fallback / degraded，不得在 replay 中重新 probe adapters。
 
 ## 3. Adapter Health Events
 
-Canonical health and error events from ADR-002 / ADR-011:
+Canonical health/error/degradation events:
 
 - `ADAPTER_HEALTHCHECK_FAILED`
 - `ADAPTER_REQUEST_RETRYING`
@@ -85,11 +85,9 @@ Canonical health and error events from ADR-002 / ADR-011:
 - `ADAPTER_OUTPUT_VALIDATION_FAILED`
 - `ADAPTER_OUTPUT_DEGRADED`
 
-Frame/output events must carry `output_mode=real|mock|fallback|degraded` or reference a capability snapshot that contains that mode. [ADR-011]
+Frame/output events 必须携带 `output_mode=real|mock|fallback|degraded`，或引用包含该 mode 的 capability snapshot。
 
 ## 4. Adapter Error Events
-
-Error events must include enough structured fields for replay and debugging:
 
 | Event | Required fields |
 | --- | --- |
@@ -99,55 +97,53 @@ Error events must include enough structured fields for replay and debugging:
 | `ADAPTER_OUTPUT_VALIDATION_FAILED` | `adapter_id`, `adapter_type`, `adapter_request_id`, `schema_name`, `failure_reasons`, `output_mode` |
 | `ADAPTER_OUTPUT_DEGRADED` | `adapter_id`, `adapter_type`, optional `adapter_request_id`, `degraded_reason`, optional `missing_capability`, optional `fallback_adapter_id`, `output_mode` |
 
-Secret-bearing request bodies, headers, tokens, cookies, credentials, and authorization headers must never be logged in adapter events. [ADR-010, ADR-011]
+任何 request body、headers、tokens、cookies、credentials、authorization headers 都不得写入 adapter events。
 
 ## 5. Timeout / Retry / Cancellation Policy
 
-Spec detail, derived from ADR baseline:
-
-- Each adapter declares `timeout_policy` and `retry_policy` in its matrix. [ADR-011]
-- Retryable timeout/failure emits `ADAPTER_REQUEST_RETRYING`.
-- Final failure emits `ADAPTER_REQUEST_FAILED`.
-- Provider output schema failure emits `ADAPTER_OUTPUT_VALIDATION_FAILED`; downstream modules must not consume invalid output silently. [ADR-011]
-- If adapter supports cancellation and SlowTask plan advances or cancellation is accepted, cancellation flow may emit `TOOL_EXECUTION_CANCEL_REQUESTED` / `TOOL_EXECUTION_CANCELLED` for tool adapters, or adapter-specific request failure/degradation events for model requests. [ADR-004, ADR-016]
-- If adapter does not support cancellation, do not fake cancellation success; wait for result and apply stale policy if the plan advanced. [ADR-004, ADR-016]
+- 每个 adapter 声明 `timeout_policy` 和 `retry_policy`。
+- retryable timeout/failure 记录 `ADAPTER_REQUEST_RETRYING`。
+- final failure 记录 `ADAPTER_REQUEST_FAILED`。
+- provider output schema validation failure 记录 `ADAPTER_OUTPUT_VALIDATION_FAILED`，下游不得静默消费 invalid output。
+- adapter 支持 cancellation 时，plan advance 或 task cancel 可触发 cancel path。
+- adapter 不支持 cancellation 时，不得伪造 cancel success；等待结果返回后按 stale policy 处理。
 
 ## 6. Degradation Decision Table
 
-| Missing / failed capability | Affected module | Required behavior | Required event |
+| 缺失 / 失败能力 | 影响模块 | Required behavior | Required event |
 | --- | --- | --- | --- |
-| No streaming ASR input/output | ASR Adapter, Interaction chain | Use final transcript/text projection only; label output mode. | `ADAPTER_OUTPUT_DEGRADED` if scenario expected streaming |
-| No audio timestamps | ASR/Thinker/Duplex | Omit exact model timing; preserve event timing and mark timestamp source unavailable. | `ADAPTER_OUTPUT_DEGRADED` when timing was required |
-| No emotion | Thinker | Set emotion unavailable; do not default to neutral unless predicted. | `ADAPTER_OUTPUT_DEGRADED` when emotion expected |
-| No audio caption | Thinker | Set audio caption unavailable; keep ASR/other evidence. | `ADAPTER_OUTPUT_DEGRADED` when caption expected |
-| No semantic_close | Duplex/Thinker | Use Duplex mock/rule-based or Interaction conservative policy; label mock/degraded. | `ADAPTER_OUTPUT_DEGRADED` or mock frame event |
-| No assistant-directedness | Duplex/Thinker | Use assumed/unknown policy per Interaction Controller; do not silently accept as directed unless text policy applies. | `ADAPTER_OUTPUT_DEGRADED` when expected |
-| No structured JSON for Slow LLM | Slow LLM Adapter, SlowTask | Parser/validator retry if configured; then fail task or fallback mock/degraded path. | `ADAPTER_OUTPUT_VALIDATION_FAILED`, optional `ADAPTER_REQUEST_RETRYING`, `ADAPTER_OUTPUT_DEGRADED`, `SLOWTASK_FAILED` |
-| No tool calling | Thinker/Slow LLM | Do not rely on provider-native tool calls; use system schema/SlowTask structured output or block. | `ADAPTER_OUTPUT_DEGRADED` if provider tool calling expected |
-| No cancellation | Tool/Model Adapter | Do not fake success; wait for result and apply stale policy after plan advance. | No fake cancel; stale chain when result returns |
-| No TTS | Talker | Use mock TTS only if MVP allows; label mock/degraded; real playback validation unavailable. | `ADAPTER_OUTPUT_DEGRADED` or mock playback events |
-| No TTS truncate | Talker, Interaction | Barge-in target validation cannot pass; block target validation or mark degraded. | `ADAPTER_OUTPUT_DEGRADED`; MVP-0 scenario fails target criterion if truncate required |
-| No TTS pause/resume | Talker | Acceptable in MVP; pause/resume remains non-goal. | none unless feature requested |
-| Context too long | Thinker/Slow LLM/Composer | Truncate/summarize through approved context policy; if impossible, fail/degrade. | `ADAPTER_OUTPUT_DEGRADED` or `ADAPTER_REQUEST_FAILED` |
-| Audio exceeds max seconds | ASR/Thinker/Duplex | Segment or reject/degrade according to adapter contract; preserve span refs. | `ADAPTER_OUTPUT_DEGRADED` or `ADAPTER_REQUEST_FAILED` |
+| 无 streaming ASR | ASR, Interaction chain | 使用 final transcript/text projection；标注 output mode。 | `ADAPTER_OUTPUT_DEGRADED` if streaming expected |
+| 无 audio timestamps | ASR/Thinker/Duplex | 保留 event timing，标记 model timing unavailable。 | `ADAPTER_OUTPUT_DEGRADED` when timing required |
+| 无 emotion | Thinker | emotion unavailable；不得默认 neutral，除非模型真的预测 neutral。 | `ADAPTER_OUTPUT_DEGRADED` when expected |
+| 无 audio caption | Thinker | audio caption unavailable；保留其他 evidence。 | `ADAPTER_OUTPUT_DEGRADED` when expected |
+| 无 semantic_close | Duplex/Thinker | 使用 mock/rule/conservative policy；标注 mock/degraded。 | `ADAPTER_OUTPUT_DEGRADED` or mock event |
+| 无 assistant-directedness | Duplex/Thinker | 使用 assumed/unknown policy；不得静默认为 directed。 | `ADAPTER_OUTPUT_DEGRADED` when expected |
+| Slow LLM 无 structured JSON | Slow LLM, SlowTask | parser/validator retry；仍失败则 fail task 或 fallback/degraded。 | validation/retry/degraded/failure events |
+| 无 tool calling | Thinker/Slow LLM | 不依赖 provider-native tool calls；改用 system schema 或 block。 | `ADAPTER_OUTPUT_DEGRADED` if expected |
+| 无 cancellation | Tool/Model Adapter | 不伪造成功；等待结果并按 stale policy。 | stale chain when result returns |
+| 无 TTS | Talker | 仅 MVP 允许 mock TTS；标注 mock/degraded。 | degraded or mock playback events |
+| 无 TTS truncate | Talker, Interaction | barge-in target validation 不能通过，必须 block/degrade。 | `ADAPTER_OUTPUT_DEGRADED` |
+| 无 pause/resume | Talker | MVP 可接受；pause/resume 是 non-goal。 | none unless requested |
+| context too long | Thinker/Slow LLM/Composer | approved context policy 截断/总结；否则 fail/degrade。 | degraded or failed event |
+| audio exceeds max seconds | ASR/Thinker/Duplex | segment / reject / degrade；保留 span refs。 | degraded or failed event |
 
 ## 7. Capability Missing Behavior Options
 
 Allowed behavior labels:
 
-- `mock_fallback`: use mock adapter and label output as mock.
-- `disable_scenario`: scenario cannot validate target architecture and must be skipped or failed with clear reason.
-- `degrade_to_text_only`: continue with text projection only.
-- `require_confirmation`: require user confirmation when risk is elevated or evidence is degraded.
-- `block_feature`: refuse to run a feature whose required capability is absent.
-- `record_degradation_event`: emit `ADAPTER_OUTPUT_DEGRADED` or related event.
+- `mock_fallback`
+- `disable_scenario`
+- `degrade_to_text_only`
+- `require_confirmation`
+- `block_feature`
+- `record_degradation_event`
 
-Rules:
+规则：
 
-- Required capability absent for a safety-critical path should `block_feature` or `disable_scenario`.
-- Required capability absent for a quality-only path may `degrade_to_text_only` or `mock_fallback`.
-- Any fallback/degradation must be replay-visible. [ADR-011, ADR-012]
-- Mock fallback cannot be counted as real capability validation. [ADR-011, ADR-012]
+- safety-critical required capability 缺失时，应 `block_feature` 或 `disable_scenario`。
+- quality-only capability 缺失时，可 `degrade_to_text_only` 或 `mock_fallback`。
+- fallback/degradation 必须 replay-visible。
+- mock fallback 不算 real capability validation。
 
 ## 8. Capability Profiles by MVP Slice
 
@@ -155,49 +151,49 @@ Rules:
 
 Required:
 
-- ASR mock capability matrix.
-- Thinker mock capability matrix.
-- Slow Agent mock capability matrix if present.
-- TTS mock capability matrix with playback progress and truncate behavior.
-- Tool mock capability matrix if tools are stubbed.
-- `ADAPTER_CAPABILITY_SNAPSHOT_RECORDED` at session startup. [ADR-002, ADR-011, ADR-012]
+- ASR mock capability matrix。
+- Thinker mock capability matrix。
+- Slow Agent mock capability matrix if present。
+- TTS mock capability matrix with playback progress and truncate behavior。
+- Tool mock capability matrix if stubbed。
+- session startup 记录 `ADAPTER_CAPABILITY_SNAPSHOT_RECORDED`。
 
 Not required:
 
-- Real ASR / Thinker / Slow LLM / TTS.
-- Real semantic_close / assistant-directedness.
-- Real pause/resume.
+- real ASR / Thinker / Slow LLM / TTS。
+- real semantic_close / assistant-directedness。
+- real pause/resume。
 
 ### MVP-1
 
 Required:
 
-- SlowTask mock / Slow Agent mock structured outputs for lifecycle, UserPatch interpretation, plan_version, stale policy, and SemanticCommitment mock.
-- Capability labels for mock vs degraded outputs.
+- SlowTask mock / Slow Agent mock structured outputs for lifecycle、UserPatch interpretation、plan_version、stale policy、SemanticCommitment mock。
+- mock vs degraded output labels。
 
 ### MVP-2
 
 Required:
 
-- Tool adapter/executor capability for progressive demo protocol.
-- Composer role capability or template fallback.
-- Coverage/truthfulness check support.
+- Tool adapter/executor capability for progressive demo protocol。
+- Composer role capability or template fallback。
+- Coverage/truthfulness check support。
 
 ### MVP-3
 
 Required:
 
-- At least one real/remote endpoint for ASR, Thinker, Slow LLM, and TTS where selected.
-- HTTP/WebSocket healthcheck.
-- Timeout/retry/error events.
-- Structured JSON validation for Slow LLM.
-- TTS basic audio synthesis.
-- No new architecture capability while integrating. [ADR-012]
+- 至少一个 real/remote endpoint for ASR、Thinker、Slow LLM、TTS。
+- HTTP/WebSocket healthcheck。
+- timeout/retry/error events。
+- Slow LLM structured JSON validation。
+- TTS basic audio synthesis。
+- 不新增架构能力。
 
 ## 9. Validation Requirements
 
-- MVP-0 mock capability case verifies all mocks declare matrices honestly and startup snapshot is replayable. [ADR-011, ADR-012]
-- Adapter failure paths verify `ADAPTER_HEALTHCHECK_FAILED`, `ADAPTER_REQUEST_RETRYING`, `ADAPTER_REQUEST_FAILED`, and `ADAPTER_OUTPUT_VALIDATION_FAILED`. [ADR-011]
-- No unsupported capability may be silently used. [ADR-011]
-- Adapter outputs must be real/mock/fallback/degraded distinguishable in trace/replay. [ADR-011, ADR-012]
-- Adapter events must not write secrets to trace. [ADR-010, ADR-011]
+- MVP-0 mock capability case 验证所有 mock adapter 如实声明 matrices。
+- 系统必须区分 real / mock / fallback / degraded output。
+- unsupported capability 不得静默使用。
+- adapter failure paths 覆盖 healthcheck failed、retrying、failed、validation failed、degraded。
+- adapter events 不得写入 secrets。

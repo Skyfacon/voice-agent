@@ -1,8 +1,14 @@
-# Stage B Decision Register
+# Stage B ADR 决策登记表
 
-This register tracks Stage B ADR status. Each accepted ADR lives in its own Markdown file under `docs/adr/`.
+本文件登记 Stage B 已接受 ADR。每个 accepted ADR 的正文位于 `docs/adr/`。
 
-| ADR | Title | Status | MVP Scope | File |
+## Status
+
+accepted register。
+
+## ADR Register
+
+| ADR | 标题 | 状态 | MVP 范围 | 文件 |
 | --- | --- | --- | --- | --- |
 | ADR-001 | Duplex Boundary and Interaction Controller | accepted | MVP-0 | `docs/adr/ADR-001 Duplex Boundary and Interaction Controller.md` |
 | ADR-002 | Event Journal, Timing Model, and Replay Foundation | accepted | MVP-0 / MVP-1 / MVP-2 / MVP-3 | `docs/adr/ADR-002 Event Journal, Timing Model, and Replay Foundation.md` |
@@ -20,3 +26,9 @@ This register tracks Stage B ADR status. Each accepted ADR lives in its own Mark
 | ADR-014 | webSearch Evidence Boundary for Demo Tools | accepted | MVP-2 / MVP-3 | `docs/adr/ADR-014 webSearch Evidence Boundary for Demo Tools.md` |
 | ADR-015 | Repository Governance and AGENTS.md Rules | accepted | MVP-0 / MVP-1 / MVP-2 / MVP-3 | `docs/adr/ADR-015 Repository Governance and AGENTS.md Rules.md` |
 | ADR-016 | SlowTask Lifecycle and Confirmation State Contract | accepted | MVP-1 / MVP-2 | `docs/adr/ADR-016 SlowTask Lifecycle and Confirmation State Contract.md` |
+
+## 使用规则
+
+- 实现核心边界前，先查本 register，再打开对应 ADR 正文。
+- 本 register 只登记状态和路径，不替代 ADR 内容。
+- 新增 MVP-relevant 架构能力、事件名或职责边界变更时，必须新增或修改 ADR，并同步更新本登记表。
