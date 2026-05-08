@@ -62,6 +62,29 @@ def test_journal_allocates_strictly_increasing_event_seq_per_session() -> None:
     assert [event["event_seq"] for event in journal.events()] == [1, 2]
 
 
+def test_journal_rejects_duplicate_event_id() -> None:
+    journal = make_journal()
+    append_session_started(journal, event_id="evt_duplicate")
+
+    with pytest.raises(ValueError, match="event_id"):
+        append_capability_snapshot(
+            journal,
+            caused_by_event_id="evt_duplicate",
+            event_id="evt_duplicate",
+        )
+
+    assert [event["event_id"] for event in journal.events()] == ["evt_duplicate"]
+
+
+def test_journal_rejects_causal_link_to_missing_event() -> None:
+    journal = make_journal()
+
+    with pytest.raises(ValueError, match="caused_by_event_id"):
+        append_capability_snapshot(journal, caused_by_event_id="evt_missing")
+
+    assert journal.events() == []
+
+
 def test_journal_does_not_reorder_by_wall_clock_or_monotonic_time() -> None:
     journal = make_journal()
 
@@ -112,11 +135,16 @@ def test_journal_rejects_caller_supplied_event_seq() -> None:
 def test_journal_redacts_secret_like_payload_fields_before_append() -> None:
     journal = make_journal()
 
-    event = append_session_started(journal, api_key="sk-synthetic-secret")
+    event = append_session_started(
+        journal,
+        api_key="sk-synthetic-secret",
+        secret_key="plain-secret",
+    )
 
     assert event["api_key"] == REDACTED_SECRET_VALUE
+    assert event["secret_key"] == REDACTED_SECRET_VALUE
     assert event["redaction_metadata"] == {
-        "redacted_fields": ["api_key"],
+        "redacted_fields": ["api_key", "secret_key"],
         "redaction_reason": "secret-like payload field",
     }
     assert journal.events()[0]["api_key"] == REDACTED_SECRET_VALUE
@@ -131,6 +159,8 @@ def test_journal_redacts_secret_like_payload_fields_before_append() -> None:
         {"raw_user_text": "unredacted user text"},
         {"notes": "audio/raw/sess.wav"},
         {"notes": "traces/session.jsonl"},
+        {"notes": "leaked key sk-test-secret"},
+        {"notes": "prefix Bearer synthetic-token"},
         {"notes": "Bearer synthetic-token"},
     ],
 )

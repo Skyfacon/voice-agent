@@ -61,6 +61,9 @@ ALLOWED_MANIFEST_SAFETY_FLAGS = {
     "contains_unredacted_tool_result",
     "contains_large_raw_web_content",
 }
+ALLOWED_SAFE_SECRET_METADATA_KEYS = {
+    "secret_kind",
+}
 
 
 def iter_json_values(value: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
@@ -91,6 +94,10 @@ def assert_fixture_is_github_safe(fixture: dict[str, Any]) -> None:
 
         if path[:1] == ("replay_manifest",) and last_key in ALLOWED_MANIFEST_SAFETY_FLAGS:
             assert value is False, key_path
+            continue
+        if last_key in ALLOWED_SAFE_SECRET_METADATA_KEYS:
+            assert isinstance(value, str), key_path
+            assert not value.lower().startswith(("sk-", "bearer ")), key_path
             continue
 
         assert not any(pattern.search(last_key) for pattern in FORBIDDEN_KEY_PATTERNS), key_path
@@ -167,6 +174,31 @@ def test_all_mvp0_replay_fixtures_are_github_safe(fixture_path) -> None:
     assert "replays/local" not in fixture_path.as_posix()
 
     assert_fixture_is_github_safe(load_json_fixture(fixture_path))
+
+
+def test_fixture_safety_gate_allows_blocked_secret_metadata_without_secret_value() -> None:
+    fixture = {
+        "replay_manifest": {
+            "fixture_domain": "GITHUB_ALLOWED",
+            "generated_from": "synthetic",
+            "contains_raw_audio": False,
+            "contains_raw_trace": False,
+            "contains_real_user_input": False,
+            "contains_secrets": False,
+            "contains_unredacted_tool_result": False,
+            "contains_large_raw_web_content": False,
+        },
+        "events": [
+            {
+                "event_name": "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+                "event_id": "evt_synthetic_blocked_secret",
+                "secret_kind": "api_key",
+                "blocking_reason": "synthetic secret-like field blocked before append",
+            }
+        ],
+    }
+
+    assert_fixture_is_github_safe(fixture)
 
 
 @pytest.mark.parametrize(

@@ -14,15 +14,16 @@ class PayloadBlockedError(ValueError):
 
 
 SECRET_FIELD_PATTERN = re.compile(
-    r"(^|[_-])(api[_-]?key|authorization|credential|cookie|password|session[_-]?secret|token)([_-]|$)",
+    r"(^|[_-])(api[_-]?key|authorization|credential|cookie|password|secret|session[_-]?secret|token)([_-]|$)",
     re.IGNORECASE,
 )
+ALLOWED_SECRET_METADATA_FIELDS = {"secret_kind"}
 BLOCKED_RAW_FIELD_PATTERN = re.compile(
     r"(^|[_-])(raw[_-]?audio|raw[_-]?trace|raw[_-]?transcript|raw[_-]?user[_-]?text|raw[_-]?text|user[_-]?text|user[_-]?utterance|unredacted[_-]?user)([_-]|$)",
     re.IGNORECASE,
 )
 SECRET_VALUE_PATTERN = re.compile(
-    r"(^sk-[A-Za-z0-9_-]+|^Bearer\s+\S+|^xox[baprs]-\S+|^AKIA[0-9A-Z]{16})"
+    r"(sk-[A-Za-z0-9_-]+|Bearer\s+\S+|xox[baprs]-\S+|AKIA[0-9A-Z]{16})"
 )
 LOCAL_ONLY_PATH_PATTERN = re.compile(r"(^|/)(audio/raw|traces|diagnostics|replays/local)(/|$)", re.IGNORECASE)
 
@@ -40,6 +41,9 @@ def _sanitize_mapping(value: dict[str, Any], path: tuple[str, ...], redacted_fie
         key_path_label = ".".join(key_path)
         if BLOCKED_RAW_FIELD_PATTERN.search(str(key)):
             raise PayloadBlockedError(f"Blocked unsafe raw payload field: {key_path_label}")
+        if str(key) in ALLOWED_SECRET_METADATA_FIELDS:
+            sanitized[key] = _sanitize_value(child, key_path, redacted_fields)
+            continue
         if SECRET_FIELD_PATTERN.search(str(key)):
             sanitized[key] = REDACTED_SECRET_VALUE
             redacted_fields.append(key_path_label)

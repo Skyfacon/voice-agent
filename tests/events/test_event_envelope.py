@@ -102,7 +102,13 @@ def test_unknown_mvp_event_name_is_rejected() -> None:
 
 def test_registry_exposes_only_canonical_mvp0_event_names_for_slice_1() -> None:
     assert "SESSION_STARTED" in MVP0_EVENT_NAMES
+    assert "LOW_CONFIDENCE_INGRESS" in MVP0_EVENT_NAMES
+    assert "TURN_HELD" in MVP0_EVENT_NAMES
     assert "TURN_INGRESS_COMMITTED" in MVP0_EVENT_NAMES
+    assert "TURN_INGRESS_REJECTED" in MVP0_EVENT_NAMES
+    assert "DIRECTEDNESS_CANDIDATE" in MVP0_EVENT_NAMES
+    assert "SEMANTIC_CLOSE_CANDIDATE" in MVP0_EVENT_NAMES
+    assert "NON_ASSISTANT_CANDIDATE" in MVP0_EVENT_NAMES
     assert "TRACE_WRITE_BLOCKED_SECRET_DETECTED" in MVP0_EVENT_NAMES
     assert "SESSION_BOOTED" not in MVP0_EVENT_NAMES
 

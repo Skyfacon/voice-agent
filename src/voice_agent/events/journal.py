@@ -13,6 +13,7 @@ class InMemoryEventJournal:
         self._conversation_id = conversation_id
         self._next_event_seq = 1
         self._events: list[dict[str, Any]] = []
+        self._event_ids: set[str] = set()
 
     def append(
         self,
@@ -32,6 +33,10 @@ class InMemoryEventJournal:
             raise ValueError("event_seq is allocated by the journal")
         if "session_id" in fields or "conversation_id" in fields:
             raise ValueError("session_id and conversation_id are owned by the journal")
+        if event_id in self._event_ids:
+            raise ValueError(f"Duplicate event_id in session journal: {event_id}")
+        if caused_by_event_id is not None and caused_by_event_id not in self._event_ids:
+            raise ValueError(f"caused_by_event_id does not reference an appended event: {caused_by_event_id}")
 
         event: dict[str, Any] = {
             "event_name": event_name,
@@ -60,6 +65,7 @@ class InMemoryEventJournal:
 
         validated_event = validate_event_envelope(sanitized_event)
         self._events.append(deepcopy(validated_event))
+        self._event_ids.add(str(validated_event["event_id"]))
         self._next_event_seq += 1
         return deepcopy(validated_event)
 

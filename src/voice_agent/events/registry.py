@@ -64,6 +64,11 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "semantic_close": "ASSUMED_CLOSED",
         },
     ),
+    "LOW_CONFIDENCE_INGRESS": _definition(
+        "LOW_CONFIDENCE_INGRESS",
+        required_fields=("confidence_fields", "ingress_reason"),
+        one_of_fields=(("input_span_id", "audio_span_id"),),
+    ),
     "AUDIO_SPAN_STARTED": _definition(
         "AUDIO_SPAN_STARTED",
         required_fields=("audio_span_id", "audio_sample_offset", "audio_format_ref"),
@@ -92,17 +97,41 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "barge_in_confidence",
         ),
     ),
+    "DIRECTEDNESS_CANDIDATE": _definition(
+        "DIRECTEDNESS_CANDIDATE",
+        required_fields=("audio_span_id", "directedness", "directedness_confidence"),
+    ),
+    "SEMANTIC_CLOSE_CANDIDATE": _definition(
+        "SEMANTIC_CLOSE_CANDIDATE",
+        required_fields=("audio_span_id", "semantic_close", "semantic_close_confidence"),
+    ),
+    "NON_ASSISTANT_CANDIDATE": _definition(
+        "NON_ASSISTANT_CANDIDATE",
+        required_fields=("audio_span_id", "directedness_confidence"),
+        literal_fields={"directedness": "NOT_DIRECTED"},
+    ),
     "TURN_OPENED": _definition(
         "TURN_OPENED",
         required_fields=("turn_id", "turn_phase", "input_modality"),
         one_of_fields=(("input_span_id", "audio_span_id"),),
         literal_fields={"turn_phase": "COLLECTING_INPUT"},
     ),
+    "TURN_HELD": _definition(
+        "TURN_HELD",
+        required_fields=("turn_id", "semantic_close", "directedness"),
+        literal_fields={"ingress_outcome": "HELD"},
+    ),
     "TURN_INGRESS_ACCEPTED": _definition(
         "TURN_INGRESS_ACCEPTED",
         required_fields=("turn_id", "ingress_outcome"),
         one_of_fields=(("input_span_id", "audio_span_id"),),
         literal_fields={"ingress_outcome": "ACCEPTED"},
+    ),
+    "TURN_INGRESS_REJECTED": _definition(
+        "TURN_INGRESS_REJECTED",
+        required_fields=("turn_id", "reject_reason"),
+        one_of_fields=(("input_span_id", "audio_span_id"),),
+        literal_fields={"ingress_outcome": "REJECTED"},
     ),
     "TURN_INGRESS_COMMITTED": _definition(
         "TURN_INGRESS_COMMITTED",
