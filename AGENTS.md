@@ -65,6 +65,17 @@ Accepted ADRs live under: `docs/adr/`
     - MVP-3 只替换真实 adapter，不新增架构能力。
     - 多 active SlowTask、pause/resume、真实外部副作用工具、生产隐私策略都需要后续 ADR。
 
+12. **Python control plane with explicit concurrency boundaries / Python 控制面必须有明确并发边界**
+    - MVP-0 / MVP-1 / MVP-2 默认使用 Python 实现 control plane，包括 Event Journal、Replay、Interaction Controller、Router、mock adapters、SlowTask mock 和 demo Tool Executor。
+    - Python runtime 不得成为绕过 ADR 边界的理由；外部模型、工具、ASR、TTS、Duplex model、Embedding/RAG 仍必须通过 adapter 或 Tool Executor。
+    - 默认假设标准 CPython runtime；不得依赖 GIL-free / free-threaded Python 作为 MVP 正确性或并发能力前提。
+    - I/O 并发优先使用 `asyncio` 或明确 async boundary；不得在 event loop、Interaction Controller、reducer、replay runner 中执行未隔离的阻塞网络、阻塞文件、长 CPU 任务或模型调用。
+    - CPU-bound、音频 DSP、VAD/AEC、embedding、批量 eval、重型 schema/eval 检查等任务必须隔离到 process pool、worker process、native extension、sidecar service 或外部 model service。
+    - Python threads 只能用于 blocking I/O wrapper、第三方库 callback 或明确隔离的 adapter glue；不得用于并发推进关键状态机写入。
+    - Event Journal append 必须保持 per-session serialized ordering。跨 async task / thread / process 的关键状态迁移必须通过单一 journal append boundary 分配 `event_seq`。
+    - Reducer 和 deterministic replay 必须保持纯确定性，不得调用网络、真实模型、真实工具、时钟、随机数或依赖 async scheduling 顺序。
+    - 如果未来引入 Rust / Go / Java / C++ sidecar，它只能通过 adapter、Tool Executor、Duplex event interface 或 data-plane ref 接入；不得绕过 Event Journal、Interaction Controller、Tool Executor 或 ADR-002 canonical events。
+
 ## MVP Scope Reminder
 
 - MVP-0: event-driven live loop + interrupt/truncate + trace/replay + module boundary.
@@ -117,6 +128,9 @@ Reject or flag any change that:
 - introduces real side-effect tools in MVP
 - bypasses Interaction Controller for turn ingress
 - bypasses plan_version binding for UserPatch / ToolCall / ToolResult
+- relies on Python threads or async scheduling order to advance critical state
+- runs blocking network/model/tool/audio/CPU work inside the event loop, reducer, replay runner, or Interaction Controller
+- introduces native or sidecar components that bypass adapters, Tool Executor, Event Journal, or canonical event names
 
 ## ADR Index
 
