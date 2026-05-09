@@ -11,3 +11,13 @@ audio/raw/
 # Python bytecode cache
 __pycache__/
 *.py[cod]
+
+# Local worktrees and spike experiment artifacts
+.worktrees/
+experiments/**/local/
+experiments/**/outputs/
+experiments/**/cache/
+experiments/**/.env
+.uv-cache/
+.pytest_cache/
+.venv/
