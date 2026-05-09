@@ -76,6 +76,12 @@ Accepted ADRs live under: `docs/adr/`
     - Reducer 和 deterministic replay 必须保持纯确定性，不得调用网络、真实模型、真实工具、时钟、随机数或依赖 async scheduling 顺序。
     - 如果未来引入 Rust / Go / Java / C++ sidecar，它只能通过 adapter、Tool Executor、Duplex event interface 或 data-plane ref 接入；不得绕过 Event Journal、Interaction Controller、Tool Executor 或 ADR-002 canonical events。
 
+13. **Canonical test entrypoint / 统一测试入口**
+   - Python tests 必须优先通过 `./scripts/test` 运行，而不是直接调用 `pytest`、`python -m pytest` 或 `uv --with pytest`。
+   - `./scripts/test` 只使用已经具备 pytest 的本地 Python；不得自动联网安装依赖。
+   - Codex 线程如果需要指定解释器，使用 `VOICE_AGENT_PYTHON=/path/to/python ./scripts/test ...`。
+   - 依赖安装或网络 fetch 必须由 human 明确批准；slice 实现线程不得自行探索多个联网安装路径。
+
 ## MVP Scope Reminder
 
 - MVP-0: event-driven live loop + interrupt/truncate + trace/replay + module boundary.

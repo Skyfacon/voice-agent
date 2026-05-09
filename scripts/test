@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+python_exists() {
+  local python_bin="$1"
+  if [[ "$python_bin" == */* ]]; then
+    [[ -x "$python_bin" ]]
+  else
+    command -v "$python_bin" >/dev/null 2>&1
+  fi
+}
+
+python_candidates=()
+if [[ -n "${VOICE_AGENT_PYTHON:-}" ]]; then
+  python_candidates+=("$VOICE_AGENT_PYTHON")
+fi
+python_candidates+=("$REPO_ROOT/.venv/bin/python")
+python_candidates+=("/Users/a123/anaconda3/bin/python")
+python_candidates+=("python3")
+
+for python_bin in "${python_candidates[@]}"; do
+  if python_exists "$python_bin" && "$python_bin" -m pytest --version >/dev/null 2>&1; then
+    export PYTHONDONTWRITEBYTECODE="${PYTHONDONTWRITEBYTECODE:-1}"
+    exec "$python_bin" -m pytest "$@"
+  fi
+done
+
+cat >&2 <<'EOF'
+No Python interpreter with pytest is available for this repository.
+
+Use the repo test entrypoint, not ad-hoc pytest commands:
+  ./scripts/test -q
+
+Resolution order:
+  1. VOICE_AGENT_PYTHON, if set
+  2. .venv/bin/python, if it has pytest
+  3. /Users/a123/anaconda3/bin/python, if it has pytest
+  4. python3, if it has pytest
+
+This script does not install dependencies or fetch from the network.
+Set VOICE_AGENT_PYTHON to a Python that already has pytest, for example:
+  VOICE_AGENT_PYTHON=/Users/a123/anaconda3/bin/python ./scripts/test -q
+EOF
+exit 127

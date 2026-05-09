@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import asdict, is_dataclass
+import hashlib
+import json
+import re
+from typing import Any
+
+
+DIGEST_SCHEMA_VERSION = "1.0"
+SAFE_SENSITIVE_METADATA_KEYS = frozenset(
+    {
+        "contains_raw_audio",
+        "contains_raw_trace",
+        "contains_real_user_input",
+        "contains_secrets",
+        "contains_unredacted_tool_result",
+        "contains_large_raw_web_content",
+        "secret_kind",
+    }
+)
+RAW_OR_SENSITIVE_KEY_PATTERN = re.compile(
+    r"(^|[_-])("
+    r"raw[_-]?(audio|trace|transcript|user[_-]?text|text|web|tool|content)"
+    r"|unredacted[_-]?user"
+    r"|api[_-]?key"
+    r"|authorization"
+    r"|credential"
+    r"|cookie"
+    r"|password"
+    r"|session[_-]?secret"
+    r"|token"
+    r"|tool[_-]?credentials?"
+    r")([_-]|$)",
+    re.IGNORECASE,
+)
+
+
+def state_digest(
+    *,
+    source_session_id: str | None,
+    last_event_seq: int,
+    event_schema_version_range: list[str] | tuple[str, ...],
+    interaction_state: Any,
+    playback_state: Any,
+    adapter_health_state: Any,
+    trace_privacy_state: Any,
+    task_focus_state: Any | None = None,
+    slowtask_state: Any | None = None,
+) -> dict[str, Any]:
+    digest_without_overall: dict[str, Any] = {
+        "digest_schema_version": DIGEST_SCHEMA_VERSION,
+        "source_session_id": source_session_id,
+        "last_event_seq": last_event_seq,
+        "event_schema_version_range": list(event_schema_version_range),
+        "interaction_state_hash": stable_hash(interaction_state),
+        "task_focus_state_hash": stable_hash(task_focus_state or {}),
+        "slowtask_state_hash": stable_hash(slowtask_state or {}),
+        "playback_state_hash": stable_hash(playback_state),
+        "adapter_health_state_hash": stable_hash(adapter_health_state),
+        "trace_privacy_state_hash": stable_hash(trace_privacy_state),
+    }
+    return {
+        **digest_without_overall,
+        "overall_digest": stable_hash(digest_without_overall),
+    }
+
+
+def stable_hash(value: Any) -> str:
+    canonical_json = json.dumps(
+        canonical_digest_payload(value),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def canonical_digest_payload(value: Any) -> Any:
+    if hasattr(value, "to_digest_dict"):
+        return canonical_digest_payload(value.to_digest_dict())
+    if is_dataclass(value) and not isinstance(value, type):
+        return canonical_digest_payload(asdict(value))
+    if isinstance(value, Mapping):
+        return {
+            str(key): canonical_digest_payload(child)
+            for key, child in sorted(value.items(), key=lambda item: str(item[0]))
+            if not _is_sensitive_digest_key(str(key))
+        }
+    if isinstance(value, (list, tuple)):
+        return [canonical_digest_payload(item) for item in value]
+    return value
+
+
+def _is_sensitive_digest_key(key: str) -> bool:
+    if key in SAFE_SENSITIVE_METADATA_KEYS:
+        return False
+    return RAW_OR_SENSITIVE_KEY_PATTERN.search(key) is not None
