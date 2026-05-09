@@ -1,4 +1,4 @@
-# TTS Capability Spike
+# TTS 能力探针
 
 ## Status
 
@@ -10,27 +10,27 @@ evidence_report
 
 ## Scope
 
-This report evaluates TTS / Talker candidates for MVP-3 basic speech output, streaming audio, first-audio latency, voice and emotion controls, and truncate behavior. It does not introduce a runtime adapter.
+本文评估 TTS / Talker 候选在 MVP-3 basic speech output、streaming audio、first-audio latency、voice/emotion controls 与 truncate behavior 上的适配性。本文不引入 runtime adapter。
 
 ## Architecture Role
 
-TTS produces audio for the Talker/playback layer. The model may stream generated audio, but playback control remains a Talker responsibility. Per ADR-003, `TTS_TRUNCATED` is only valid when the playback layer confirms actual truncation and records the stopped span/offset.
+TTS 为 Talker/playback layer 生成音频。模型可以 stream generated audio，但 playback control 仍是 Talker 责任。根据 ADR-003，只有 playback layer 确认实际 truncation 并记录 stopped span/offset 后，`TTS_TRUNCATED` 才有效。
 
 ## ADR Constraints
 
-- ADR-003: `TTS_TRUNCATE_REQUESTED` comes from Interaction Controller policy; `TTS_TRUNCATED` is emitted by the Talker/playback path after stop is effective.
-- ADR-009: Thinker-as-Composer may shape spoken realization, but cannot rewrite immutable facts or required fields.
-- ADR-011: TTS provider use must go through a model adapter capability contract.
-- ADR-012: MVP-3 can replace mock TTS with real TTS without adding pause/resume or broader architecture scope.
-- AGENTS.md: no raw audio, secrets, or local debug traces may be committed.
+- ADR-003：`TTS_TRUNCATE_REQUESTED` 来自 Interaction Controller policy；`TTS_TRUNCATED` 由 Talker/playback path 在 stop 生效后发出。
+- ADR-009：Thinker-as-Composer 可以塑造 spoken realization，但不能改写 immutable facts 或 required fields。
+- ADR-011：TTS provider 使用必须经 model adapter capability contract。
+- ADR-012：MVP-3 可以用 real TTS 替换 mock TTS，但不新增 pause/resume 或更大 architecture scope。
+- AGENTS.md：raw audio、secret、local debug trace 不得进入提交。
 
 ## Candidate Shortlist
 
-- DashScope / Bailian Sambert or current TTS services: API-first basic TTS candidate; exact current model, streaming, and voice controls should be verified before integration.
-- CosyVoice2 / CosyVoice: self-host fallback and advanced streaming candidate; official project notes streaming, multilingual, voice cloning, instruct controls, and newer bi-streaming work.
-- F5-TTS: quality-oriented self-host fallback for voice cloning and offline generation; less obvious as a low-latency MVP streaming Talker.
-- IndexTTS2: strong R&D candidate for emotion and duration control; licensing and operational fit require review.
-- Chatterbox TTS: mentioned for follow-up only because official source verification was inconclusive in this pass.
+- DashScope / Bailian Sambert 或 current TTS services：API-first basic TTS candidate；exact current model、streaming 与 voice controls 需要 integration 前验证。
+- CosyVoice2 / CosyVoice：self-host fallback 与 advanced streaming candidate；官方项目强调 streaming、multilingual、voice cloning、instruct controls 与更新的 bi-streaming work。
+- F5-TTS：quality-oriented self-host fallback，用于 voice cloning 与 offline generation；作为低延迟 MVP streaming Talker 不如 CosyVoice 清晰。
+- IndexTTS2：emotion 与 duration control 的强 R&D candidate；licensing 与 operational fit 需要 review。
+- Chatterbox TTS：仅列为 follow-up，因为本轮 official source verification 不足。
 
 ## Official Sources Checked
 
@@ -69,67 +69,67 @@ TTS produces audio for the Talker/playback layer. The model may stream generated
 | expected_first_token_latency_ms | not_applicable | not_applicable | not_applicable | not_applicable | unknown |
 | expected_first_audio_latency_ms | unknown | degraded_around_150ms_claim_for_newer_bistreaming_path | degraded_benchmark_dependent | unknown | unknown |
 | output_mode | real_or_unknown | fallback | fallback | degraded | unknown |
-| degradation_notes | verify current endpoint, streaming, and voice controls | promising self-host path; truncate still playback-owned | good quality baseline; streaming/live controls weaker | emotion/duration R&D, not basic MVP first pick | source not verified enough for recommendation |
+| degradation_notes | verify current endpoint, streaming, and voice controls | promising self-host path；truncate 仍由 playback 拥有 | good quality baseline；streaming/live controls 较弱 | emotion/duration R&D，不作为 basic MVP first pick | source 未充分验证，不推荐 |
 
 ## Candidate Comparison
 
-DashScope/Bailian is the best API-first direction if current TTS services provide stable streaming and predictable operational controls. CosyVoice2 is the strongest self-host candidate because the official project emphasizes multilingual speech generation, streaming deployment, and voice/style controls. F5-TTS is useful for quality and voice-cloning experiments, but it is less clearly aligned with low-latency MVP playback. IndexTTS2 is attractive for emotional expression and duration control, but it should remain a research/degraded candidate until licensing, runtime, and API semantics are settled.
+如果 current TTS services 提供稳定 streaming 与可预期 operational controls，DashScope/Bailian 是最佳 API-first 方向。CosyVoice2 是最强 self-host candidate，因为官方项目强调 multilingual speech generation、streaming deployment 与 voice/style controls。F5-TTS 适合 quality 与 voice-cloning experiments，但与 low-latency MVP playback 的对齐不如 CosyVoice 清晰。IndexTTS2 对 emotional expression 与 duration control 很有吸引力，但在 licensing、runtime 与 API semantics 明确前应保持 research/degraded candidate。
 
 ## Recommended MVP Usage
 
-Use a basic TTS adapter for MVP-3:
+MVP-3 使用 basic TTS adapter：
 
-- API-first: DashScope/Bailian TTS once exact endpoint and streaming behavior are verified.
-- Self-host fallback: CosyVoice2.
-- R&D: F5-TTS and IndexTTS2 for style, emotion, voice cloning, and duration experiments.
+- API-first：DashScope/Bailian TTS，前提是 exact endpoint 与 streaming behavior 已验证。
+- Self-host fallback：CosyVoice2。
+- R&D：F5-TTS 与 IndexTTS2，用于 style、emotion、voice cloning 与 duration experiments。
 
-Do not define `supports_tts_truncate` as a model-native capability. For this architecture, it means the adapter/Talker integration can stop the currently playing audio span on `TTS_TRUNCATE_REQUESTED` and emit `TTS_TRUNCATED` with the actual stop offset. If the model generation request can also be closed, that is an optimization, not the source of truth.
+不要把 `supports_tts_truncate` 定义为 model-native capability。在本架构中，它表示 adapter/Talker integration 能在 `TTS_TRUNCATE_REQUESTED` 后停止当前播放的 audio span，并带 actual stop offset 发出 `TTS_TRUNCATED`。如果 model generation request 也能关闭，那只是优化，不是事实来源。
 
-Pause/resume should remain unsupported for MVP because ADR-003 marks truncate as the required MVP behavior.
+Pause/resume 在 MVP 中应保持 unsupported，因为 ADR-003 把 truncate 定义为 required MVP behavior。
 
 ## API / Deployment Notes
 
-API TTS adapters should separate generation request state from playback state. Self-host TTS should run outside the event loop and stream PCM/encoded chunks into a playback queue with span ids. Voice cloning inputs are sensitive and should not be persisted unless synthetic and explicitly approved.
+API TTS adapter 应区分 generation request state 与 playback state。Self-host TTS 应运行在 event loop 之外，并把 PCM/encoded chunks stream 到带 span id 的 playback queue。Voice cloning inputs 很敏感，除非 synthetic 且明确批准，不应持久化。
 
 ## Latency and Resource Notes
 
-CosyVoice official materials mention streaming and newer low-latency bi-streaming paths, but target hardware must be measured. F5-TTS official benchmarks show good real-time factor on GPU-like hardware, but first-audio behavior depends on serving path. DashScope first-audio latency, chunk size, and voice availability must be measured through the actual endpoint.
+CosyVoice 官方材料提到 streaming 与较新的 low-latency bi-streaming path，但必须在目标硬件上测量。F5-TTS 官方 benchmark 显示在 GPU-like hardware 上 real-time factor 较好，但 first-audio behavior 取决于 serving path。DashScope first-audio latency、chunk size 与 voice availability 必须通过实际 endpoint 测量。
 
 ## Schema / Structured Output Notes
 
-TTS inputs should be explicit: text, voice id, speaking style, output format, sample rate, and commitment coverage metadata from Composer checks. TTS output should report audio span id, output mode, provider/model, and playback offsets. TTS should not accept instruction-like web evidence or modify SemanticCommitment facts.
+TTS input 应显式包含 text、voice id、speaking style、output format、sample rate 与来自 Composer checks 的 commitment coverage metadata。TTS output 应报告 audio span id、output mode、provider/model 与 playback offsets。TTS 不应接收 instruction-like web evidence，也不应修改 SemanticCommitment facts。
 
 ## Cancellation / Timeout / Retry Notes
 
-If provider cancellation is unavailable, local playback stop still satisfies truncate once `TTS_TRUNCATED` is emitted. Generation can be allowed to finish in a discarded background stream if necessary, but its output must not re-enter playback. Timeouts should degrade to silence or a short local fallback prompt, not block the Interaction Controller.
+如果 provider cancellation 不可用，只要 local playback stop 后发出 `TTS_TRUNCATED`，仍满足 truncate contract。必要时 generation 可以在 discarded background stream 中完成，但 output 不得重新进入 playback。Timeout 应降级为 silence 或 short local fallback prompt，而不是阻塞 Interaction Controller。
 
 ## Trace and Privacy Notes
 
-Trace should store text, voice id, provider metadata, span ids, and playback offsets only when safe. Do not store generated raw audio in repository fixtures. Do not log voice-clone reference audio, tokens, authorization headers, or unredacted user content.
+Trace 只应在安全时保存 text、voice id、provider metadata、span ids 与 playback offsets。不要在 repo fixture 中保存 generated raw audio。不要记录 voice-clone reference audio、token、authorization header 或未脱敏用户内容。
 
 ## Degradation Proposal
 
-- If streaming TTS is unavailable, use chunked sentence-level generation and mark first-audio latency degraded.
-- If emotion/voice controls are unstable, use a neutral voice and mark emotion unsupported/degraded.
-- If model request cancellation is unavailable, stop local playback and discard late chunks.
-- If provider fails, fall back to mock TTS or text-only UI state for replay.
+- 如果 streaming TTS 不可用，使用 sentence-level chunked generation，并标记 first-audio latency degraded。
+- 如果 emotion/voice controls 不稳定，使用 neutral voice，并标记 emotion unsupported/degraded。
+- 如果 model request cancellation 不可用，停止 local playback 并丢弃 late chunks。
+- 如果 provider failure，fallback 到 mock TTS 或 text-only UI state for replay。
 
 ## Risks
 
-- Confusing provider cancellation with playback truncation would violate ADR-003.
-- Voice cloning and reference audio create privacy risk.
-- Emotion controls can alter factual emphasis if Composer coverage checks are weak.
-- API voice availability and model names can shift over time.
-- Long synthesis requests can block if not isolated from the control plane.
+- 混淆 provider cancellation 与 playback truncation 会违反 ADR-003。
+- Voice cloning 与 reference audio 带来 privacy risk。
+- 如果 Composer coverage checks 弱，emotion controls 可能改变事实强调。
+- API voice availability 与 model names 会变化。
+- Long synthesis request 如果未隔离，可能阻塞 control plane。
 
 ## Suggested Follow-up Experiments
 
-- Measure first-audio latency and chunk cadence for DashScope TTS and CosyVoice2.
-- Verify `TTS_TRUNCATED` offset accuracy during playback stop.
-- Compare neutral Mandarin, English, and mixed text quality across candidates.
-- Test emotional controls against fixed `must_say_fields` to ensure facts are not changed.
-- Measure behavior when generation is cancelled or network stream closes mid-synthesis.
+- 测量 DashScope TTS 与 CosyVoice2 的 first-audio latency 与 chunk cadence。
+- 验证 `TTS_TRUNCATED` offset accuracy during playback stop。
+- 对 neutral Mandarin、English 与 mixed text 做候选质量比较。
+- 用固定 `must_say_fields` 测 emotional controls，确保 facts 不变。
+- 测 generation 被取消或 network stream mid-synthesis 关闭时的 behavior。
 
 ## Recommendation
 
-Use DashScope/Bailian TTS as the first API candidate after endpoint verification and CosyVoice2 as the self-host fallback. Treat truncate as Talker playback control, keep pause/resume unsupported for MVP, and mark emotion/style controls degraded until coverage checks prove safe.
+DashScope/Bailian TTS 是 endpoint 验证后的第一 API candidate；CosyVoice2 是 self-host fallback。truncate 必须作为 Talker playback control；pause/resume 在 MVP 保持 unsupported；emotion/style controls 在 coverage checks 证明安全前标记 degraded。

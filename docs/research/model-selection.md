@@ -1,4 +1,4 @@
-# Model Selection Research Summary
+# 模型选择研究汇总
 
 ## Status
 
@@ -10,104 +10,104 @@ evidence_summary
 
 ## System Constraints
 
-The project architecture requires adapter-first model integration, append-only event evidence, deterministic replay boundaries, and explicit degraded/fallback/mock/real output modes. ASR is text evidence, not the only semantic truth. Thinker provides SemanticFrame evidence and Composer realization, not turn ingress authority or SlowTask final facts. TTS truncate is playback control. Slow LLM planning must obey `task_id`, `plan_version`, `task_event_seq`, confirmation, cancellation, and stale-result policy.
+项目架构要求 adapter-first model integration、append-only event evidence、deterministic replay boundaries，以及明确的 degraded/fallback/mock/real output modes。ASR 是 text evidence，不是唯一语义真相。Thinker 提供 SemanticFrame evidence 与 Composer realization，不拥有 turn ingress authority 或 SlowTask final facts。TTS truncate 是 playback control。Slow LLM planning 必须遵守 `task_id`、`plan_version`、`task_event_seq`、confirmation、cancellation 与 stale-result policy。
 
-webSearch/RAG and model-card content are untrusted evidence. They can inform candidate selection, but they cannot enter instruction space, alter tool policy, or become ADR facts.
+webSearch/RAG 与 model-card content 都是 untrusted evidence。它们可以帮助 candidate selection，但不能进入 instruction space、改变 tool policy，或变成 ADR facts。
 
 ## Recommended Adapter Stack
 
-- Duplex: local rule-based VAD/AEC first. Use Silero VAD or WebRTC VAD for speech detection, WebRTC Audio Processing/AEC3-style playback reference for echo likelihood, and optional openWakeWord for wake/attention experiments. Keep audio LLM semantic hints out of the hot path.
-- ASR: API-first DashScope/Bailian ASR if the current service verifies realtime Mandarin/mixed support; self-host FunASR Paraformer streaming as primary fallback; SenseVoiceSmall for enriched short-utterance/language/emotion/acoustic-event evidence; Whisper large-v3-turbo as offline multilingual fallback.
-- TTS/Talker: API-first DashScope/Bailian TTS after endpoint verification; self-host CosyVoice2 fallback; F5-TTS and IndexTTS2 as style/emotion research candidates.
-- Thinker: Qwen3-Omni primary SemanticFrame candidate; Qwen2.5-Omni or Ultravox fallback; MiniCPM-o family for self-hosted A100 exploration.
-- Slow LLM: Qwen3 Instruct/Thinking via DashScope/OpenAI-compatible or self-host as primary structured planning candidate; DeepSeek current API models as first alternate; GLM-4.5 and Kimi K2 as comparison candidates after current schema/tool contracts are verified.
+- Duplex：local rule-based VAD/AEC first。使用 Silero VAD 或 WebRTC VAD 做 speech detection，使用 WebRTC Audio Processing/AEC3-style playback reference 做 echo likelihood，openWakeWord 可选做 wake/attention experiments。Audio LLM semantic hints 不进入 hot path。
+- ASR：如果当前 DashScope/Bailian ASR 服务验证支持 realtime Mandarin/mixed，优先 API-first；FunASR Paraformer streaming 作为 primary fallback；SenseVoiceSmall 提供 enriched short-utterance/language/emotion/acoustic-event evidence；Whisper large-v3-turbo 作为 offline multilingual fallback。
+- TTS/Talker：endpoint 验证后优先 DashScope/Bailian TTS；CosyVoice2 self-host fallback；F5-TTS 与 IndexTTS2 作为 style/emotion research candidates。
+- Thinker：Qwen3-Omni primary SemanticFrame candidate；Qwen2.5-Omni 或 Ultravox fallback；MiniCPM-o family 用于 self-hosted A100 exploration。
+- Slow LLM：Qwen3 Instruct/Thinking via DashScope/OpenAI-compatible 或 self-host 作为 primary structured planning candidate；DeepSeek current API models 作为 first alternate；GLM-4.5 与 Kimi K2 在 current schema/tool contracts 验证后作为 comparison candidates。
 
 ## MVP-0 / MVP-1 / MVP-2 / MVP-3 Usage
 
-- MVP-0: keep Duplex rule/mock and replayable. Do not add real model dependency to barge-in.
-- MVP-1: keep SlowTask mock/fallback planning until schema and stale-result handling are verified.
-- MVP-2: demo tools must remain sandboxed; model tool calls are proposals only and must pass through Tool Executor.
-- MVP-3: replace selected mock adapters with real ASR, TTS, Thinker, and Slow LLM adapters without adding new architecture capability. Record capability matrices and output modes per ADR-011.
+- MVP-0：Duplex 保持 rule/mock 且可 replay。不要给 barge-in 增加 real model dependency。
+- MVP-1：在 schema 与 stale-result handling 验证前，SlowTask 保持 mock/fallback planning。
+- MVP-2：demo tools 必须保持 sandboxed；model tool calls 只能是 proposals，并必须通过 Tool Executor。
+- MVP-3：在不新增 architecture capability 的前提下，用 real ASR、TTS、Thinker 与 Slow LLM adapters 替换 selected mock adapters。按 ADR-011 记录 capability matrices 与 output modes。
 
 ## Candidate Matrix
 
 | component | primary candidate | fallback candidate | self-host candidate | status |
 | --- | --- | --- | --- | --- |
-| Duplex | Silero/WebRTC local gate | openWakeWord attention hint | WebRTC AEC3/Silero | real for VAD, degraded for echo semantics |
-| ASR | DashScope/Bailian ASR, pending endpoint verification | Whisper large-v3-turbo offline | FunASR Paraformer streaming, SenseVoiceSmall | real/degraded depending on streaming/timestamps |
-| TTS | DashScope/Bailian TTS, pending endpoint verification | neutral mock or text-only UI | CosyVoice2, F5-TTS, IndexTTS2 | real for basic speech, degraded for truncate-model cancellation/emotion |
-| Thinker | Qwen3-Omni | Qwen2.5-Omni or Ultravox | MiniCPM-o family | degraded until SemanticFrame JSON harness passes |
-| Slow LLM | Qwen3 via DashScope/self-host | DeepSeek API | Qwen3-30B-A3B class on A100 | real/degraded depending on schema validation |
+| Duplex | Silero/WebRTC local gate | openWakeWord attention hint | WebRTC AEC3/Silero | VAD 为 real，echo semantics 为 degraded |
+| ASR | DashScope/Bailian ASR，pending endpoint verification | Whisper large-v3-turbo offline | FunASR Paraformer streaming, SenseVoiceSmall | real/degraded 取决于 streaming/timestamps |
+| TTS | DashScope/Bailian TTS，pending endpoint verification | neutral mock or text-only UI | CosyVoice2, F5-TTS, IndexTTS2 | basic speech 为 real，truncate-model cancellation/emotion 为 degraded |
+| Thinker | Qwen3-Omni | Qwen2.5-Omni or Ultravox | MiniCPM-o family | SemanticFrame JSON harness 通过前为 degraded |
+| Slow LLM | Qwen3 via DashScope/self-host | DeepSeek API | Qwen3-30B-A3B class on A100 | real/degraded 取决于 schema validation |
 
 ## Recommended First API Integration Set
 
-1. DashScope/Bailian Qwen3 text model for SlowTask structured planning.
-2. DashScope/Bailian TTS for basic Talker output.
-3. DashScope/Bailian ASR if realtime streaming, timestamps, and cancellation behavior are confirmed.
-4. Qwen3-Omni through DashScope/Bailian for Thinker SemanticFrame experiments.
-5. DeepSeek API as a second Slow LLM provider for structured JSON comparison.
+1. DashScope/Bailian Qwen3 text model，用于 SlowTask structured planning。
+2. DashScope/Bailian TTS，用于 basic Talker output。
+3. DashScope/Bailian ASR，前提是 realtime streaming、timestamps 与 cancellation behavior 已确认。
+4. Qwen3-Omni through DashScope/Bailian，用于 Thinker SemanticFrame experiments。
+5. DeepSeek API，作为 second Slow LLM provider 做 structured JSON comparison。
 
-This set keeps operational complexity low while preserving adapter boundaries. It also gives a same-platform path for Qwen text and omni models without allowing one model to own the whole system.
+这组组合能降低 operational complexity，同时保留 adapter boundaries。它也提供 Qwen text 与 omni models 的 same-platform path，但不允许单个模型拥有整个系统。
 
 ## DashScope / Bailian Considerations
 
-Aliyun documentation describes multiple API surfaces for Qwen models: OpenAI-compatible Chat Completions, OpenAI Responses-style API, and native DashScope APIs. The adapter should choose one surface per capability and record exact model id, endpoint surface, streaming support, JSON support, tool-call format, timeout behavior, and output mode.
+Aliyun documentation 描述了 Qwen models 的多个 API surfaces：OpenAI-compatible Chat Completions、OpenAI Responses-style API 与 native DashScope APIs。Adapter 应为每个 capability 选择一个 surface，并记录 exact model id、endpoint surface、streaming support、JSON support、tool-call format、timeout behavior 与 output mode。
 
-DashScope is attractive for Chinese-first evaluation and Qwen-Omni availability. The risk is that service names, model versions, and feature flags can change. Each adapter integration should pin the tested model name and capture a capability matrix at integration time.
+DashScope 对 Chinese-first evaluation 与 Qwen-Omni availability 有吸引力。风险是 service names、model versions 与 feature flags 会变化。每个 adapter integration 都应 pin tested model name，并在 integration time 捕获 capability matrix。
 
 ## Self-hosted A100 Considerations
 
-Self-hosting is most useful for replayable research and privacy-controlled evaluation:
+Self-hosting 最适合 replayable research 与 privacy-controlled evaluation：
 
-- FunASR Paraformer streaming can evaluate ASR partial behavior.
-- SenseVoiceSmall can evaluate short-utterance quality and auxiliary emotion/event labels.
-- CosyVoice2 can evaluate streaming TTS and voice controls.
-- Qwen3-Omni or MiniCPM-o family can evaluate audio SemanticFrame generation.
-- Qwen3 text models can evaluate structured planning offline.
+- FunASR Paraformer streaming 可评估 ASR partial behavior。
+- SenseVoiceSmall 可评估 short-utterance quality 与 auxiliary emotion/event labels。
+- CosyVoice2 可评估 streaming TTS 与 voice controls。
+- Qwen3-Omni 或 MiniCPM-o family 可评估 audio SemanticFrame generation。
+- Qwen3 text models 可离线评估 structured planning。
 
-Self-hosted inference must run outside Interaction Controller, reducer, replay runner, and event-loop critical paths. CPU-bound/audio-heavy work should be isolated in worker processes, sidecars, or model services.
+Self-hosted inference 必须运行在 Interaction Controller、reducer、replay runner 与 event-loop critical paths 之外。CPU-bound/audio-heavy work 应隔离到 worker processes、sidecars 或 model services。
 
 ## Capability Gaps
 
-- Verified DashScope ASR streaming/timestamp/cancellation details are still unknown.
-- TTS first-audio latency and stream chunk cadence need direct measurement.
-- `supports_tts_truncate` is playback-owned; model request cancellation remains degraded/unknown for most candidates.
-- Thinker structured JSON stability is unknown until schema harness tests run.
-- Emotion, assistant-directedness, and semantic-close hints are degraded evidence, not policy.
-- Provider cancellation is generally degraded; ADR-016 stale-result handling is mandatory.
-- GLM-4.5 and Kimi K2 current structured-output/tool-call details need endpoint verification before recommendation.
+- DashScope ASR streaming/timestamp/cancellation details 仍需验证。
+- TTS first-audio latency 与 stream chunk cadence 需要直接测量。
+- `supports_tts_truncate` 由 playback 拥有；多数候选的 model request cancellation 仍是 degraded/unknown。
+- Thinker structured JSON stability 在 schema harness tests 前仍是 unknown。
+- Emotion、assistant-directedness 与 semantic-close hints 是 degraded evidence，不是 policy。
+- Provider cancellation 通常为 degraded；ADR-016 stale-result handling 必须执行。
+- GLM-4.5 与 Kimi K2 current structured-output/tool-call details 在推荐前需要 endpoint verification。
 
 ## Risks to ADRs
 
-One omni model should not absorb ASR, Thinker, TTS, Duplex, and SlowTask. Those roles have different latency budgets, authority boundaries, replay needs, and privacy surfaces. Collapsing them would make it hard to prove which evidence changed state, which plan version a result belongs to, and which component owns user-visible speech.
+不应让一个 omni model 吸收 ASR、Thinker、TTS、Duplex 与 SlowTask。这些角色有不同 latency budgets、authority boundaries、replay needs 与 privacy surfaces。一旦合并，很难证明是哪条 evidence 改变了 state、result 属于哪个 plan version、以及哪个 component 拥有 user-visible speech。
 
-Duplex hot path should not depend on a large model because `speech_start <=150ms` and barge-in truncate around `<=250ms` require local deterministic processing and playback reference access. Large models may provide later semantic hints, but they should not decide immediate truncation.
+Duplex hot path 不应依赖大型模型，因为 `speech_start <=150ms` 与 barge-in truncate around `<=250ms` 需要本地确定性 processing 与 playback reference access。大型模型可以提供后续 semantic hints，但不应决定 immediate truncation。
 
-TTS truncate should be Talker playback control because only playback can confirm the actual stopped span and offset. Model-side request cancellation is useful but cannot substitute for `TTS_TRUNCATED`.
+TTS truncate 应是 Talker playback control，因为只有 playback 能确认 actual stopped span 与 offset。Model-side request cancellation 有用，但不能替代 `TTS_TRUNCATED`。
 
-Slow LLM quality should be measured by structured JSON validity, schema retry, plan_version binding, stale-result behavior, and confirmation safety. Voice ability is not relevant to SlowTask planning.
+Slow LLM quality 应按 structured JSON validity、schema retry、plan_version binding、stale-result behavior 与 confirmation safety 测量。Voice ability 与 SlowTask planning 无关。
 
-Platform APIs must still go through adapters. A convenient OpenAI-compatible or DashScope endpoint does not remove the need for capability matrices, redaction, timeout handling, degraded modes, and replayable event evidence.
+Platform APIs 仍必须通过 adapters。方便的 OpenAI-compatible 或 DashScope endpoint 不能省掉 capability matrices、redaction、timeout handling、degraded modes 与 replayable event evidence。
 
-webSearch/RAG evidence must stay out of instruction space. Search results can be cited as untrusted evidence, but they cannot change tool authorization, confirmation policy, trace policy, or ADR constraints.
+webSearch/RAG evidence 必须留在 evidence space。Search results 可以作为 untrusted evidence citation，但不能改变 tool authorization、confirmation policy、trace policy 或 ADR constraints。
 
 ## Experiments to Run Before MVP-3
 
-- Duplex: measure VAD and echo false positives during TTS playback on local devices.
-- ASR: compare DashScope ASR, FunASR Paraformer streaming, SenseVoiceSmall, and Whisper on synthetic Mandarin/English/mixed clips.
-- TTS: measure first-audio latency and verify playback-stop offset accuracy.
-- Thinker: run SemanticFrame JSON schema tests for Qwen3-Omni, Qwen2.5-Omni, and Ultravox.
-- Slow LLM: run schema-constrained planning, malformed JSON repair, tool-call proposal normalization, and plan_version cancellation tests.
-- Privacy: confirm traces contain only redacted metadata and synthetic fixtures.
+- Duplex：在 local devices 上测量 TTS playback 期间的 VAD 与 echo false positives。
+- ASR：用 synthetic Mandarin/English/mixed clips 比较 DashScope ASR、FunASR Paraformer streaming、SenseVoiceSmall 与 Whisper。
+- TTS：测 first-audio latency，并验证 playback-stop offset accuracy。
+- Thinker：对 Qwen3-Omni、Qwen2.5-Omni 与 Ultravox 跑 SemanticFrame JSON schema tests。
+- Slow LLM：跑 schema-constrained planning、malformed JSON repair、tool-call proposal normalization 与 plan_version cancellation tests。
+- Privacy：确认 traces 只包含 redacted metadata 与 synthetic fixtures。
 
 ## Final Recommendation
 
-Adopt a layered adapter stack rather than an all-in-one omni model:
+采用 layered adapter stack，而不是 all-in-one omni model：
 
-- Duplex: Silero/WebRTC rule-based local gate with echo likelihood from playback reference; no large model in the hot path.
-- ASR: DashScope/Bailian API-first if the realtime contract checks out; FunASR Paraformer streaming and SenseVoiceSmall as self-host fallbacks; Whisper large-v3-turbo as offline fallback.
-- TTS: DashScope/Bailian basic TTS API-first; CosyVoice2 self-host fallback; F5-TTS and IndexTTS2 for later voice/style research.
-- Thinker: Qwen3-Omni primary for SemanticFrame evidence; Qwen2.5-Omni or Ultravox fallback; MiniCPM-o for A100 research.
-- Slow LLM: Qwen3 text model first for structured planning, DeepSeek as alternate API candidate, GLM-4.5/Kimi K2 after current contract verification.
+- Duplex：Silero/WebRTC rule-based local gate，echo likelihood 来自 playback reference；hot path 不放大型模型。
+- ASR：如果 realtime contract 通过，DashScope/Bailian API-first；FunASR Paraformer streaming 与 SenseVoiceSmall 作为 self-host fallbacks；Whisper large-v3-turbo 作为 offline fallback。
+- TTS：DashScope/Bailian basic TTS API-first；CosyVoice2 self-host fallback；F5-TTS 与 IndexTTS2 用于后续 voice/style research。
+- Thinker：Qwen3-Omni primary，用于 SemanticFrame evidence；Qwen2.5-Omni 或 Ultravox fallback；MiniCPM-o 用于 A100 research。
+- Slow LLM：Qwen3 text model first，用于 structured planning；DeepSeek 作为 alternate API candidate；GLM-4.5/Kimi K2 在 current contract verification 后再进入。
 
-This combination fits accepted ADR boundaries: each capability enters through an adapter, hot-path audio stays local, TTS truncate remains playback-owned, SlowTask keeps plan authority, and all uncertain model behavior is labeled unknown or degraded until verified.
+这个组合符合 accepted ADR boundaries：每种能力都经 adapter 进入，hot-path audio 保持本地，TTS truncate 仍由 playback 拥有，SlowTask 保持 plan authority，所有不确定模型行为在验证前标为 unknown 或 degraded。

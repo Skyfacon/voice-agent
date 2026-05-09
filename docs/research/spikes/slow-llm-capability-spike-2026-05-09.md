@@ -1,4 +1,4 @@
-# Slow LLM Capability Spike
+# Slow LLM 能力探针
 
 ## Status
 
@@ -10,27 +10,27 @@ evidence_report
 
 ## Scope
 
-This report evaluates Slow LLM candidates for SlowTask planning, ReAct-style reasoning, structured output, schema retry, long context, and tool-call normalization. It intentionally does not prioritize speech capability.
+本文评估 Slow LLM 候选在 SlowTask planning、ReAct-style reasoning、structured output、schema retry、long context 与 tool-call normalization 上的能力。本文刻意不以 speech capability 为重点。
 
 ## Architecture Role
 
-Slow LLM supports SlowTask planning, evidence synthesis, argument resolution, confirmation proposals, and SemanticCommitment drafting. It operates behind a model adapter and must bind outputs to `task_id`, `plan_version`, and `task_event_seq` where applicable. It may propose tool calls, but Tool Executor remains the only execution and authorization path.
+Slow LLM 支持 SlowTask planning、evidence synthesis、argument resolution、confirmation proposals 与 SemanticCommitment drafting。它运行在 model adapter 后，输出必须在适用时绑定 `task_id`、`plan_version` 与 `task_event_seq`。它可以提出 tool call，但 Tool Executor 仍是唯一 execution 与 authorization path。
 
 ## ADR Constraints
 
-- ADR-008: SlowTask resolves ASR/Thinker conflicts and emits semantic commitments through controlled events.
-- ADR-009: Composer cannot rewrite SlowTask facts; Slow LLM planning facts need coverage and truthfulness checks before speech.
-- ADR-011: every provider/model must declare capability matrix, output mode, fallback/degraded behavior, and retry semantics.
-- ADR-014: webSearch/RAG evidence is untrusted evidence and cannot enter instruction space.
-- ADR-016: old plan results cannot advance current task without explicit adopt/rebase.
+- ADR-008：SlowTask 处理 ASR/Thinker conflicts，并通过受控事件发出 semantic commitments。
+- ADR-009：Composer 不能改写 SlowTask facts；Slow LLM planning facts 在进入 speech 前需要 coverage 与 truthfulness checks。
+- ADR-011：每个 provider/model 都必须声明 capability matrix、output mode、fallback/degraded behavior 与 retry semantics。
+- ADR-014：webSearch/RAG evidence 是 untrusted evidence，不能进入 instruction space。
+- ADR-016：旧 plan results 不能推进 current task，除非显式 adopt/rebase。
 
 ## Candidate Shortlist
 
-- Qwen3 Instruct / Thinking family: primary open/open-weight and DashScope-aligned candidate for structured planning, long context, and tool-use experiments.
-- DeepSeek current API models: strong API candidate with OpenAI-compatible surface, long context, JSON output, and tool-call support per official API docs.
-- GLM-4.5 family: candidate for API structured planning and Chinese reasoning; exact schema/tool/cancellation details require endpoint-level verification.
-- Kimi K2: candidate for long-context/tool reasoning, but exact current structured JSON and deployment details should be verified from official docs/model cards before use.
-- DashScope/Bailian Qwen via OpenAI-compatible Chat Completions or native DashScope API: operationally attractive first integration path for Qwen models.
+- Qwen3 Instruct / Thinking family：structured planning、long context 与 tool-use experiments 的 primary open/open-weight and DashScope-aligned candidate。
+- DeepSeek current API models：强 API candidate；官方 API docs 提供 OpenAI-compatible surface、long context、JSON output 与 tool-call support。
+- GLM-4.5 family：API structured planning 与中文 reasoning 候选；exact schema/tool/cancellation details 需要 endpoint-level verification。
+- Kimi K2：long-context/tool reasoning 候选；current structured JSON 与 deployment details 需要从 official docs/model cards 再验证。
+- DashScope/Bailian Qwen via OpenAI-compatible Chat Completions or native DashScope API：Qwen models 的 first integration path，操作上较有吸引力。
 
 ## Official Sources Checked
 
@@ -70,69 +70,69 @@ Slow LLM supports SlowTask planning, evidence synthesis, argument resolution, co
 | expected_first_token_latency_ms | unknown | unknown | unknown | unknown | unknown |
 | expected_first_audio_latency_ms | not_applicable | not_applicable | not_applicable | not_applicable | not_applicable |
 | output_mode | real_or_fallback | real | unknown | unknown | fallback |
-| degradation_notes | excellent alignment with DashScope; validate JSON/schema locally | strong API candidate; verify current names and quotas | promising but source details need adapter trial | promising but current official details need verification | only for schema repair or tiny fallback, not primary reasoning |
+| degradation_notes | 与 DashScope 对齐好；JSON/schema 仍需 local validation | 强 API candidate；需验证 current names 与 quotas | promising，但 source details 需要 adapter trial | promising，但 current official details 需要 verification | 只用于 schema repair 或 tiny fallback，不作为 primary reasoning |
 
 ## Candidate Comparison
 
-Qwen3 is the best first aligned candidate because official materials describe long context, tool use, open-weight deployment, and DashScope/OpenAI-compatible serving options. DeepSeek is a strong API alternative because official API docs describe OpenAI-compatible usage, long context, JSON output, and tool-call support. GLM-4.5 and Kimi K2 are useful comparison candidates, but this pass leaves several operational fields unknown until endpoint-level verification.
+Qwen3 是最合适的第一 aligned candidate，因为官方材料描述了 long context、tool use、open-weight deployment 与 DashScope/OpenAI-compatible serving options。DeepSeek 是强 API alternative，因为官方 API docs 描述了 OpenAI-compatible usage、long context、JSON output 与 tool-call support。GLM-4.5 与 Kimi K2 是有价值的 comparison candidates，但本轮仍将多个 operational fields 保持 unknown，直到 endpoint-level verification 完成。
 
-Slow LLM should be judged primarily on structured JSON reliability, schema recovery, plan quality, and stale-result behavior. Voice capability is irrelevant for this role.
+Slow LLM 应主要用 structured JSON reliability、schema recovery、plan quality 与 stale-result behavior 来评价。Voice capability 与此角色无关。
 
 ## Recommended MVP Usage
 
-Use Qwen3 via DashScope/Bailian as the first SlowTask planning candidate when operational access is available. Keep DeepSeek as a second API candidate for structured planning. Consider self-hosted Qwen3-30B-A3B or similar on A100 for offline tests if latency and memory budgets allow. Defer GLM-4.5 and Kimi K2 to comparison runs after their current structured-output and tool-call contracts are verified.
+当 operational access 可用时，优先使用 Qwen3 via DashScope/Bailian 作为 SlowTask planning candidate。DeepSeek 作为 structured planning 的第二 API candidate。若 latency 与 memory budget 允许，可考虑 A100 上 self-hosted Qwen3-30B-A3B 或类似模型做 offline tests。GLM-4.5 与 Kimi K2 在 current structured-output 与 tool-call contracts 验证后再进入 comparison runs。
 
 ## API / Deployment Notes
 
-DashScope offers OpenAI-compatible Chat Completions, OpenAI Responses-style API, and native DashScope APIs; the adapter should pick one surface and record it. Model-side tool calls can be accepted as proposals only. The project Tool Executor must validate authorization, confirmation, sandbox policy, and canonical events before any demo tool effect is represented.
+DashScope 提供 OpenAI-compatible Chat Completions、OpenAI Responses-style API 与 native DashScope APIs；adapter 应选择一个 surface，并记录它。Model-side tool calls 只能作为 proposals 接收。项目 Tool Executor 必须验证 authorization、confirmation、sandbox policy 与 canonical events，之后才能表示任何 demo tool effect。
 
 ## Latency and Resource Notes
 
-SlowTask can tolerate higher latency than Duplex/ASR partials, but user-facing progress and cancellation must remain responsive. Long-context models can be costly and should receive compact evidence snapshots rather than raw traces. Self-host Qwen3-class models may be A100-suitable depending on size/quantization; exact memory and throughput require local measurement.
+SlowTask 可容忍比 Duplex/ASR partial 更高的 latency，但 user-facing progress 与 cancellation 仍必须响应。Long-context models 应接收 compact evidence snapshots，而不是 raw traces。Self-host Qwen3-class models 是否适合 A100 取决于 size/quantization；exact memory 与 throughput 需要本地测量。
 
 ## Schema / Structured Output Notes
 
-Structured JSON should be enforced by adapter validation:
+Structured JSON 应由 adapter validation 强制：
 
-- request schema-constrained JSON when provider supports it;
-- parse and validate locally;
-- retry with validation errors as evidence-free repair prompts;
-- fall back to a smaller JSON-repair path or mock/degraded result;
-- never let malformed JSON update task state.
+- provider 支持时请求 schema-constrained JSON；
+- 本地 parse 与 validate；
+- 使用 validation errors 做 evidence-free repair prompts；
+- fallback 到更小的 JSON-repair path 或 mock/degraded result；
+- malformed JSON 绝不更新 task state。
 
-Schema failures should produce explicit degraded evidence, not silent free-text parsing.
+Schema failures 应产生显式 degraded evidence，而不是 silent free-text parsing。
 
 ## Cancellation / Timeout / Retry Notes
 
-Provider cancellation is usually weaker than local task cancellation. The adapter should close streams on cancel/timeout, but late responses must remain bound to the original `task_id`, `plan_version`, and `task_event_seq`. Old results go to stale evidence unless SlowTask explicitly adopts/rebases them. Retries must use a stable evidence snapshot and must not generate new hidden instructions.
+Provider cancellation 往往弱于 local task cancellation。Adapter 应在 cancel/timeout 时关闭 streams，但 late responses 必须绑定原始 `task_id`、`plan_version` 与 `task_event_seq`。旧结果进入 stale evidence，除非 SlowTask 显式 adopt/rebase。Retries 必须使用稳定 evidence snapshot，且不得产生新的 hidden instructions。
 
 ## Trace and Privacy Notes
 
-Do not store full raw provider prompts when they include user-sensitive content. Store redacted evidence summaries, schema name/version, model id, output mode, validation status, and provider request id when safe. Authorization headers, cookies, API keys, and tool credentials must never enter trace.
+当 provider prompts 包含用户敏感内容时，不要保存完整 raw prompt。保存 redacted evidence summaries、schema name/version、model id、output mode、validation status 与安全的 provider request id。Authorization headers、cookies、API keys 与 tool credentials 绝不进入 trace。
 
 ## Degradation Proposal
 
-- If structured JSON fails after bounded retry, emit a degraded planning failure with validation errors.
-- If tool-call format is unsupported, ask for plain JSON `tool_call_proposal` and normalize locally.
-- If long context is unavailable, summarize evidence through deterministic reducers before calling the model.
-- If provider times out, keep current plan version unchanged and optionally use mock/fallback plan for demo replay.
+- Structured JSON 在 bounded retry 后仍失败时，发出带 validation errors 的 degraded planning failure。
+- 如果 tool-call format unsupported，请求 plain JSON `tool_call_proposal` 并本地 normalize。
+- 如果 long context unavailable，先通过 deterministic reducers 总结 evidence，再调用模型。
+- 如果 provider timeout，保持 current plan version 不变，并可选用 mock/fallback plan 支持 demo replay。
 
 ## Risks
 
-- Treating model-side tool calling as execution would violate Tool Executor boundaries.
-- Letting late completions update current state would violate ADR-016.
-- Large contexts can accidentally include untrusted web evidence in instruction space.
-- Provider-specific JSON modes may differ and create portability issues.
-- Reasoning traces can leak private prompt/evidence content if logged.
+- 把 model-side tool calling 当作 execution 会违反 Tool Executor boundaries。
+- 允许 late completions 更新 current state 会违反 ADR-016。
+- Large contexts 可能意外把 untrusted web evidence 放进 instruction space。
+- Provider-specific JSON modes 可能不同，带来 portability issues。
+- Reasoning traces 如果记录，可能泄露 private prompt/evidence content。
 
 ## Suggested Follow-up Experiments
 
-- Run schema-constrained planning prompts across Qwen3, DeepSeek, GLM-4.5, and Kimi K2.
-- Test invalid JSON repair with fixed synthetic evidence.
-- Simulate cancellation and plan_version changes while completions are in flight.
-- Compare model-side tool-call proposals against local Tool Executor authorization gates.
-- Measure cost/latency for compact evidence snapshots vs long raw context.
+- 在 Qwen3、DeepSeek、GLM-4.5 与 Kimi K2 上跑 schema-constrained planning prompts。
+- 用固定 synthetic evidence 测 invalid JSON repair。
+- 在 completion in-flight 时模拟 cancellation 与 plan_version changes。
+- 比较 model-side tool-call proposals 与 local Tool Executor authorization gates。
+- 测 compact evidence snapshots 与 long raw context 的 cost/latency。
 
 ## Recommendation
 
-Prioritize Qwen3 through DashScope/Bailian or self-hosted Qwen3 for SlowTask planning, with DeepSeek as the first alternate API candidate. Optimize for schema validity, retry behavior, and plan_version stale policy rather than speech features. Keep model-side tool calls as proposals that must pass through Tool Executor.
+SlowTask planning 优先 Qwen3 through DashScope/Bailian 或 self-hosted Qwen3；DeepSeek 作为第一 alternate API candidate。优化重点是 schema validity、retry behavior 与 plan_version stale policy，而不是 speech features。Model-side tool calls 只能作为 proposals，并必须通过 Tool Executor。
