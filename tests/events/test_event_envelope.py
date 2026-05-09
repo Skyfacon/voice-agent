@@ -148,3 +148,13 @@ def test_mvp0_session_start_fixture_validates_through_event_validator() -> None:
     assert [event["event_seq"] for event in validated_events] == [1, 2]
     assert get_event_definition(validated_events[0]["event_name"]).is_root is True
     assert validated_events[1]["caused_by_event_id"] == validated_events[0]["event_id"]
+
+
+def test_session_start_fixture_uses_same_capability_snapshot_ref_for_startup_chain() -> None:
+    fixture = load_json_fixture(MVP0_REPLAY_FIXTURE_DIR / "001-event-envelope-session-start.fixture.json")
+
+    validated_events = [validate_event_envelope(event) for event in fixture["events"]]
+
+    assert validated_events[0]["event_name"] == "SESSION_STARTED"
+    assert validated_events[1]["event_name"] == "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED"
+    assert validated_events[0]["capability_snapshot_ref"] == validated_events[1]["capability_snapshot_ref"]

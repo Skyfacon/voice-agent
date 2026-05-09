@@ -64,6 +64,21 @@ ALLOWED_MANIFEST_SAFETY_FLAGS = {
 ALLOWED_SAFE_SECRET_METADATA_KEYS = {
     "secret_kind",
 }
+REQUIRED_REPLAY_MANIFEST_FIELDS = {
+    "manifest_schema_version",
+    "replay_id",
+    "source_trace_ref",
+    "replay_mode",
+    "event_schema_version_range",
+    "fixture_domain",
+    "generated_from",
+    "contains_raw_audio",
+    "contains_raw_trace",
+    "contains_real_user_input",
+    "contains_secrets",
+    "contains_unredacted_tool_result",
+    "contains_large_raw_web_content",
+}
 
 
 def iter_json_values(value: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
@@ -77,8 +92,37 @@ def iter_json_values(value: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple
     return values
 
 
+def github_allowed_manifest(**overrides: Any) -> dict[str, Any]:
+    manifest: dict[str, Any] = {
+        "manifest_schema_version": "1.0",
+        "replay_id": "replay_synthetic_inline",
+        "source_trace_ref": "fixture://mvp0/synthetic-inline",
+        "replay_mode": "deterministic",
+        "event_schema_version_range": ["1.0"],
+        "fixture_domain": "GITHUB_ALLOWED",
+        "generated_from": "synthetic",
+        "contains_raw_audio": False,
+        "contains_raw_trace": False,
+        "contains_real_user_input": False,
+        "contains_secrets": False,
+        "contains_unredacted_tool_result": False,
+        "contains_large_raw_web_content": False,
+        "allowed_re_eval_components": [],
+    }
+    manifest.update(overrides)
+    return manifest
+
+
 def assert_fixture_is_github_safe(fixture: dict[str, Any]) -> None:
     manifest = fixture["replay_manifest"]
+    assert REQUIRED_REPLAY_MANIFEST_FIELDS <= set(manifest), sorted(
+        REQUIRED_REPLAY_MANIFEST_FIELDS - set(manifest)
+    )
+    assert manifest["manifest_schema_version"] == "1.0"
+    assert manifest["replay_id"].startswith("replay_")
+    assert manifest["source_trace_ref"].startswith("fixture://")
+    assert manifest["replay_mode"] in {"deterministic", "degraded", "re_eval"}
+    assert manifest["event_schema_version_range"] == ["1.0"]
     assert manifest["fixture_domain"] == "GITHUB_ALLOWED"
     assert manifest["generated_from"] in {"synthetic", "redacted", "hand_written_minimal"}
     assert manifest["contains_raw_audio"] is False
@@ -178,16 +222,7 @@ def test_all_mvp0_replay_fixtures_are_github_safe(fixture_path) -> None:
 
 def test_fixture_safety_gate_allows_blocked_secret_metadata_without_secret_value() -> None:
     fixture = {
-        "replay_manifest": {
-            "fixture_domain": "GITHUB_ALLOWED",
-            "generated_from": "synthetic",
-            "contains_raw_audio": False,
-            "contains_raw_trace": False,
-            "contains_real_user_input": False,
-            "contains_secrets": False,
-            "contains_unredacted_tool_result": False,
-            "contains_large_raw_web_content": False,
-        },
+        "replay_manifest": github_allowed_manifest(),
         "events": [
             {
                 "event_name": "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
@@ -212,16 +247,7 @@ def test_fixture_safety_gate_allows_blocked_secret_metadata_without_secret_value
 )
 def test_fixture_safety_gate_rejects_disallowed_payloads(payload: dict[str, Any]) -> None:
     unsafe_fixture = {
-        "replay_manifest": {
-            "fixture_domain": "GITHUB_ALLOWED",
-            "generated_from": "synthetic",
-            "contains_raw_audio": False,
-            "contains_raw_trace": False,
-            "contains_real_user_input": False,
-            "contains_secrets": False,
-            "contains_unredacted_tool_result": False,
-            "contains_large_raw_web_content": False,
-        },
+        "replay_manifest": github_allowed_manifest(),
         "events": [
             {
                 "event_id": "evt_synthetic_unsafe",
