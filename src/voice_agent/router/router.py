@@ -6,6 +6,10 @@ from voice_agent.events.journal import InMemoryEventJournal
 
 
 MVP0_ROUTER_DECISIONS = frozenset({"FAST_ONLY", "IGNORE"})
+MVP0_TASK_FOCUS_BY_DECISION = {
+    "FAST_ONLY": "FOREGROUND_CHAT",
+    "IGNORE": "NON_ASSISTANT",
+}
 
 
 class MVP0Router:
@@ -40,7 +44,11 @@ class MVP0Router:
         if router_decision not in MVP0_ROUTER_DECISIONS:
             raise ValueError("MVP0 router_decision must be FAST_ONLY or IGNORE")
 
-        resolved_task_focus = task_focus or ("FOREGROUND_CHAT" if router_decision == "FAST_ONLY" else "NON_ASSISTANT")
+        expected_task_focus = MVP0_TASK_FOCUS_BY_DECISION[router_decision]
+        resolved_task_focus = task_focus or expected_task_focus
+        if resolved_task_focus != expected_task_focus:
+            raise ValueError("MVP0 task_focus must match FAST_ONLY/IGNORE skeleton labels")
+
         return self._journal.append(
             event_name="ROUTER_DECISION_EMITTED",
             event_id=event_id,

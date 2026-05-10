@@ -152,6 +152,7 @@ class InteractionController:
     ) -> AudioIngressCommitResult:
         _validate_speech_end_event(speech_end_event)
         audio_span_id = str(speech_end_event["audio_span_id"])
+        _validate_prior_audio_turn_opened(self._journal.events(), turn_id=turn_id, audio_span_id=audio_span_id)
         fields: dict[str, Any] = {
             "turn_id": turn_id,
             "audio_span_id": audio_span_id,
@@ -288,6 +289,18 @@ def _validate_barge_in_candidate_event(barge_in_candidate_event: Mapping[str, An
         if barge_in_candidate_event.get(field) in (None, ""):
             raise ValueError(f"BARGE_IN_CANDIDATE must include {field}")
     _validate_non_negative_offset(barge_in_candidate_event["playback_offset_ms"], field_name="playback_offset_ms")
+
+
+def _validate_prior_audio_turn_opened(events: list[dict[str, Any]], *, turn_id: str, audio_span_id: str) -> None:
+    for event in events:
+        if (
+            event.get("event_name") == "TURN_OPENED"
+            and event.get("turn_id") == turn_id
+            and event.get("audio_span_id") == audio_span_id
+            and event.get("input_modality") == AUDIO_INPUT_MODALITY
+        ):
+            return
+    raise ValueError("commit_audio_ingress requires a prior matching audio TURN_OPENED event")
 
 
 def _validate_active_playback_span(events: list[dict[str, Any]], playback_span_id: str) -> None:

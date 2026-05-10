@@ -9,6 +9,7 @@ from voice_agent.events.envelope import EventValidationError, validate_event_env
 from voice_agent.events.registry import get_event_definition
 from voice_agent.replay.manifest import ReplayManifest, validate_replay_manifest
 from voice_agent.replay.state_digest import state_digest
+from voice_agent.router.router import MVP0_TASK_FOCUS_BY_DECISION
 from voice_agent.state.adapter_health_state import AdapterHealthState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
@@ -26,6 +27,7 @@ class ReplayResult:
     fixture_domain: str
     manifest: ReplayManifest
     ordered_events: tuple[dict[str, Any], ...]
+    replay_events: tuple[dict[str, Any], ...]
     interaction_state: InteractionState
     task_focus_state: TaskFocusState
     playback_state: PlaybackState
@@ -96,12 +98,19 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
     )
+    replay_events = _build_replay_marker_events(
+        manifest=manifest,
+        ordered_events=ordered_events,
+        state_digest_payload=digest,
+        result_status=result_status,
+    )
 
     return ReplayResult(
         replay_mode=manifest.replay_mode,
         fixture_domain=manifest.fixture_domain,
         manifest=manifest,
         ordered_events=tuple(deepcopy(ordered_events)),
+        replay_events=replay_events,
         interaction_state=interaction_state,
         task_focus_state=task_focus_state,
         playback_state=playback_state,
@@ -127,8 +136,89 @@ def _validate_and_order_events(raw_events: Sequence[object]) -> list[dict[str, A
     _validate_unique_event_seq(ordered_events)
     _validate_single_session(ordered_events)
     _validate_causal_links_after_sort(ordered_events)
+    _validate_audio_turn_opened_before_commit(ordered_events)
+    _validate_mvp0_router_decision_scope(ordered_events)
     _validate_post_commit_understanding_and_router_order(ordered_events)
     return ordered_events
+
+
+def _build_replay_marker_events(
+    *,
+    manifest: ReplayManifest,
+    ordered_events: Sequence[Mapping[str, Any]],
+    state_digest_payload: Mapping[str, Any],
+    result_status: str,
+) -> tuple[dict[str, Any], ...]:
+    marker_context = _replay_marker_context(manifest=manifest, ordered_events=ordered_events)
+    replay_started_payload: dict[str, Any] = {
+        "event_name": "REPLAY_STARTED",
+        "event_id": f"evt_{manifest.replay_id}_started",
+        "event_seq": marker_context["started_event_seq"],
+        "event_schema_version": marker_context["event_schema_version"],
+        "session_id": marker_context["session_id"],
+        "conversation_id": marker_context["conversation_id"],
+        "source_module": "replay_runtime",
+        "created_monotonic_ms": marker_context["created_monotonic_ms"],
+        "created_wall_clock_ms": marker_context["created_wall_clock_ms"],
+        "trace_redaction_level": "metadata_only",
+        "replay_id": manifest.replay_id,
+        "source_trace_ref": manifest.source_trace_ref,
+        "replay_mode": manifest.replay_mode,
+    }
+    if marker_context["caused_by_event_id"] is not None:
+        replay_started_payload["caused_by_event_id"] = marker_context["caused_by_event_id"]
+
+    replay_started = validate_event_envelope(replay_started_payload)
+    replay_completed = validate_event_envelope(
+        {
+            "event_name": "REPLAY_COMPLETED",
+            "event_id": f"evt_{manifest.replay_id}_completed",
+            "event_seq": marker_context["completed_event_seq"],
+            "event_schema_version": marker_context["event_schema_version"],
+            "session_id": marker_context["session_id"],
+            "conversation_id": marker_context["conversation_id"],
+            "source_module": "replay_runtime",
+            "created_monotonic_ms": marker_context["created_monotonic_ms"],
+            "created_wall_clock_ms": marker_context["created_wall_clock_ms"],
+            "caused_by_event_id": replay_started["event_id"],
+            "trace_redaction_level": "metadata_only",
+            "replay_id": manifest.replay_id,
+            "result_status": result_status,
+            "state_digest": deepcopy(dict(state_digest_payload)),
+        }
+    )
+    return (replay_started, replay_completed)
+
+
+def _replay_marker_context(
+    *,
+    manifest: ReplayManifest,
+    ordered_events: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    if ordered_events:
+        final_source_event = ordered_events[-1]
+        final_event_seq = int(final_source_event["event_seq"])
+        return {
+            "started_event_seq": final_event_seq + 1,
+            "completed_event_seq": final_event_seq + 2,
+            "event_schema_version": final_source_event["event_schema_version"],
+            "session_id": final_source_event["session_id"],
+            "conversation_id": final_source_event["conversation_id"],
+            "created_monotonic_ms": final_source_event["created_monotonic_ms"],
+            "created_wall_clock_ms": final_source_event["created_wall_clock_ms"],
+            "caused_by_event_id": final_source_event["event_id"],
+        }
+
+    return {
+        "started_event_seq": 1,
+        "completed_event_seq": 2,
+        "event_schema_version": manifest.event_schema_version_range[0],
+        "session_id": f"sess_{manifest.replay_id}",
+        "conversation_id": f"conv_{manifest.replay_id}",
+        "created_monotonic_ms": 0,
+        "created_wall_clock_ms": 0,
+        "caused_by_event_id": None,
+    }
 
 
 def _validate_unique_event_seq(ordered_events: Sequence[Mapping[str, Any]]) -> None:
@@ -158,11 +248,53 @@ def _validate_causal_links_after_sort(ordered_events: Sequence[Mapping[str, Any]
         if definition.is_root:
             seen_event_ids.add(event_id)
             continue
+        if caused_by_event_id in (None, ""):
+            if definition.caused_by_event_required:
+                raise ReplayValidationError("caused_by_event_id must be present for non-root events")
+            seen_event_ids.add(event_id)
+            continue
         if caused_by_event_id not in seen_event_ids:
             raise ReplayValidationError(
                 f"caused_by_event_id must reference an earlier event_seq: {caused_by_event_id}"
             )
         seen_event_ids.add(event_id)
+
+
+def _validate_audio_turn_opened_before_commit(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    opened_audio_turns: set[tuple[str, str]] = set()
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "TURN_OPENED" and event.get("input_modality") == "audio":
+            audio_span_id = event.get("audio_span_id")
+            if audio_span_id not in (None, ""):
+                opened_audio_turns.add((str(event["turn_id"]), str(audio_span_id)))
+        elif event_name in {"TURN_INGRESS_ACCEPTED", "TURN_INGRESS_COMMITTED"} and _is_audio_ingress_event(event):
+            audio_span_id = event.get("audio_span_id")
+            if audio_span_id in (None, ""):
+                raise ReplayValidationError(f"{event_name} audio ingress requires audio_span_id")
+            if (str(event["turn_id"]), str(audio_span_id)) not in opened_audio_turns:
+                raise ReplayValidationError(f"{event_name} requires prior matching audio TURN_OPENED")
+
+
+def _validate_mvp0_router_decision_scope(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    for event in ordered_events:
+        if event["event_name"] != "ROUTER_DECISION_EMITTED":
+            continue
+
+        router_decision = str(event["router_decision"])
+        expected_task_focus = MVP0_TASK_FOCUS_BY_DECISION.get(router_decision)
+        if expected_task_focus is None:
+            raise ReplayValidationError("MVP0 router_decision must be FAST_ONLY or IGNORE")
+
+        task_focus = event.get("task_focus")
+        if task_focus is not None and str(task_focus) != expected_task_focus:
+            raise ReplayValidationError("MVP0 task_focus must match FAST_ONLY/IGNORE skeleton labels")
+
+
+def _is_audio_ingress_event(event: Mapping[str, Any]) -> bool:
+    if event.get("input_modality") == "audio":
+        return True
+    return event.get("audio_span_id") not in (None, "") and event.get("text_span_id") in (None, "")
 
 
 def _validate_post_commit_understanding_and_router_order(ordered_events: Sequence[Mapping[str, Any]]) -> None:

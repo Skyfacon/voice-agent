@@ -19,7 +19,7 @@
 Verified on 2026-05-10:
 
 - MVP-0 Slice 0-9 are implemented in `src/voice_agent/`, `tests/`, and `tests/fixtures/replay/mvp0/`.
-- `./scripts/test -q` currently passes with 124 tests.
+- `./scripts/test -q` currently passes with 139 tests after MVP-0 closeout hardening.
 - The replay fixture set includes `000-empty-session` through `009-local-trace-safety` plus `manifest.index.json`.
 - The latest main history includes Slice 9, `test: add mvp0 acceptance runner`.
 - This document now serves as both the original MVP-0 backlog and the completion checklist for the implemented MVP-0 walking skeleton.
@@ -28,6 +28,35 @@ Notes for readers:
 
 - In the slice details below, file lists are marked as implemented or modified according to the current repository state.
 - MVP-0 remains mock-only. No real model adapter, SlowTask, Tool Executor, Composer coverage, frontend demo, or demo tool backend has been implemented.
+
+## MVP-0 Closeout Hardening Review
+
+Verified on 2026-05-10 after closeout review:
+
+- Latest review result: no blocking MVP-0 closeout findings.
+- `git diff --check` passed with no whitespace or patch-format errors.
+- `./scripts/test -q` passed with 139 tests.
+- The closeout diff remains MVP-0 hardening only. It does not add real models, real tools, network calls, clock/random dependencies, SlowTask runtime, UserPatch runtime, Tool Executor, Composer coverage, frontend UI patching, or new MVP architecture capability.
+
+Hardening themes covered by the closeout diff:
+
+- Event Journal trace redaction and blocked-write audit now record metadata-only safety events for redacted or blocked secret-like payloads without copying raw secret values.
+- Replay now emits `REPLAY_STARTED` / `REPLAY_COMPLETED` marker events and validates deterministic replay invariants more strictly.
+- Router MVP-0 scope is guarded to `FAST_ONLY` / `IGNORE`, with matching MVP-0 task focus labels only.
+- Interaction Controller rejects audio ingress commit unless a matching audio `TURN_OPENED` exists first.
+- State reducer negative paths now reduce held input to `HOLDING_INPUT` and rejected ingress to `WAITING_USER`.
+- Fixture and replay safety tests cover redaction audit, blocked-write audit, replay markers, Router scope guards, audio turn-open guard, and negative reducer paths.
+
+Compliance conclusion:
+
+- The closeout hardening follows `AGENTS.md` and accepted ADR-001 / ADR-002 / ADR-003 / ADR-010 / ADR-011 / ADR-012 / ADR-015.
+- It preserves MVP-0 scope and mock-only adapter boundaries.
+- It does not introduce raw audio, raw debug trace, secrets, unredacted real user input, or unsafe replay fixture content.
+- It leaves the MVP-0 walking skeleton suitable as the completed event-driven live-loop baseline.
+
+Remaining non-blocking backlog:
+
+- `TRACE_SECRET_REDACTION_APPLIED` wording in ADR/spec docs should be clarified later: implementation treats `caused_by_event_id` or `payload_ref` as the redaction target, while older wording says `event_id` or `payload_ref`. Current fixtures and tests are valid; this is documentation wording cleanup, not a closeout blocker.
 
 ## MVP-0 禁止范围
 

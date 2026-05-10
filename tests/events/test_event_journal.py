@@ -190,6 +190,122 @@ def test_journal_redacts_secret_like_payload_fields_before_append() -> None:
     }
     assert journal.events()[0]["api_key"] == REDACTED_SECRET_VALUE
     assert "sk-synthetic-secret" not in repr(journal.events()[0])
+    assert journal.events()[1]["event_name"] == "TRACE_SECRET_REDACTION_APPLIED"
+    assert journal.events()[1]["caused_by_event_id"] == event["event_id"]
+    assert journal.events()[1]["payload_ref"] == "payload://redacted/evt_mvp0_session_started_001"
+    assert journal.events()[1]["redacted_fields"] == ["api_key", "secret_key"]
+
+
+def test_journal_redaction_audit_id_collision_does_not_make_append_partial() -> None:
+    journal = make_journal()
+    old_generated_audit_id = "evt_trace_redaction_applied_evt_mvp0_capability_snapshot_001"
+    root_event = append_session_started(journal, event_id=old_generated_audit_id)
+
+    event = append_capability_snapshot(
+        journal,
+        caused_by_event_id=str(root_event["event_id"]),
+        api_key="sk-synthetic-secret",
+    )
+
+    events = journal.events()
+    assert event["event_id"] == "evt_mvp0_capability_snapshot_001"
+    assert [journal_event["event_name"] for journal_event in events] == [
+        "SESSION_STARTED",
+        "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED",
+        "TRACE_SECRET_REDACTION_APPLIED",
+    ]
+    assert events[2]["event_id"] != old_generated_audit_id
+    assert events[2]["event_id"] == "evt_trace_redaction_applied_00000003"
+    assert events[2]["caused_by_event_id"] == event["event_id"]
+    assert events[2]["payload_ref"] == "payload://redacted/evt_mvp0_capability_snapshot_001"
+
+
+def test_journal_records_blocked_secret_trace_event_for_non_root_attempt() -> None:
+    journal = make_journal()
+    root_event = append_session_started(journal)
+
+    with pytest.raises(PayloadBlockedError):
+        append_capability_snapshot(
+            journal,
+            caused_by_event_id=str(root_event["event_id"]),
+            notes="Bearer synthetic-token",
+        )
+
+    events = journal.events()
+    assert [event["event_name"] for event in events] == [
+        "SESSION_STARTED",
+        "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+    ]
+    assert events[1]["caused_by_event_id"] == root_event["event_id"]
+    assert events[1]["source_module"] == "trace_runtime"
+    assert events[1]["event_id"] == "evt_trace_write_blocked_00000002"
+    assert events[1]["blocked_payload_ref"] == "payload://blocked/00000002"
+    assert events[1]["secret_kind"] == "secret_like_payload"
+    assert events[1]["blocking_reason"] == "blocked before journal append"
+
+
+def test_journal_records_blocked_secret_trace_event_for_root_attempt() -> None:
+    journal = make_journal()
+
+    with pytest.raises(PayloadBlockedError):
+        append_session_started(journal, notes="Bearer synthetic-token")
+
+    events = journal.events()
+    assert [event["event_name"] for event in events] == [
+        "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+    ]
+    assert events[0]["event_id"] == "evt_trace_write_blocked_00000001"
+    assert events[0]["event_seq"] == 1
+    assert "caused_by_event_id" not in events[0]
+    assert events[0]["source_module"] == "trace_runtime"
+    assert events[0]["blocked_payload_ref"] == "payload://blocked/00000001"
+    assert events[0]["secret_kind"] == "secret_like_payload"
+    assert events[0]["blocking_reason"] == "blocked before journal append"
+    assert "Bearer synthetic-token" not in repr(events)
+
+
+def test_journal_blocked_secret_audit_does_not_copy_secret_like_event_metadata() -> None:
+    journal = make_journal()
+    root_event = append_session_started(journal)
+
+    with pytest.raises(PayloadBlockedError):
+        append_capability_snapshot(
+            journal,
+            caused_by_event_id=str(root_event["event_id"]),
+            event_id="evt_sk-test-secret",
+            source_module="Bearer synthetic-token",
+        )
+
+    events = journal.events()
+    assert [event["event_name"] for event in events] == [
+        "SESSION_STARTED",
+        "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+    ]
+    assert events[1]["event_id"] == "evt_trace_write_blocked_00000002"
+    assert events[1]["blocked_payload_ref"] == "payload://blocked/00000002"
+    assert events[1]["blocking_reason"] == "blocked before journal append"
+    assert "sk-test-secret" not in repr(events)
+    assert "Bearer synthetic-token" not in repr(events)
+
+
+def test_journal_blocked_secret_audit_uses_safe_schema_version_for_blocked_envelope_secret() -> None:
+    journal = make_journal()
+    root_event = append_session_started(journal)
+
+    with pytest.raises(PayloadBlockedError):
+        append_capability_snapshot(
+            journal,
+            caused_by_event_id=str(root_event["event_id"]),
+            event_schema_version="Bearer synthetic-token",
+        )
+
+    events = journal.events()
+    assert [event["event_name"] for event in events] == [
+        "SESSION_STARTED",
+        "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+    ]
+    assert events[1]["event_schema_version"] == "1.0"
+    assert "Bearer synthetic-token" not in repr(events)
 
 
 @pytest.mark.parametrize(
@@ -211,4 +327,13 @@ def test_journal_blocks_raw_or_unredactable_sensitive_payloads(unsafe_field: dic
     with pytest.raises(PayloadBlockedError):
         append_session_started(journal, **unsafe_field)
 
-    assert journal.events() == []
+    events = journal.events()
+    assert [event["event_name"] for event in events] == [
+        "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+    ]
+    assert events[0]["event_id"] == "evt_trace_write_blocked_00000001"
+    assert events[0]["trace_redaction_level"] == "metadata_only"
+    assert "audio/raw/sess.wav" not in repr(events)
+    assert "traces/session.jsonl" not in repr(events)
+    assert "sk-test-secret" not in repr(events)
+    assert "Bearer synthetic-token" not in repr(events)

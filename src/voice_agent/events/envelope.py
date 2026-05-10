@@ -42,8 +42,10 @@ def validate_event_envelope(event: Mapping[str, Any]) -> dict[str, Any]:
         if normalized.get("caused_by_event_id") not in ("", None):
             raise EventValidationError("root event must not include caused_by_event_id")
         normalized.pop("caused_by_event_id", None)
-    else:
+    elif definition.caused_by_event_required:
         _require_present(normalized, "caused_by_event_id")
+    elif normalized.get("caused_by_event_id") in ("", None):
+        normalized.pop("caused_by_event_id", None)
 
     for field in definition.required_fields:
         _require_present(normalized, field)

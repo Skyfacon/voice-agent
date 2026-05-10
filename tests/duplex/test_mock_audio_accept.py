@@ -205,3 +205,18 @@ def test_controller_rejects_non_audio_duplex_events_for_audio_path() -> None:
             created_monotonic_ms=513,
             created_wall_clock_ms=1700000000513,
         )
+
+
+def test_controller_rejects_audio_commit_without_prior_matching_turn_opened() -> None:
+    InteractionController = _slice5_symbol("voice_agent.interaction.controller", "InteractionController")
+    startup, emitted = _full_audio_path()
+
+    isolated_startup = _startup_session()
+    with pytest.raises(ValueError, match="TURN_OPENED"):
+        InteractionController(isolated_startup.journal).commit_audio_ingress(
+            emitted["speech_end"],
+            turn_id="turn_slice5_audio_001",
+            utterance_id="utt_slice5_audio_001",
+            created_monotonic_ms=543,
+            created_wall_clock_ms=1700000000543,
+        )

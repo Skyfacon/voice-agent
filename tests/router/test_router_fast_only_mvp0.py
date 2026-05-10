@@ -132,3 +132,20 @@ def test_router_rejects_slice6_out_of_scope_decisions() -> None:
             created_wall_clock_ms=1700000000632,
             router_decision="SPAWN_SLOW_TASK",
         )
+
+
+def test_router_rejects_slice6_out_of_scope_task_focus_labels() -> None:
+    MVP0Router = _slice6_symbol("voice_agent.router.router", "MVP0Router")
+    startup, turn_committed, asr_event, thinker_event = _text_commit_with_mock_frames()
+
+    with pytest.raises(ValueError, match="MVP0 task_focus"):
+        MVP0Router(startup.journal).emit_decision(
+            turn_committed_event=turn_committed,
+            asr_frame_event=asr_event,
+            thinker_frame_event=thinker_event,
+            event_id="evt_mvp0_slice6_router_patch_focus",
+            created_monotonic_ms=632,
+            created_wall_clock_ms=1700000000632,
+            router_decision="FAST_ONLY",
+            task_focus="PATCH_ACTIVE_SLOW_TASK",
+        )
