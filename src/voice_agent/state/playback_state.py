@@ -49,7 +49,7 @@ class PlaybackState:
             if self._is_current_nonterminal_span(event):
                 self.latest_playback_offset_ms = int(event["playback_offset_ms"])
         elif event_name == "PLAYBACK_COMMITTED":
-            if self._is_current_nonterminal_span(event):
+            if self._is_current_untruncated_span(event):
                 self.latest_committed_offset_ms = int(event["playback_offset_ms"])
         elif event_name == "TTS_TRUNCATE_REQUESTED":
             if self._is_current_or_unset_span(event):
@@ -76,6 +76,9 @@ class PlaybackState:
 
     def _is_current_nonterminal_span(self, event: Mapping[str, Any]) -> bool:
         return self.phase not in TERMINAL_PHASES and self._is_current_or_unset_span(event)
+
+    def _is_current_untruncated_span(self, event: Mapping[str, Any]) -> bool:
+        return self.phase != "TRUNCATED" and self._is_current_or_unset_span(event)
 
     def _is_current_or_unset_span(self, event: Mapping[str, Any]) -> bool:
         event_span = str(event["playback_span_id"])

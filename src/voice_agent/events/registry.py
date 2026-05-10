@@ -167,6 +167,10 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
         "PLAYBACK_COMMITTED",
         required_fields=("playback_span_id", "playback_offset_ms", "commit_basis"),
     ),
+    "PLAYBACK_FINISHED": _definition(
+        "PLAYBACK_FINISHED",
+        required_fields=("playback_span_id", "final_playback_offset_ms"),
+    ),
     "TTS_TRUNCATE_REQUESTED": _definition(
         "TTS_TRUNCATE_REQUESTED",
         required_fields=("playback_span_id", "cutoff_playback_offset_ms", "interrupt_candidate_event_id"),

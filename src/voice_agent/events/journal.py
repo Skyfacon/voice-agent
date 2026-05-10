@@ -37,6 +37,8 @@ class InMemoryEventJournal:
             raise ValueError(f"Duplicate event_id in session journal: {event_id}")
         if caused_by_event_id is not None and caused_by_event_id not in self._event_ids:
             raise ValueError(f"caused_by_event_id does not reference an appended event: {caused_by_event_id}")
+        if event_name == "PLAYBACK_SPAN_STARTED" and "playback_span_id" in fields:
+            self._validate_unique_playback_span_id(fields["playback_span_id"])
 
         event: dict[str, Any] = {
             "event_name": event_name,
@@ -71,3 +73,11 @@ class InMemoryEventJournal:
 
     def events(self) -> list[dict[str, Any]]:
         return deepcopy(self._events)
+
+    def _validate_unique_playback_span_id(self, playback_span_id: object) -> None:
+        for event in self._events:
+            if (
+                event.get("event_name") == "PLAYBACK_SPAN_STARTED"
+                and event.get("playback_span_id") == playback_span_id
+            ):
+                raise ValueError("PLAYBACK_SPAN_STARTED requires a unique playback_span_id per session journal")

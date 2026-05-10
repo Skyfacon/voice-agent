@@ -51,6 +51,26 @@ def append_capability_snapshot(
     return journal.append(**event_fields)
 
 
+def append_playback_span_started(
+    journal: InMemoryEventJournal,
+    caused_by_event_id: str,
+    **fields: object,
+) -> dict[str, object]:
+    event_fields: dict[str, object] = {
+        "event_name": "PLAYBACK_SPAN_STARTED",
+        "event_id": "evt_mvp0_playback_started_001",
+        "source_module": "mock_talker",
+        "caused_by_event_id": caused_by_event_id,
+        "created_monotonic_ms": 20,
+        "created_wall_clock_ms": 1700000000020,
+        "trace_redaction_level": "metadata_only",
+        "playback_span_id": "playback_mvp0_001",
+        "audio_ref": "audio://synthetic/mvp0/mock-playback-001",
+    }
+    event_fields.update(fields)
+    return journal.append(**event_fields)
+
+
 def test_journal_allocates_strictly_increasing_event_seq_per_session() -> None:
     journal = make_journal()
 
@@ -74,6 +94,27 @@ def test_journal_rejects_duplicate_event_id() -> None:
         )
 
     assert [event["event_id"] for event in journal.events()] == ["evt_duplicate"]
+
+
+def test_journal_rejects_duplicate_playback_span_id() -> None:
+    journal = make_journal()
+    first = append_session_started(journal)
+    append_playback_span_started(journal, caused_by_event_id=str(first["event_id"]))
+
+    with pytest.raises(ValueError, match="unique playback_span_id"):
+        append_playback_span_started(
+            journal,
+            caused_by_event_id=str(first["event_id"]),
+            event_id="evt_mvp0_playback_started_duplicate_span",
+            playback_span_id="playback_mvp0_001",
+            audio_ref="audio://synthetic/mvp0/mock-playback-duplicate-span",
+        )
+
+    assert [
+        event["event_id"]
+        for event in journal.events()
+        if event["event_name"] == "PLAYBACK_SPAN_STARTED"
+    ] == ["evt_mvp0_playback_started_001"]
 
 
 def test_journal_rejects_causal_link_to_missing_event() -> None:
