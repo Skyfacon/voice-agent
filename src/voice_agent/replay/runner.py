@@ -12,6 +12,7 @@ from voice_agent.replay.state_digest import state_digest
 from voice_agent.state.adapter_health_state import AdapterHealthState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
+from voice_agent.state.task_focus_state import TaskFocusState
 from voice_agent.state.trace_privacy_state import TracePrivacyState
 
 
@@ -26,6 +27,7 @@ class ReplayResult:
     manifest: ReplayManifest
     ordered_events: tuple[dict[str, Any], ...]
     interaction_state: InteractionState
+    task_focus_state: TaskFocusState
     playback_state: PlaybackState
     adapter_health_state: AdapterHealthState
     trace_privacy_state: TracePrivacyState
@@ -59,6 +61,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         "data_plane_refs": [],
     }
     interaction_state = InteractionState()
+    task_focus_state = TaskFocusState()
     playback_state = PlaybackState()
     adapter_health_state = AdapterHealthState()
     trace_privacy_state = TracePrivacyState.from_manifest(manifest.to_dict())
@@ -67,6 +70,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         diagnostics["data_plane_refs"].extend(_unavailable_data_plane_refs(event))
         handled = [
             interaction_state.reduce_event(event),
+            task_focus_state.reduce_event(event),
             playback_state.reduce_event(event),
             adapter_health_state.reduce_event(event),
             trace_privacy_state.reduce_event(event),
@@ -87,6 +91,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         last_event_seq=ordered_events[-1]["event_seq"] if ordered_events else 0,
         event_schema_version_range=manifest.event_schema_version_range,
         interaction_state=interaction_state,
+        task_focus_state=task_focus_state,
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
@@ -98,6 +103,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         manifest=manifest,
         ordered_events=tuple(deepcopy(ordered_events)),
         interaction_state=interaction_state,
+        task_focus_state=task_focus_state,
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
@@ -121,6 +127,7 @@ def _validate_and_order_events(raw_events: Sequence[object]) -> list[dict[str, A
     _validate_unique_event_seq(ordered_events)
     _validate_single_session(ordered_events)
     _validate_causal_links_after_sort(ordered_events)
+    _validate_post_commit_understanding_and_router_order(ordered_events)
     return ordered_events
 
 
@@ -156,6 +163,59 @@ def _validate_causal_links_after_sort(ordered_events: Sequence[Mapping[str, Any]
                 f"caused_by_event_id must reference an earlier event_seq: {caused_by_event_id}"
             )
         seen_event_ids.add(event_id)
+
+
+def _validate_post_commit_understanding_and_router_order(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    committed_turn_events: dict[tuple[str, str], str] = {}
+    mock_asr_events: dict[tuple[str, str], str] = {}
+    mock_thinker_events: dict[tuple[str, str], str] = {}
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "TURN_INGRESS_COMMITTED":
+            committed_turn_events[_turn_key(event)] = str(event["event_id"])
+        elif event_name == "MOCK_ASR_FRAME_EMITTED":
+            key = _turn_key(event)
+            committed_event_id = committed_turn_events.get(key)
+            if committed_event_id is None:
+                raise ReplayValidationError("MOCK_ASR_FRAME_EMITTED requires prior TURN_INGRESS_COMMITTED")
+            if event.get("caused_by_event_id") != committed_event_id:
+                raise ReplayValidationError("MOCK_ASR_FRAME_EMITTED must be caused by TURN_INGRESS_COMMITTED")
+            mock_asr_events[key] = str(event["event_id"])
+        elif event_name == "MOCK_THINKER_FRAME_EMITTED":
+            key = _turn_key(event)
+            committed_event_id = committed_turn_events.get(key)
+            if committed_event_id is None:
+                raise ReplayValidationError("MOCK_THINKER_FRAME_EMITTED requires prior TURN_INGRESS_COMMITTED")
+            if event.get("caused_by_event_id") != committed_event_id:
+                raise ReplayValidationError("MOCK_THINKER_FRAME_EMITTED must be caused by TURN_INGRESS_COMMITTED")
+            mock_thinker_events[key] = str(event["event_id"])
+        elif event_name == "ROUTER_DECISION_EMITTED":
+            key = _turn_key(event)
+            if key not in committed_turn_events:
+                raise ReplayValidationError("ROUTER_DECISION_EMITTED requires prior TURN_INGRESS_COMMITTED")
+            mock_asr_event_id = mock_asr_events.get(key)
+            mock_thinker_event_id = mock_thinker_events.get(key)
+            if mock_asr_event_id is None and mock_thinker_event_id is None:
+                raise ReplayValidationError(
+                    "ROUTER_DECISION_EMITTED requires prior MOCK_ASR_FRAME_EMITTED or MOCK_THINKER_FRAME_EMITTED"
+                )
+            if event.get("asr_frame_event_id") is not None and mock_asr_event_id is None:
+                raise ReplayValidationError("ROUTER_DECISION_EMITTED asr_frame_event_id requires prior mock ASR")
+            if event.get("asr_frame_event_id") not in (None, mock_asr_event_id):
+                raise ReplayValidationError("ROUTER_DECISION_EMITTED asr_frame_event_id must reference prior mock ASR")
+            if event.get("thinker_frame_event_id") is not None and mock_thinker_event_id is None:
+                raise ReplayValidationError(
+                    "ROUTER_DECISION_EMITTED thinker_frame_event_id requires prior mock Thinker"
+                )
+            if event.get("thinker_frame_event_id") not in (None, mock_thinker_event_id):
+                raise ReplayValidationError(
+                    "ROUTER_DECISION_EMITTED thinker_frame_event_id must reference prior mock Thinker"
+                )
+
+
+def _turn_key(event: Mapping[str, Any]) -> tuple[str, str]:
+    return str(event["turn_id"]), str(event["utterance_id"])
 
 
 def _unavailable_data_plane_refs(event: Mapping[str, Any]) -> list[dict[str, str]]:
