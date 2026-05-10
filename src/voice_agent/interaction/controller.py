@@ -14,6 +14,7 @@ from voice_agent.interaction.policy import (
     TEXT_INPUT_MODALITY,
     TURN_PHASE_COLLECTING_INPUT,
 )
+from voice_agent.state.playback_state import PlaybackState
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,15 @@ class TextIngressCommitResult:
 class AudioIngressCommitResult:
     turn_accepted: dict[str, Any]
     turn_committed: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BargeInTruncateRequestResult:
+    interrupt_candidate: dict[str, Any]
+    truncate_requested: dict[str, Any]
+
+
+MOCK_BARGE_IN_POLICY_REASON = "mock_barge_in_confidence_allows_truncate"
 
 
 class InteractionController:
@@ -183,6 +193,62 @@ class InteractionController:
             turn_committed=turn_committed,
         )
 
+    def request_truncate_for_barge_in(
+        self,
+        barge_in_candidate_event: Mapping[str, Any],
+        *,
+        interrupt_event_id: str,
+        truncate_request_event_id: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        cutoff_playback_offset_ms: int,
+    ) -> BargeInTruncateRequestResult:
+        _validate_barge_in_candidate_event(barge_in_candidate_event)
+        _validate_non_negative_offset(cutoff_playback_offset_ms, field_name="cutoff_playback_offset_ms")
+
+        audio_span_id = str(barge_in_candidate_event["audio_span_id"])
+        playback_span_id = str(barge_in_candidate_event["playback_span_id"])
+        candidate_playback_offset_ms = int(barge_in_candidate_event["playback_offset_ms"])
+        _validate_active_playback_span(self._journal.events(), playback_span_id)
+
+        confidence_summary = {
+            "echo_likelihood": barge_in_candidate_event["echo_likelihood"],
+            "vad_confidence": barge_in_candidate_event["vad_confidence"],
+            "barge_in_confidence": barge_in_candidate_event["barge_in_confidence"],
+        }
+        interrupt_candidate = self._journal.append(
+            event_name="INTERRUPT_CANDIDATE",
+            event_id=interrupt_event_id,
+            source_module="interaction_controller",
+            caused_by_event_id=str(barge_in_candidate_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            trace_redaction_level="metadata_only",
+            audio_span_id=audio_span_id,
+            playback_span_id=playback_span_id,
+            playback_offset_ms=candidate_playback_offset_ms,
+            policy_reason=MOCK_BARGE_IN_POLICY_REASON,
+            confidence_summary=confidence_summary,
+        )
+        truncate_requested = self._journal.append(
+            event_name="TTS_TRUNCATE_REQUESTED",
+            event_id=truncate_request_event_id,
+            source_module="interaction_controller",
+            caused_by_event_id=str(interrupt_candidate["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            trace_redaction_level="metadata_only",
+            audio_span_id=audio_span_id,
+            playback_span_id=playback_span_id,
+            cutoff_playback_offset_ms=cutoff_playback_offset_ms,
+            interrupt_candidate_event_id=str(interrupt_candidate["event_id"]),
+        )
+
+        return BargeInTruncateRequestResult(
+            interrupt_candidate=interrupt_candidate,
+            truncate_requested=truncate_requested,
+        )
+
 
 def _validate_text_event(text_event: Mapping[str, Any]) -> None:
     if text_event.get("event_name") != "TEXT_INPUT_RECEIVED":
@@ -205,3 +271,33 @@ def _validate_speech_end_event(speech_end_event: Mapping[str, Any]) -> None:
         raise ValueError("commit_audio_ingress requires a SPEECH_END_DETECTED event")
     if not speech_end_event.get("audio_span_id"):
         raise ValueError("SPEECH_END_DETECTED must include audio_span_id")
+
+
+def _validate_barge_in_candidate_event(barge_in_candidate_event: Mapping[str, Any]) -> None:
+    if barge_in_candidate_event.get("event_name") != "BARGE_IN_CANDIDATE":
+        raise ValueError("request_truncate_for_barge_in requires a BARGE_IN_CANDIDATE event")
+    for field in (
+        "event_id",
+        "audio_span_id",
+        "playback_span_id",
+        "playback_offset_ms",
+        "echo_likelihood",
+        "vad_confidence",
+        "barge_in_confidence",
+    ):
+        if barge_in_candidate_event.get(field) in (None, ""):
+            raise ValueError(f"BARGE_IN_CANDIDATE must include {field}")
+    _validate_non_negative_offset(barge_in_candidate_event["playback_offset_ms"], field_name="playback_offset_ms")
+
+
+def _validate_active_playback_span(events: list[dict[str, Any]], playback_span_id: str) -> None:
+    playback_state = PlaybackState()
+    for event in events:
+        playback_state.reduce_event(event)
+    if playback_state.current_playback_span_id != playback_span_id or playback_state.phase != "PLAYING":
+        raise ValueError("BARGE_IN_CANDIDATE requires active playback before requesting truncate")
+
+
+def _validate_non_negative_offset(value: object, *, field_name: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")

@@ -83,8 +83,11 @@ class InteractionState:
             self.current_turn_id = str(event["turn_id"])
             self.turn_phase = "TURN_COMMITTED"
             self.last_ingress_outcome = str(event["ingress_outcome"])
+        elif event_name == "BARGE_IN_CANDIDATE":
+            self.playback_phase = "PLAYING"
         elif event_name == "INTERRUPT_CANDIDATE":
             self.turn_phase = "INTERRUPTING"
+            self.playback_phase = "TRUNCATE_REQUESTED"
         elif event_name == "TTS_TRUNCATE_REQUESTED":
             self.playback_phase = "TRUNCATE_REQUESTED"
         elif event_name == "TTS_TRUNCATED":
