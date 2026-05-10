@@ -1,0 +1,101 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP0-ACCEPTANCE",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "required_scenarios": [
+    "MVP0-TEXT-INGRESS-001",
+    "MVP0-AUDIO-INGRESS-001",
+    "MVP0-BARGE-IN-TRUNCATE-001",
+    "MVP0-MOCK-ADAPTER-CAPABILITY-001",
+    "MVP0-LOCAL-TRACE-SAFETY-001"
+  ],
+  "forbidden_event_names": [
+    "SLOWTASK_CREATED",
+    "SLOWTASK_STATE_CHANGED",
+    "USER_PATCH_RECEIVED",
+    "USER_PATCH_INTERPRETED",
+    "PLAN_VERSION_ADVANCED",
+    "TASK_REPLANNED",
+    "TOOL_CALL_STARTED",
+    "TOOL_EXECUTION_STARTED",
+    "TOOL_RESULT_RECEIVED",
+    "TOOL_UI_STATE_PATCHED",
+    "SEMANTIC_COMMITMENT_EMITTED",
+    "SPOKEN_PLAN_EMITTED",
+    "COMMITMENT_COVERAGE_CHECK_PASSED",
+    "PROGRESS_TRUTHFULNESS_CHECK_PASSED"
+  ],
+  "forbidden_source_modules": [
+    "slowtask_runtime",
+    "user_patch_pipeline",
+    "tool_executor",
+    "demo_tool_executor",
+    "composer",
+    "coverage_checker",
+    "truthfulness_checker",
+    "frontend",
+    "web_search"
+  ],
+  "fixture_checks": [
+    {
+      "fixture": "002-mock-capability-snapshot.fixture.json",
+      "purpose": "mock adapter capability snapshot"
+    },
+    {
+      "fixture": "004-text-ingress.fixture.json",
+      "purpose": "text ingress core fixture"
+    },
+    {
+      "fixture": "005-audio-ingress-accepted.fixture.json",
+      "purpose": "audio ingress core fixture"
+    },
+    {
+      "fixture": "006-mock-understanding-router.fixture.json",
+      "purpose": "mock understanding router fixture"
+    },
+    {
+      "fixture": "007-playback-progress.fixture.json",
+      "purpose": "mock playback lifecycle fixture"
+    },
+    {
+      "fixture": "008-barge-in-truncate.fixture.json",
+      "purpose": "barge-in truncate fixture"
+    },
+    {
+      "fixture": "009-local-trace-safety.fixture.json",
+      "purpose": "local trace safety fixture"
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "MVP0-TEXT-INGRESS-001",
+      "fixture": "007-playback-progress.fixture.json"
+    },
+    {
+      "scenario_id": "MVP0-AUDIO-INGRESS-001",
+      "fixture": "006-mock-understanding-router.fixture.json"
+    },
+    {
+      "scenario_id": "MVP0-BARGE-IN-TRUNCATE-001",
+      "fixture": "008-barge-in-truncate.fixture.json",
+      "slo_measurements": [
+        {
+          "name": "barge_in_to_truncate_command_latency",
+          "start_event_id": "evt_mvp0_slice8_barge_candidate",
+          "end_event_id": "evt_mvp0_slice8_truncate_requested",
+          "max_latency_ms": 250,
+          "output_mode": "mock"
+        }
+      ]
+    },
+    {
+      "scenario_id": "MVP0-MOCK-ADAPTER-CAPABILITY-001",
+      "fixture": "002-mock-capability-snapshot.fixture.json"
+    },
+    {
+      "scenario_id": "MVP0-LOCAL-TRACE-SAFETY-001",
+      "fixture": "009-local-trace-safety.fixture.json"
+    }
+  ]
+}
