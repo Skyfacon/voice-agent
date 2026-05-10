@@ -52,12 +52,12 @@ class PlaybackState:
             if self._is_current_untruncated_span(event):
                 self.latest_committed_offset_ms = int(event["playback_offset_ms"])
         elif event_name == "TTS_TRUNCATE_REQUESTED":
-            if self._is_current_or_unset_span(event):
+            if self._is_current_nonterminal_span(event):
                 self.current_playback_span_id = str(event["playback_span_id"])
                 self.phase = "TRUNCATE_REQUESTED"
                 self.cutoff_playback_offset_ms = int(event["cutoff_playback_offset_ms"])
         elif event_name == "TTS_TRUNCATED":
-            if self._is_current_or_unset_span(event):
+            if self._is_current_nonterminal_span(event):
                 self.current_playback_span_id = str(event["playback_span_id"])
                 self.phase = "TRUNCATED"
                 self.actual_stop_offset_ms = int(event["actual_stop_offset_ms"])
