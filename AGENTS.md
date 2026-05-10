@@ -6,6 +6,8 @@ ADR register: `stage_b_adr_register.md`
 
 Accepted ADRs live under: `docs/adr/`
 
+Code review guide / 代码审查指南: `code_review.md`
+
 ## 基本原则 / Core Rules
 
 1. **ADR-first development / 架构变更先 ADR**
@@ -121,6 +123,9 @@ Accepted ADRs live under: `docs/adr/`
 如果需要提交 replay case，必须生成 synthetic / redacted / minimal fixture。
 
 ## Code Review P0/P1 Checklist
+
+Detailed review protocol, severity rubric, slice-specific checks, and `/review` output guidance live in
+`code_review.md`. Reviewers must use it together with this AGENTS.md file and the accepted ADRs.
 
 Reject or flag any change that:
 
