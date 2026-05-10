@@ -1,6 +1,8 @@
 # MVP-0 Walking Skeleton Plan
 
-> This is a planning-only document. It does not create `src/`, `tests/`, runtime code, fixtures, local traces, raw audio, model integrations, git staging, or commits.
+> Historical note: this document was originally a planning-only artifact. The MVP-0 plan described here has now been executed through Slice 9 on main. The document remains useful as the implementation trace and scope guard for the completed MVP-0 walking skeleton.
+
+**Current status:** MVP-0 local walking skeleton is implemented in `src/voice_agent/`, covered by tests under `tests/`, and backed by synthetic replay fixtures under `tests/fixtures/replay/mvp0/`. `./scripts/test -q` currently passes with 124 tests. No real model adapters, SlowTask runtime, Tool Executor, Composer checks, frontend demo, or real external side effects are present.
 
 **Goal:** Turn the accepted MVP-0 backlog into an implementation-ready walking skeleton plan for the event-driven live loop.
 
@@ -65,9 +67,9 @@ MVP-0 must not implement:
 
 ## 3. Directory and File Plan
 
-This section describes future implementation paths. This planning task creates none of these paths.
+This section originally described future implementation paths. These MVP-0 paths now exist in the repository and remain listed here as the implemented walking skeleton layout.
 
-### Future Source Layout
+### Implemented Source Layout
 
 | Path | Responsibility |
 | --- | --- |
@@ -99,7 +101,7 @@ This section describes future implementation paths. This planning task creates n
 | `src/voice_agent/router/router.py` | Post-commit FAST_ONLY/IGNORE MVP-0 Router skeleton. |
 | `src/voice_agent/talker/mock_talker.py` | Mock playback span lifecycle, progress, commit marker, finish, and truncate. |
 
-### Future Test and Fixture Layout
+### Implemented Test and Fixture Layout
 
 | Path | Responsibility |
 | --- | --- |
@@ -577,7 +579,7 @@ Privacy gate fails the slice if:
 
 ## 16. Commit Message Suggestions
 
-Use these only after future implementation and verification. This planning task does not stage or commit.
+These suggested commits are kept as historical slice markers. Current main has already merged MVP-0 work through Slice 9; use future commit messages for MVP-1+ work instead.
 
 | Slice | Suggested commit |
 | --- | --- |
@@ -647,4 +649,4 @@ MVP-0 is accepted only when:
 | Does this plan omit replay/eval gates? | No. Every slice names at least one replay fixture or fixture/acceptance gate, and Slice 9 runs all MVP-0 scenarios. |
 | Does this plan risk raw artifacts? | Controlled. The plan requires `.gitignore` coverage, fixture safety tests, synthetic/redacted/minimal fixtures, and no raw audio/trace/secrets/unredacted input in GitHub-allowed content. |
 | Does this plan change ADRs or Architecture Book? | No. It only maps accepted ADR/spec requirements into future implementation order. |
-| Does this plan create runtime code now? | No. The only file created by this task is this planning document. |
+| Does this plan create runtime code now? | Historical answer: no. Current repository state: MVP-0 runtime code now exists because the plan has been executed. |

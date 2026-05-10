@@ -2,11 +2,11 @@
 
 ## Status
 
-proposed planning baseline。
+accepted planning baseline, updated with current implementation status。
 
 本文档是执行路线设计，不是新的架构决策，不替代 ADR，不授权扩大 MVP scope。实现时仍以 `AGENTS.md`、`stage_b_adr_register.md`、`docs/adr/*.md` 和 `docs/specs/*.md` 为准。
 
-本轮只产出文档；不得创建 `src/` 或 `tests/`，不得接入真实模型，不得实现业务逻辑。
+历史说明：本文最初创建时只产出规划文档，不创建 `src/` 或 `tests/`。当前仓库已经按本文的 System Spine 路线完成 MVP-0 walking skeleton；本文现在用于记录路线和后续阶段边界。
 
 ## Source of Truth
 
@@ -36,7 +36,7 @@ proposed planning baseline。
 
 ## Context
 
-当前仓库是 live 态语音 Agent 的架构基线和 MVP 规划仓库。它已经有 accepted ADR、architecture book、event registry、state reducers、replay spec、model adapter capability spec、MVP-0 backlog 和 MVP-0 acceptance scenarios，但尚未进入系统实现。
+当前仓库是 live 态语音 Agent 的架构基线和 MVP-0 本地实现仓库。它已经有 accepted ADR、architecture book、event registry、state reducers、replay spec、model adapter capability spec、MVP-0 backlog、MVP-0 walking skeleton、synthetic replay fixtures 和 acceptance runner。
 
 目标系统不是传统 `ASR -> LLM -> TTS` 级联，而是：
 
@@ -100,19 +100,23 @@ Model Spikes 保护能力事实：候选模型必须逐项回答 capability matr
 
 ## Timeline Coupling
 
-| 时间点 | System Spine 产物 | Model Spikes 产物 | 互相校验方式 |
-| --- | --- | --- | --- |
-| Phase 0 | planning docs、MVP-0 plan 准备 | spike plan 准备 | 确认模型探针不接主流程。 |
-| Phase 1 | MVP-0 event/replay/mock skeleton | ASR/TTS/Duplex 初步能力证据 | 检查 mock 是否声明了真实候选不支持的能力。 |
-| Phase 2 | System Spine 继续按 MVP backlog 走 | ASR/Thinker/Slow LLM/TTS/VAD/RAG reports | 所有发现进入 capability/risk，不进入 runtime。 |
-| Phase 3 | adapter events、degradation、validation gate | 候选 capability profiles | 形成 `adapter-capability-profiles.md`。 |
-| Phase 4 | MVP-1 SlowTask mock + replay | Slow LLM structured JSON 风险 | 校验 plan_version/stale policy 是否能承受真实模型失败。 |
-| Phase 5 | MVP-2 tools/composer/checks + replay/eval | Thinker/Composer/web evidence 风险 | 校验 Composer 不改写事实，webSearch 只进 evidence。 |
-| Phase 6 | MVP-3 real adapter replacement | model selection shortlist | 只替换 adapter，不新增架构能力。 |
+| 时间点 | System Spine 产物 | Model Spikes 产物 | 当前状态 | 互相校验方式 |
+| --- | --- | --- | --- | --- |
+| Phase 0 | planning docs、MVP-0 plan 准备 | spike plan 准备 | 已完成 | 确认模型探针不接主流程。 |
+| Phase 1 | MVP-0 event/replay/mock skeleton | ASR/TTS/Duplex 初步能力证据 | System Spine 已完成；model spikes 未接主流程 | 检查 mock 是否声明了真实候选不支持的能力。 |
+| Phase 2 | System Spine 继续按 MVP backlog 走 | ASR/Thinker/Slow LLM/TTS/VAD/RAG reports | 待推进 | 所有发现进入 capability/risk，不进入 runtime。 |
+| Phase 3 | adapter events、degradation、validation gate | 候选 capability profiles | 待推进 | 形成 `adapter-capability-profiles.md`。 |
+| Phase 4 | MVP-1 SlowTask mock + replay | Slow LLM structured JSON 风险 | 下一条主要实现线 | 校验 plan_version/stale policy 是否能承受真实模型失败。 |
+| Phase 5 | MVP-2 tools/composer/checks + replay/eval | Thinker/Composer/web evidence 风险 | 未开始 | 校验 Composer 不改写事实，webSearch 只进 evidence。 |
+| Phase 6 | MVP-3 real adapter replacement | model selection shortlist | 未开始 | 只替换 adapter，不新增架构能力。 |
 
 ## Phase Roadmap
 
 ### Phase 0: repo / doc / spec readiness
+
+**当前状态**
+
+已完成。Roadmap、model spike plan、MVP-0 walking skeleton plan 和项目入口文档已存在；本次更新修正了“尚未实现”的过时描述。
 
 **目标**
 
@@ -139,11 +143,11 @@ Model Spikes 保护能力事实：候选模型必须逐项回答 capability matr
 - `stage_b_adr_register.md`
 - ADR-001 / ADR-002 / ADR-003 / ADR-011 / ADR-012 / ADR-015
 
-**预计文件或目录**
+**文件或目录状态**
 
 - 当前创建：`docs/planning/`
 - 当前创建：`docs/research/`
-- 当前不创建：`src/`、`tests/`
+- 当前也已存在：`src/`、`tests/`，它们来自后续 MVP-0 implementation slices。
 
 **验证方式**
 
@@ -167,6 +171,10 @@ Model Spikes 保护能力事实：候选模型必须逐项回答 capability matr
 - 误把 spike 结果当成 MVP runtime 验收。
 
 ### Phase 1: MVP-0 walking skeleton
+
+**当前状态**
+
+已完成。当前 main 已实现 Slice 0-9，并通过 `./scripts/test -q`。MVP-0 仍保持 mock-only：没有真实模型、SlowTask、tools、Composer coverage 或 frontend UI patching。
 
 **目标**
 
@@ -218,9 +226,9 @@ Access Layer
 - `docs/specs/mvp0-acceptance-scenarios.md`
 - `docs/implementation/mvp0-backlog.md`
 
-**预计文件或目录**
+**文件或目录状态**
 
-这些是后续实现阶段预计路径，本轮不创建：
+以下路径原本是后续实现目标，当前已经随 MVP-0 Slice 0-9 落地：
 
 - `src/voice_agent/events/`
 - `src/voice_agent/state/`
@@ -580,42 +588,36 @@ Access Layer
 
 ## First Tasks
 
-| task id | 目标 | 输入文档 | 输出文件 / 文档 | 是否允许写代码 | 验证方式 | commit 建议 |
-| --- | --- | --- | --- | --- | --- | --- |
-| ROAD-001 | 审阅并拍板双泳道路线。 | 本文档、ADR-012。 | `docs/planning/execution-roadmap.md` 审阅意见。 | 否 | 人工确认无 ADR 冲突、无 scope 扩大。 | `docs: add execution roadmap` |
-| ROAD-002 | 审阅并拍板模型探针边界。 | `docs/research/model-spike-plan.md`、ADR-011。 | spike plan 审阅意见。 | 否 | 确认 spike 不接主流程。 | `docs: add model spike plan` |
-| ROAD-003 | 修正 project overview 中 git metadata 过时描述。 | `docs/project-overview.md`、当前 git 状态。 | 可选修改 `docs/project-overview.md`。 | 否 | 文档只修事实，不改架构。 | `docs: clarify repository status` |
-| ROAD-004 | 写 MVP-0 walking skeleton 详细实施计划。 | `docs/implementation/mvp0-backlog.md`、MVP-0 specs。 | `docs/planning/mvp0-walking-skeleton-plan.md`。 | 否 | 覆盖 Slice 0-9、测试、fixture、commit 顺序。 | `docs: add mvp0 walking skeleton plan` |
-| ROAD-005 | 确认 implementation branch / worktree 策略。 | `AGENTS.md`、ADR-015。 | 可选 `docs/planning/development-workflow.md`。 | 否 | 确认 local artifacts ignored。 | `docs: add development workflow notes` |
-| MVP0-001 | Repo safety and runtime skeleton。 | MVP-0 backlog Slice 0。 | 后续 `src/voice_agent/__init__.py`、runtime config、fixture safety tests。 | 后续允许 | fixture safety tests。 | `chore: add mvp0 repo safety skeleton` |
-| MVP0-002 | Event envelope and append-only journal。 | ADR-002、event registry。 | 后续 `src/voice_agent/events/*`、journal tests。 | 后续允许 | event validation、strict `event_seq`、redaction/block tests。 | `feat: add event journal envelope` |
-| MVP0-003 | Mock adapter capability snapshot。 | ADR-011、adapter spec。 | 后续 adapter capability/session tests。 | 后续允许 | `SESSION_STARTED` 后记录 capability snapshot。 | `feat: record mock adapter capabilities` |
-| MVP0-004 | Deterministic reducers and replay core。 | reducer/replay specs。 | 后续 reducers、replay runner、digest tests。 | 后续允许 | replay 不调用模型/工具/网络/时钟/随机数。 | `feat: add deterministic replay core` |
-| MVP0-005 | Text ingress through Interaction Controller。 | ADR-001、MVP0 text scenario。 | 后续 text ingress/controller tests。 | 后续允许 | text event chain 完整。 | `feat: route text ingress through controller` |
-| MVP0-006 | Audio span + mock Duplex accept path。 | ADR-001/002、MVP0 audio scenario。 | 后续 audio ingress/mock Duplex tests。 | 后续允许 | 无 ASR/Thinker before commit；无 raw audio fixture。 | `feat: add mock audio ingress path` |
-| MVP0-007 | Mock understanding and Router skeleton。 | ADR-006/011/012。 | 后续 mock ASR/Thinker、Router tests。 | 后续允许 | mock frames after commit；Router 仅 MVP-0 决策。 | `feat: add mock understanding router path` |
-| MVP0-008 | Mock Talker playback progress。 | ADR-003。 | 后续 mock Talker/playback tests。 | 后续允许 | unique `playback_span_id`、offsets、delivery marker。 | `feat: add mock playback lifecycle` |
-| MVP0-009 | Barge-in candidate to truncate flow。 | ADR-003、replay spec。 | 后续 truncate tests、SLO test、fixture。 | 后续允许 | 因果链和 <=250ms synthetic SLO。 | `feat: add barge in truncate flow` |
-| MVP0-010 | MVP-0 acceptance runner。 | MVP-0 acceptance scenarios。 | 后续 acceptance tests and manifest。 | 后续允许 | 五个 MVP-0 scenarios pass。 | `test: add mvp0 acceptance runner` |
+当前状态：ROAD-001 到 ROAD-004 已完成；MVP0-001 到 MVP0-010 已完成并合入 main。
+
+| task id range | 当前状态 | 证据 |
+| --- | --- | --- |
+| ROAD-001..004 | 已完成 | Roadmap、model spike plan、project overview update、MVP-0 walking skeleton plan 均已存在。 |
+| ROAD-005 | 可选/未单独落地 | 当前已有 `.gitignore`、`.worktrees/` exclusion 和 branch history；如需要更正式 workflow，可后续补 `docs/planning/development-workflow.md`。 |
+| MVP0-001..010 | 已完成 | `src/voice_agent/`、`tests/`、`tests/fixtures/replay/mvp0/manifest.index.json` 已存在；`./scripts/test -q` 通过。 |
+
+后续优先任务应从 Phase 2 model capability spikes、Phase 3 adapter contract hardening，或 Phase 4 MVP-1 SlowTask mock 中选择。
 
 ## Directory and Document Recommendations
 
-当前应创建：
+当前已创建：
 
 - `docs/planning/execution-roadmap.md`
 - `docs/research/model-spike-plan.md`
-
-拍板后建议创建：
-
 - `docs/planning/mvp0-walking-skeleton-plan.md`
+- `src/voice_agent/`
+- `tests/`
+- `tests/fixtures/replay/mvp0/`
+
+后续建议创建：
+
 - `docs/research/model-selection.md`
 - `docs/research/spikes/`
 - `docs/specs/adapter-capability-profiles.md`
+- `tests/fixtures/replay/mvp1/` when MVP-1 begins。
 
-当前不应创建：
+当前仍不应提交：
 
-- `src/`
-- `tests/`
 - `diagnostics/`
 - `traces/`
 - `replays/local/`
@@ -634,7 +636,7 @@ Access Layer
 | 是否允许模型绕过 adapter | 否。真实模型只能通过 adapter 进入 runtime。 |
 | 是否让 webSearch 进入 instruction 区 | 否。webSearch 只作为 `UNTRUSTED_WEB_EVIDENCE`。 |
 | 是否允许真实外部副作用工具 | 否。MVP 工具仅限 demo sandbox。 |
-| 本轮是否创建实现代码 | 否。只创建规划文档。 |
+| 当前是否已有实现代码 | 是。MVP-0 local walking skeleton 已实现；本文不把它升级为服务或真实模型集成。 |
 
 ## Consequences
 
@@ -653,8 +655,8 @@ Access Layer
 
 ## Open Questions
 
-- MVP-0 是否需要先有 CLI/local replay，还是同时做极简 frontend demo？
+- MVP-0 已优先完成 CLI/local replay 和 acceptance tests；是否追加极简 frontend demo 仍需后续明确。
 - MVP-2 首批 3 个 demo tool 选手电筒、备忘录、闹钟，还是加入天气？
 - webSearch 在 MVP-2 用 mock search result 还是真实 read-only API？
 - MVP-3 首批真实 adapter 是否允许用最容易接入的候选，而不是最理想候选？
-- `docs/project-overview.md` 的 git metadata 过时描述是否在下一次文档 commit 中修正？
+- MVP-1 是否先实现 SlowTask state/replay skeleton，还是先补 model spike 输出用于 adapter contract hardening？

@@ -14,6 +14,21 @@
 - Frozen ADR Baseline v0.4
 - `AGENTS.md`
 
+## Current Status
+
+Verified on 2026-05-10:
+
+- MVP-0 Slice 0-9 are implemented in `src/voice_agent/`, `tests/`, and `tests/fixtures/replay/mvp0/`.
+- `./scripts/test -q` currently passes with 124 tests.
+- The replay fixture set includes `000-empty-session` through `009-local-trace-safety` plus `manifest.index.json`.
+- The latest main history includes Slice 9, `test: add mvp0 acceptance runner`.
+- This document now serves as both the original MVP-0 backlog and the completion checklist for the implemented MVP-0 walking skeleton.
+
+Notes for readers:
+
+- In the slice details below, file lists are marked as implemented or modified according to the current repository state.
+- MVP-0 remains mock-only. No real model adapter, SlowTask, Tool Executor, Composer coverage, frontend demo, or demo tool backend has been implemented.
+
 ## MVP-0 禁止范围
 
 MVP-0 不得实现：
@@ -39,18 +54,22 @@ MVP-0 不得实现：
 
 建立最小 implementation skeleton 和 repo safety guardrails，确保任何 MVP-0 runtime artifact 出现前，trace/audio/replay/cache 边界已经安全。
 
+**Current status**
+
+Completed and covered by fixture safety tests.
+
 **非目标**
 
 不做 runtime event processing、model calls、audio handling、frontend、SlowTask、tools。
 
-**预计文件**
+**已落地文件**
 
 - Modify: `.gitignore` only if required exclusions are missing.
-- Create later: `src/voice_agent/__init__.py`
-- Create later: `src/voice_agent/config/runtime_config.py`
-- Create later: `tests/conftest.py`
-- Create later: `tests/fixtures/replay/mvp0/README.md`
-- Create later: `tests/replay/test_fixture_safety.py`
+- Implemented: `src/voice_agent/__init__.py`
+- Implemented: `src/voice_agent/config/runtime_config.py`
+- Implemented: `tests/conftest.py`
+- Implemented: `tests/fixtures/replay/mvp0/README.md`
+- Implemented: `tests/replay/test_fixture_safety.py`
 
 **Events touched**
 
@@ -95,18 +114,22 @@ MVP-0 不得实现：
 
 实现 MVP-0 event envelope、per-session `event_seq`、append-only in-memory journal、MVP-0 required fields validation。
 
+**Current status**
+
+Completed in `src/voice_agent/events/` and `src/voice_agent/privacy/redaction.py`.
+
 **非目标**
 
 不做 reducers、replay runner、persistence backend beyond optional local debug export、global blocking event bus。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/events/envelope.py`
-- Create later: `src/voice_agent/events/registry.py`
-- Create later: `src/voice_agent/events/journal.py`
-- Create later: `src/voice_agent/privacy/redaction.py`
-- Create later: `tests/events/test_event_envelope.py`
-- Create later: `tests/events/test_event_journal.py`
+- Implemented: `src/voice_agent/events/envelope.py`
+- Implemented: `src/voice_agent/events/registry.py`
+- Implemented: `src/voice_agent/events/journal.py`
+- Implemented: `src/voice_agent/privacy/redaction.py`
+- Implemented: `tests/events/test_event_envelope.py`
+- Implemented: `tests/events/test_event_journal.py`
 
 **Events touched**
 
@@ -172,17 +195,21 @@ MVP-0 不得实现：
 
 增加 startup capability snapshot support 和 MVP-0 mock adapter capability declarations。
 
+**Current status**
+
+Completed in `src/voice_agent/adapters/` and `src/voice_agent/runtime/session.py`.
+
 **非目标**
 
 不做 provider endpoint integration、real ASR/TTS/Thinker、HTTP/WebSocket healthchecks beyond mock status、real model output validation。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/adapters/capabilities.py`
-- Create later: `src/voice_agent/adapters/mock_adapters.py`
-- Create later: `src/voice_agent/runtime/session.py`
-- Create later: `tests/adapters/test_mock_capability_snapshot.py`
-- Create later: `tests/runtime/test_session_startup.py`
+- Implemented: `src/voice_agent/adapters/capabilities.py`
+- Implemented: `src/voice_agent/adapters/mock_adapters.py`
+- Implemented: `src/voice_agent/runtime/session.py`
+- Implemented: `tests/adapters/test_mock_capability_snapshot.py`
+- Implemented: `tests/runtime/test_session_startup.py`
 
 **Events touched**
 
@@ -231,21 +258,25 @@ MVP-0 不得实现：
 
 实现 MVP-0 deterministic replay over recorded events。
 
+**Current status**
+
+Completed in `src/voice_agent/state/` and `src/voice_agent/replay/`.
+
 **非目标**
 
 不做 re-eval replay、audio-level replay、model/tool reruns、SlowTask reducer beyond inert/empty state placeholder if needed by digest。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/state/interaction_state.py`
-- Create later: `src/voice_agent/state/playback_state.py`
-- Create later: `src/voice_agent/state/adapter_health_state.py`
-- Create later: `src/voice_agent/state/trace_privacy_state.py`
-- Create later: `src/voice_agent/replay/manifest.py`
-- Create later: `src/voice_agent/replay/runner.py`
-- Create later: `src/voice_agent/replay/state_digest.py`
-- Create later: `tests/replay/test_deterministic_replay.py`
-- Create later: `tests/state/test_state_digest.py`
+- Implemented: `src/voice_agent/state/interaction_state.py`
+- Implemented: `src/voice_agent/state/playback_state.py`
+- Implemented: `src/voice_agent/state/adapter_health_state.py`
+- Implemented: `src/voice_agent/state/trace_privacy_state.py`
+- Implemented: `src/voice_agent/replay/manifest.py`
+- Implemented: `src/voice_agent/replay/runner.py`
+- Implemented: `src/voice_agent/replay/state_digest.py`
+- Implemented: `tests/replay/test_deterministic_replay.py`
+- Implemented: `tests/state/test_state_digest.py`
 
 **Events touched**
 
@@ -292,17 +323,21 @@ MVP-0 不得实现：
 
 实现 text ingress 从 Access Layer 经 Interaction Controller 到 committed turn。
 
+**Current status**
+
+Completed in `src/voice_agent/access/text_ingress.py` and `src/voice_agent/interaction/`.
+
 **非目标**
 
 不做 Duplex path、synthetic audio span、real model、SlowTask、tools。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/access/text_ingress.py`
-- Create later: `src/voice_agent/interaction/controller.py`
-- Create later: `src/voice_agent/interaction/policy.py`
-- Create later: `tests/interaction/test_text_ingress.py`
-- Create later: `tests/replay/test_text_ingress_replay.py`
+- Implemented: `src/voice_agent/access/text_ingress.py`
+- Implemented: `src/voice_agent/interaction/controller.py`
+- Implemented: `src/voice_agent/interaction/policy.py`
+- Implemented: `tests/interaction/test_text_ingress.py`
+- Implemented: `tests/replay/test_text_ingress_replay.py`
 
 **Events touched**
 
@@ -350,17 +385,21 @@ MVP-0 不得实现：
 
 实现 minimal audio ingress path：audio span、mock/rule Duplex speech start/end、Interaction Controller commit。
 
+**Current status**
+
+Completed in `src/voice_agent/access/audio_ingress.py`, `src/voice_agent/duplex/mock_duplex.py`, and `src/voice_agent/interaction/`.
+
 **非目标**
 
 不处理 raw audio、不做 real VAD、real semantic_close、real assistant-directedness、real ASR/Thinker。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/access/audio_ingress.py`
-- Create later: `src/voice_agent/duplex/mock_duplex.py`
-- Modify later: `src/voice_agent/interaction/controller.py`
-- Create later: `tests/duplex/test_mock_audio_accept.py`
-- Create later: `tests/replay/test_audio_ingress_replay.py`
+- Implemented: `src/voice_agent/access/audio_ingress.py`
+- Implemented: `src/voice_agent/duplex/mock_duplex.py`
+- Modified: `src/voice_agent/interaction/controller.py`
+- Implemented: `tests/duplex/test_mock_audio_accept.py`
+- Implemented: `tests/replay/test_audio_ingress_replay.py`
 
 **Events touched**
 
@@ -409,19 +448,23 @@ MVP-0 不得实现：
 
 在 committed turn 后发出 mock ASR/Thinker frame，并产生最小 Router decision。
 
+**Current status**
+
+Completed in `src/voice_agent/understanding/`, `src/voice_agent/router/`, and minimal `TaskFocusState`.
+
 **非目标**
 
 不做 real ASR、real Thinker、SlowTask spawn、UserPatch、plan_version、evidence fusion、tool routing。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/understanding/mock_asr.py`
-- Create later: `src/voice_agent/understanding/mock_thinker.py`
-- Create later: `src/voice_agent/router/router.py`
-- Create later: `src/voice_agent/state/task_focus_state.py`
-- Create later: `tests/understanding/test_mock_understanding_after_commit.py`
-- Create later: `tests/router/test_router_fast_only_mvp0.py`
-- Create later: `tests/replay/test_router_decision_replay.py`
+- Implemented: `src/voice_agent/understanding/mock_asr.py`
+- Implemented: `src/voice_agent/understanding/mock_thinker.py`
+- Implemented: `src/voice_agent/router/router.py`
+- Implemented: `src/voice_agent/state/task_focus_state.py`
+- Implemented: `tests/understanding/test_mock_understanding_after_commit.py`
+- Implemented: `tests/router/test_router_fast_only_mvp0.py`
+- Implemented: `tests/replay/test_router_decision_replay.py`
 
 **Events touched**
 
@@ -469,16 +512,20 @@ MVP-0 不得实现：
 
 实现 mock Talker playback span lifecycle with progress and playback commitment markers。
 
+**Current status**
+
+Completed in `src/voice_agent/talker/mock_talker.py` and `src/voice_agent/state/playback_state.py`.
+
 **非目标**
 
 不做 real TTS、audio synthesis requirement、Composer coverage check、progress truthfulness check。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/talker/mock_talker.py`
-- Modify later: `src/voice_agent/state/playback_state.py`
-- Create later: `tests/talker/test_mock_playback.py`
-- Create later: `tests/replay/test_playback_replay.py`
+- Implemented: `src/voice_agent/talker/mock_talker.py`
+- Modified: `src/voice_agent/state/playback_state.py`
+- Implemented: `tests/talker/test_mock_playback.py`
+- Implemented: `tests/replay/test_playback_replay.py`
 
 **Events touched**
 
@@ -525,19 +572,23 @@ MVP-0 不得实现：
 
 实现 truncate-only barge-in path：Duplex candidate -> Interaction interrupt policy -> Talker truncate confirmation。
 
+**Current status**
+
+Completed with runtime tests, replay tests, and synthetic SLO coverage.
+
 **非目标**
 
 不做 pause/resume、semantic-clause resume、multi-track recovery、model-side TTS cancellation guarantee、full duplex semantic model。
 
-**预计文件**
+**已落地文件**
 
-- Modify later: `src/voice_agent/duplex/mock_duplex.py`
-- Modify later: `src/voice_agent/interaction/controller.py`
-- Modify later: `src/voice_agent/talker/mock_talker.py`
-- Modify later: `src/voice_agent/state/playback_state.py`
-- Create later: `tests/interaction/test_barge_in_truncate.py`
-- Create later: `tests/replay/test_barge_in_truncate_replay.py`
-- Create later: `tests/slo/test_mvp0_latency_metrics.py`
+- Modified: `src/voice_agent/duplex/mock_duplex.py`
+- Modified: `src/voice_agent/interaction/controller.py`
+- Modified: `src/voice_agent/talker/mock_talker.py`
+- Modified: `src/voice_agent/state/playback_state.py`
+- Implemented: `tests/interaction/test_barge_in_truncate.py`
+- Implemented: `tests/replay/test_barge_in_truncate_replay.py`
+- Implemented: `tests/slo/test_mvp0_latency_metrics.py`
 
 **Events touched**
 
@@ -589,21 +640,25 @@ MVP-0 不得实现：
 
 增加 single acceptance runner over all MVP-0 synthetic replay fixtures and scenario assertions。
 
+**Current status**
+
+Completed in `src/voice_agent/replay/scenario_assertions.py`, `tests/acceptance/`, and `tests/fixtures/replay/mvp0/manifest.index.json`.
+
 **非目标**
 
 不要求 real service startup、browser/frontend、real audio fixture、model quality eval。
 
-**预计文件**
+**已落地文件**
 
-- Create later: `src/voice_agent/replay/scenario_assertions.py`
-- Create later: `tests/acceptance/test_mvp0_acceptance_scenarios.py`
-- Create later: `tests/fixtures/replay/mvp0/004-text-ingress.fixture.json`
-- Create later: `tests/fixtures/replay/mvp0/005-audio-ingress-accepted.fixture.json`
-- Create later: `tests/fixtures/replay/mvp0/006-mock-understanding-router.fixture.json`
-- Create later: `tests/fixtures/replay/mvp0/007-playback-progress.fixture.json`
-- Create later: `tests/fixtures/replay/mvp0/008-barge-in-truncate.fixture.json`
-- Create later: `tests/fixtures/replay/mvp0/009-local-trace-safety.fixture.json`
-- Create later: `tests/fixtures/replay/mvp0/manifest.index.json`
+- Implemented: `src/voice_agent/replay/scenario_assertions.py`
+- Implemented: `tests/acceptance/test_mvp0_acceptance_scenarios.py`
+- Implemented: `tests/fixtures/replay/mvp0/004-text-ingress.fixture.json`
+- Implemented: `tests/fixtures/replay/mvp0/005-audio-ingress-accepted.fixture.json`
+- Implemented: `tests/fixtures/replay/mvp0/006-mock-understanding-router.fixture.json`
+- Implemented: `tests/fixtures/replay/mvp0/007-playback-progress.fixture.json`
+- Implemented: `tests/fixtures/replay/mvp0/008-barge-in-truncate.fixture.json`
+- Implemented: `tests/fixtures/replay/mvp0/009-local-trace-safety.fixture.json`
+- Implemented: `tests/fixtures/replay/mvp0/manifest.index.json`
 
 **Events touched**
 
@@ -652,15 +707,15 @@ MVP-0 不得实现：
 
 ## MVP-0 Exit Criteria
 
-MVP-0 完成条件：
+MVP-0 完成条件和当前核实结果：
 
-- Text ingress emits `TEXT_INPUT_RECEIVED` -> `TURN_OPENED` -> `TURN_INGRESS_ACCEPTED` -> `TURN_INGRESS_COMMITTED`。
-- Audio ingress emits audio span and mock Duplex events before turn commit。
-- Mock ASR/Thinker emit only after `TURN_INGRESS_COMMITTED`。
-- Router emits post-commit decision only。
-- Mock Talker emits playback progress and delivery markers。
-- Barge-in path emits `BARGE_IN_CANDIDATE` -> `INTERRUPT_CANDIDATE` -> `TTS_TRUNCATE_REQUESTED` -> `TTS_TRUNCATED`。
-- Deterministic replay reconstructs MVP-0 states without re-running models or tools。
-- Capability snapshot and all mock outputs are labeled mock。
-- Local trace safety assertions pass。
-- No ADR、Architecture Book、or frozen spec changes are required to explain implementation。
+- Completed: Text ingress emits `TEXT_INPUT_RECEIVED` -> `TURN_OPENED` -> `TURN_INGRESS_ACCEPTED` -> `TURN_INGRESS_COMMITTED`。
+- Completed: Audio ingress emits audio span and mock Duplex events before turn commit。
+- Completed: Mock ASR/Thinker emit only after `TURN_INGRESS_COMMITTED`。
+- Completed: Router emits post-commit decision only。
+- Completed: Mock Talker emits playback progress and delivery markers。
+- Completed: Barge-in path emits `BARGE_IN_CANDIDATE` -> `INTERRUPT_CANDIDATE` -> `TTS_TRUNCATE_REQUESTED` -> `TTS_TRUNCATED`。
+- Completed: Deterministic replay reconstructs MVP-0 states without re-running models or tools。
+- Completed: Capability snapshot and all mock outputs are labeled mock。
+- Completed: Local trace safety assertions pass。
+- Completed: No ADR、Architecture Book、or frozen spec changes are required to explain implementation。
