@@ -1,0 +1,155 @@
+{
+  "replay_manifest": {
+    "manifest_schema_version": "1.0",
+    "replay_id": "replay_mvp0_local_trace_safety_009",
+    "source_trace_ref": "fixture://mvp0/009-local-trace-safety",
+    "replay_mode": "deterministic",
+    "event_schema_version_range": [
+      "1.0"
+    ],
+    "fixture_domain": "GITHUB_ALLOWED",
+    "generated_from": "synthetic",
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false,
+    "allowed_re_eval_components": []
+  },
+  "events": [
+    {
+      "event_name": "SESSION_STARTED",
+      "event_id": "evt_mvp0_slice9_session_started",
+      "event_seq": 1,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp0_slice9_synthetic",
+      "conversation_id": "conv_mvp0_slice9_synthetic",
+      "source_module": "session_runtime",
+      "created_monotonic_ms": 1000,
+      "created_wall_clock_ms": 1700000001000,
+      "trace_redaction_level": "metadata_only",
+      "runtime_config_ref": "config://synthetic/mvp0/default",
+      "capability_snapshot_ref": "capability://synthetic/mvp0/mock-adapters-v1"
+    },
+    {
+      "event_name": "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED",
+      "event_id": "evt_mvp0_slice9_capability_snapshot",
+      "event_seq": 2,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp0_slice9_synthetic",
+      "conversation_id": "conv_mvp0_slice9_synthetic",
+      "source_module": "adapter_registry",
+      "created_monotonic_ms": 1001,
+      "created_wall_clock_ms": 1700000001001,
+      "caused_by_event_id": "evt_mvp0_slice9_session_started",
+      "trace_redaction_level": "metadata_only",
+      "capability_snapshot_ref": "capability://synthetic/mvp0/mock-adapters-v1",
+      "adapter_ids": [
+        "mock_asr",
+        "mock_thinker",
+        "mock_talker"
+      ],
+      "adapter_types": [
+        "asr",
+        "thinker",
+        "tts"
+      ],
+      "deployment_modes": [
+        "mock",
+        "mock",
+        "mock"
+      ],
+      "output_modes": [
+        "mock",
+        "mock",
+        "mock"
+      ],
+      "capability_version": "mvp0.mock.v1"
+    },
+    {
+      "event_name": "TRACE_WRITE_DEGRADED",
+      "event_id": "evt_mvp0_slice9_trace_write_degraded",
+      "event_seq": 3,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp0_slice9_synthetic",
+      "conversation_id": "conv_mvp0_slice9_synthetic",
+      "source_module": "trace_runtime",
+      "created_monotonic_ms": 1010,
+      "created_wall_clock_ms": 1700000001010,
+      "caused_by_event_id": "evt_mvp0_slice9_capability_snapshot",
+      "trace_redaction_level": "metadata_only",
+      "storage_target": "LOCAL_DEBUG_TRACE",
+      "degraded_reason": "synthetic local trace write degraded without creating local artifacts"
+    },
+    {
+      "event_name": "TRACE_SECRET_REDACTION_APPLIED",
+      "event_id": "evt_mvp0_slice9_trace_redaction_applied",
+      "event_seq": 4,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp0_slice9_synthetic",
+      "conversation_id": "conv_mvp0_slice9_synthetic",
+      "source_module": "trace_runtime",
+      "created_monotonic_ms": 1011,
+      "created_wall_clock_ms": 1700000001011,
+      "caused_by_event_id": "evt_mvp0_slice9_trace_write_degraded",
+      "trace_redaction_level": "metadata_only",
+      "redaction_reason": "synthetic secret-like field redacted before write",
+      "redacted_fields": [
+        "authorization_header"
+      ]
+    },
+    {
+      "event_name": "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+      "event_id": "evt_mvp0_slice9_trace_write_blocked",
+      "event_seq": 5,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp0_slice9_synthetic",
+      "conversation_id": "conv_mvp0_slice9_synthetic",
+      "source_module": "trace_runtime",
+      "created_monotonic_ms": 1012,
+      "created_wall_clock_ms": 1700000001012,
+      "caused_by_event_id": "evt_mvp0_slice9_trace_redaction_applied",
+      "trace_redaction_level": "metadata_only",
+      "blocked_payload_ref": "payload://synthetic/mvp0/blocked-write",
+      "secret_kind": "api_key",
+      "blocking_reason": "synthetic secret-like payload blocked before write"
+    },
+    {
+      "event_name": "REPLAY_STARTED",
+      "event_id": "evt_mvp0_slice9_replay_started",
+      "event_seq": 6,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp0_slice9_synthetic",
+      "conversation_id": "conv_mvp0_slice9_synthetic",
+      "source_module": "replay_runtime",
+      "created_monotonic_ms": 1020,
+      "created_wall_clock_ms": 1700000001020,
+      "caused_by_event_id": "evt_mvp0_slice9_trace_write_blocked",
+      "trace_redaction_level": "metadata_only",
+      "replay_id": "replay_mvp0_local_trace_safety_009",
+      "source_trace_ref": "fixture://mvp0/009-local-trace-safety",
+      "replay_mode": "deterministic",
+      "fixture_ref": "fixture://mvp0/009-local-trace-safety"
+    },
+    {
+      "event_name": "REPLAY_COMPLETED",
+      "event_id": "evt_mvp0_slice9_replay_completed",
+      "event_seq": 7,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp0_slice9_synthetic",
+      "conversation_id": "conv_mvp0_slice9_synthetic",
+      "source_module": "replay_runtime",
+      "created_monotonic_ms": 1021,
+      "created_wall_clock_ms": 1700000001021,
+      "caused_by_event_id": "evt_mvp0_slice9_replay_started",
+      "trace_redaction_level": "metadata_only",
+      "replay_id": "replay_mvp0_local_trace_safety_009",
+      "result_status": "passed",
+      "state_digest": {
+        "digest_schema_version": "1.0",
+        "overall_digest": "synthetic_digest_placeholder"
+      }
+    }
+  ]
+}
