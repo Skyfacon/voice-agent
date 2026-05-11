@@ -14,6 +14,7 @@ class EventDefinition:
     one_of_fields: tuple[tuple[str, ...], ...] = ()
     literal_fields: dict[str, object] = field(default_factory=dict)
     is_root: bool = False
+    caused_by_event_required: bool = True
 
 
 def _definition(
@@ -23,6 +24,7 @@ def _definition(
     one_of_fields: tuple[tuple[str, ...], ...] = (),
     literal_fields: dict[str, object] | None = None,
     is_root: bool = False,
+    caused_by_event_required: bool = True,
 ) -> EventDefinition:
     return EventDefinition(
         event_name=event_name,
@@ -30,6 +32,7 @@ def _definition(
         one_of_fields=one_of_fields,
         literal_fields=literal_fields or {},
         is_root=is_root,
+        caused_by_event_required=caused_by_event_required,
     )
 
 
@@ -192,6 +195,7 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
     "REPLAY_STARTED": _definition(
         "REPLAY_STARTED",
         required_fields=("replay_id", "source_trace_ref", "replay_mode"),
+        caused_by_event_required=False,
     ),
     "REPLAY_COMPLETED": _definition(
         "REPLAY_COMPLETED",
@@ -204,11 +208,13 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
     "TRACE_SECRET_REDACTION_APPLIED": _definition(
         "TRACE_SECRET_REDACTION_APPLIED",
         required_fields=("redaction_reason", "redacted_fields"),
-        one_of_fields=(("event_id", "payload_ref"),),
+        one_of_fields=(("caused_by_event_id", "payload_ref"),),
+        caused_by_event_required=False,
     ),
     "TRACE_WRITE_BLOCKED_SECRET_DETECTED": _definition(
         "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
         required_fields=("source_module", "blocked_payload_ref", "secret_kind", "blocking_reason"),
+        caused_by_event_required=False,
     ),
 }
 

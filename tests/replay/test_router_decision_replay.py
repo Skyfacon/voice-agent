@@ -113,6 +113,39 @@ def test_replay_rejects_router_reference_to_unavailable_mock_asr_frame() -> None
         run_replay_fixture(fixture)
 
 
+def test_replay_rejects_audio_commit_without_matching_turn_opened() -> None:
+    fixture = load_json_fixture(ROUTER_FIXTURE)
+    fixture["events"] = [
+        dict(event) for event in fixture["events"] if event["event_name"] != "TURN_OPENED"
+    ]
+
+    with pytest.raises(ReplayValidationError, match="TURN_OPENED"):
+        run_replay_fixture(fixture)
+
+
+def test_replay_rejects_out_of_scope_mvp0_task_focus_label() -> None:
+    fixture = load_json_fixture(ROUTER_FIXTURE)
+    router_event = next(
+        event for event in fixture["events"] if event["event_name"] == "ROUTER_DECISION_EMITTED"
+    )
+    router_event["task_focus"] = "PATCH_ACTIVE_SLOW_TASK"
+
+    with pytest.raises(ReplayValidationError, match="MVP0 task_focus"):
+        run_replay_fixture(fixture)
+
+
+def test_replay_rejects_out_of_scope_mvp0_router_decision() -> None:
+    fixture = load_json_fixture(ROUTER_FIXTURE)
+    router_event = next(
+        event for event in fixture["events"] if event["event_name"] == "ROUTER_DECISION_EMITTED"
+    )
+    router_event["router_decision"] = "SLOW_TASK"
+    router_event["task_focus"] = "PATCH_ACTIVE_SLOW_TASK"
+
+    with pytest.raises(ReplayValidationError, match="MVP0 router_decision"):
+        run_replay_fixture(fixture)
+
+
 def test_router_fixture_contains_only_synthetic_refs_and_no_slice7_plus_events() -> None:
     fixture = load_json_fixture(ROUTER_FIXTURE)
     event_names = {event["event_name"] for event in fixture["events"]}

@@ -140,6 +140,29 @@ def test_event_specific_literal_fields_are_enforced() -> None:
         validate_event_envelope(event)
 
 
+def test_trace_redaction_event_can_target_event_by_cause_without_payload_ref() -> None:
+    event = {
+        "event_name": "TRACE_SECRET_REDACTION_APPLIED",
+        "event_id": "evt_mvp0_trace_redaction_applied",
+        "event_seq": 2,
+        "event_schema_version": "1.0",
+        "session_id": "sess_mvp0_synthetic_001",
+        "conversation_id": "conv_mvp0_synthetic_001",
+        "source_module": "trace_runtime",
+        "created_monotonic_ms": 12,
+        "created_wall_clock_ms": 1700000000012,
+        "caused_by_event_id": "evt_mvp0_session_started_001",
+        "trace_redaction_level": "metadata_only",
+        "redaction_reason": "secret-like payload field",
+        "redacted_fields": ["authorization_header"],
+    }
+
+    validated = validate_event_envelope(event)
+
+    assert validated["caused_by_event_id"] == "evt_mvp0_session_started_001"
+    assert "payload_ref" not in validated
+
+
 def test_mvp0_session_start_fixture_validates_through_event_validator() -> None:
     fixture = load_json_fixture(MVP0_REPLAY_FIXTURE_DIR / "001-event-envelope-session-start.fixture.json")
 

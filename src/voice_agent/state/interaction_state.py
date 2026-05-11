@@ -70,14 +70,14 @@ class InteractionState:
             self.turn_phase = str(event["turn_phase"])
         elif event_name == "TURN_HELD":
             self.current_turn_id = str(event["turn_id"])
-            self.turn_phase = "HELD"
+            self.turn_phase = "HOLDING_INPUT"
             self.last_ingress_outcome = str(event["ingress_outcome"])
         elif event_name == "TURN_INGRESS_ACCEPTED":
             self.current_turn_id = str(event["turn_id"])
             self.last_ingress_outcome = str(event["ingress_outcome"])
         elif event_name == "TURN_INGRESS_REJECTED":
             self.current_turn_id = str(event["turn_id"])
-            self.turn_phase = "TURN_REJECTED"
+            self.turn_phase = "WAITING_USER"
             self.last_ingress_outcome = str(event["ingress_outcome"])
         elif event_name == "TURN_INGRESS_COMMITTED":
             self.current_turn_id = str(event["turn_id"])

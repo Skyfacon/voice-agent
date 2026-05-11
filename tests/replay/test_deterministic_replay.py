@@ -12,6 +12,7 @@ from voice_agent.replay.runner import ReplayValidationError, run_replay_fixture
 
 
 SLICE3_FIXTURE = MVP0_REPLAY_FIXTURE_DIR / "003-replay-empty-and-startup.fixture.json"
+EMPTY_FIXTURE = MVP0_REPLAY_FIXTURE_DIR / "000-empty-session.fixture.json"
 
 
 def test_replay_manifest_rejects_github_fixture_with_unsafe_safety_flags() -> None:
@@ -56,6 +57,38 @@ def test_deterministic_replay_rebuilds_startup_adapter_health_and_trace_privacy(
     assert result.state_digest["source_session_id"] == "sess_mvp0_slice3_synthetic"
     assert result.state_digest["last_event_seq"] == 2
     assert result.state_digest["overall_digest"]
+
+
+def test_replay_result_emits_replay_started_and_completed_markers() -> None:
+    result = run_replay_fixture(load_json_fixture(SLICE3_FIXTURE))
+
+    assert [event["event_name"] for event in result.replay_events] == [
+        "REPLAY_STARTED",
+        "REPLAY_COMPLETED",
+    ]
+    assert result.replay_events[0]["caused_by_event_id"] == result.ordered_events[-1]["event_id"]
+    assert result.replay_events[1]["caused_by_event_id"] == result.replay_events[0]["event_id"]
+    assert result.replay_events[1]["state_digest"] == result.state_digest
+
+
+def test_empty_replay_result_emits_replay_started_and_completed_markers() -> None:
+    result = run_replay_fixture(load_json_fixture(EMPTY_FIXTURE))
+
+    assert result.ordered_events == ()
+    assert [event["event_name"] for event in result.replay_events] == [
+        "REPLAY_STARTED",
+        "REPLAY_COMPLETED",
+    ]
+    assert result.replay_events[0]["event_id"] == "evt_replay_mvp0_empty_session_000_started"
+    assert result.replay_events[0]["event_seq"] == 1
+    assert result.replay_events[0]["event_schema_version"] == "1.0"
+    assert result.replay_events[0]["session_id"] == "sess_replay_mvp0_empty_session_000"
+    assert result.replay_events[0]["conversation_id"] == "conv_replay_mvp0_empty_session_000"
+    assert "caused_by_event_id" not in result.replay_events[0]
+    assert result.replay_events[1]["event_id"] == "evt_replay_mvp0_empty_session_000_completed"
+    assert result.replay_events[1]["event_seq"] == 2
+    assert result.replay_events[1]["caused_by_event_id"] == result.replay_events[0]["event_id"]
+    assert result.replay_events[1]["state_digest"] == result.state_digest
 
 
 def test_replay_preserves_missing_data_plane_refs_as_unavailable_metadata() -> None:
