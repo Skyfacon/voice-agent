@@ -2,9 +2,9 @@
 
 ## Status
 
-proposed research plan。
+active research plan after MVP-0 closeout。
 
-本文档定义模型能力探针路线。它不是 real adapter integration 方案，不授权接入主 runtime，不允许业务模块直接调用 provider endpoint。
+本文档定义模型能力探针路线。它不是 real adapter integration 方案，不授权接入主 runtime，不授权业务模块建立 provider endpoint 依赖。
 
 ## Source of Truth
 
@@ -25,9 +25,17 @@ proposed research plan。
 
 System Spine 会先用 faithful mock 实现 MVP-0 walking skeleton。但 mock 只能证明架构边界，不能证明真实候选模型具备对应能力。
 
-如果不提前做模型探针，MVP-3 可能才发现候选模型不支持 streaming、audio timestamps、structured JSON、cancellation、emotion、audio caption、TTS truncate、semantic_close 或 assistant-directedness。届时团队容易通过扩大 scope、绕过 adapter 或修改架构边界来补洞。
+如果不提前做模型探针，MVP-3 可能才发现候选模型不支持 streaming、audio timestamps、structured JSON、cancellation、emotion、audio caption、TTS truncate、semantic_close 或 assistant-directedness。届时团队容易通过扩大 scope、越过 adapter boundary 或修改架构边界来补洞。
 
 因此需要一条隔离的 Model Spikes 泳道：只回答能力问题，只沉淀 capability matrix 和 risk report，不进入主流程。
+
+## MVP-0 Closeout Update
+
+截至 2026-05-11，`main@61e6afc` 已合入 MVP-0 closeout。主线 `docs/implementation/mvp0-backlog.md` 记录 Slice 0-9 已完成，且 2026-05-10 的 closeout 检查中 `./scripts/test -q` 通过 139 tests。
+
+这意味着 model spike 的工作重心已经从 “等待 MVP-0 contract shape 成型” 切换为 “按已完成 MVP-0 contract shape 产出 adapter-shaped evidence”。后续每份 run report 默认引用 `main@61e6afc` 作为 contract snapshot，除非报告中声明新的主线 commit。
+
+当前不改变本计划的边界：spike 仍然不接主 runtime，不写真实业务 adapter，不修改 accepted ADR、event registry、adapter spec 或 replay spec。
 
 ## Decision
 
@@ -63,7 +71,7 @@ Spike 结果不得直接进入 runtime instruction、tool policy、confirmation 
 ## Non-Negotiable Rules
 
 1. Spike 不接主 runtime。
-2. Spike 不创建业务模块到 provider endpoint 的直接依赖。
+2. Spike 不创建业务模块到 provider endpoint 的依赖。
 3. 未来如果写 spike code，应使用 spike-local adapter-shaped harness。
 4. 不提交 raw audio。
 5. 不提交 raw model trace。
@@ -496,11 +504,13 @@ RAG 与 webSearch 一样是 evidence，不是 instruction。不得修改 tool、
 
 ## Recommended Execution Order
 
-1. ASR spike：先明确 transcript、timestamp、streaming、cancellation。
-2. TTS / Talker spike：ADR-003 truncate 是 live loop 核心风险。
-3. Duplex / VAD spike：barge-in 质量依赖 playback overlap 和 echo handling。
-4. Slow LLM spike：MVP-1/MVP-2 的 structured output 和 stale policy 依赖它。
-5. Thinker spike：影响 foreground 和 Composer 两个 role。
+MVP-0 closeout 后，建议把实操顺序调整为先低隐私风险、低音频复杂度，再进入 audio-heavy experiments：
+
+1. Slow LLM spike：先验证 structured JSON、schema retry、tool proposal normalization；不涉及 raw audio，最适合作为第一批 API probe。
+2. TTS / Talker spike：ADR-003 truncate 是 live loop 核心风险；先测 first audio latency、streaming、playback span compatibility。
+3. ASR spike：明确 transcript、timestamp、streaming、cancellation，并把 output 映射到 MVP-0 `MOCK_ASR_FRAME_EMITTED` shape。
+4. Thinker spike：验证 SemanticFrame JSON、emotion、audio caption、assistant-directedness，并映射到 MVP-0 `MOCK_THINKER_FRAME_EMITTED` refs。
+5. Duplex / VAD spike：barge-in 质量依赖 playback overlap 和 echo handling；需要更贴近 Slice 8 fixture 的 local audio setup。
 6. Embedding / RAG spike：不阻塞 MVP-0，应等 evidence boundary 更稳后做。
 
 ## Validation Method
@@ -511,7 +521,7 @@ RAG 与 webSearch 一样是 evidence，不是 instruction。不得修改 tool、
 | 是否扩大 MVP scope | 否。Spike 是 research，不是 runtime feature。 |
 | 是否把 mock 当成 real capability | 否。必须标注 mock/fallback/degraded/unsupported/unknown。 |
 | 是否遗漏 replay/eval | 否。Spike 产出 eval evidence；runtime replay 需后续 synthetic fixture 转换。 |
-| 是否允许模型绕过 adapter | 否。未来 runtime integration 必须走 adapter。 |
+| 是否允许模型越过 adapter boundary | 否。未来 runtime integration 必须走 adapter。 |
 | 是否让 webSearch/RAG 进入 instruction 区 | 否。外部内容只作为 evidence。 |
 | 是否允许真实外部副作用 | 否。本文不授权 tool execution。 |
 

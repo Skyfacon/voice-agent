@@ -6,13 +6,26 @@ evidence_summary
 
 ## Date
 
-2026-05-09
+2026-05-11
 
 ## System Constraints
 
 项目架构要求 adapter-first model integration、append-only event evidence、deterministic replay boundaries，以及明确的 degraded/fallback/mock/real output modes。ASR 是 text evidence，不是唯一语义真相。Thinker 提供 SemanticFrame evidence 与 Composer realization，不拥有 turn ingress authority 或 SlowTask final facts。TTS truncate 是 playback control。Slow LLM planning 必须遵守 `task_id`、`plan_version`、`task_event_seq`、confirmation、cancellation 与 stale-result policy。
 
 webSearch/RAG 与 model-card content 都是 untrusted evidence。它们可以帮助 candidate selection，但不能进入 instruction space、改变 tool policy，或变成 ADR facts。
+
+## MVP-0 Contract Snapshot
+
+当前推荐以 `main@61e6afc` 作为 model spike 的默认 contract snapshot。该主线版本已合入 MVP-0 closeout，`docs/implementation/mvp0-backlog.md` 记录 Slice 0-9 已完成，并保留 mock-only adapter/runtime boundary。
+
+后续 run report 不应只列模型能力，还应说明它能否映射到已实现的 MVP-0 contract shape：
+
+- `AdapterCapability` required fields，包括 `config_ref`、`output_mode`、`unsupported_capabilities`。
+- mock ASR / Thinker frame 的 reference style：`asr_frame_ref`、`semantic_frame_ref`、`turn_id`、`utterance_id`、`input_modality`。
+- Talker playback metadata：`playback_span_id`、`audio_ref` 或 `tts_stream_ref`、`playback_offset_ms`、`actual_stop_offset_ms`。
+- Duplex barge-in metadata：`audio_span_id`、`playback_span_id`、`echo_likelihood`、`vad_confidence`、`barge_in_confidence`、`playback_reference_ref`。
+
+因此本文件的推荐组合不变，但推荐依据从 “文档候选 shortlist” 前进为 “按 MVP-0 已实现 contract 做 observed capability run”。
 
 ## Recommended Adapter Stack
 
@@ -39,15 +52,15 @@ webSearch/RAG 与 model-card content 都是 untrusted evidence。它们可以帮
 | Thinker | Qwen3-Omni | Qwen2.5-Omni or Ultravox | MiniCPM-o family | SemanticFrame JSON harness 通过前为 degraded |
 | Slow LLM | Qwen3 via DashScope/self-host | DeepSeek API | Qwen3-30B-A3B class on A100 | real/degraded 取决于 schema validation |
 
-## Recommended First API Integration Set
+## Recommended First API Probe Set
 
-1. DashScope/Bailian Qwen3 text model，用于 SlowTask structured planning。
-2. DashScope/Bailian TTS，用于 basic Talker output。
-3. DashScope/Bailian ASR，前提是 realtime streaming、timestamps 与 cancellation behavior 已确认。
-4. Qwen3-Omni through DashScope/Bailian，用于 Thinker SemanticFrame experiments。
-5. DeepSeek API，作为 second Slow LLM provider 做 structured JSON comparison。
+1. DashScope/Bailian Qwen3 text model，用于 SlowTask structured planning JSON probe。
+2. DeepSeek API，作为 second Slow LLM provider 做 structured JSON comparison。
+3. DashScope/Bailian TTS，用于 basic Talker output probe。
+4. DashScope/Bailian ASR，前提是 realtime streaming、timestamps 与 cancellation behavior 已确认。
+5. Qwen3-Omni through DashScope/Bailian，用于 Thinker SemanticFrame experiments。
 
-这组组合能降低 operational complexity，同时保留 adapter boundaries。它也提供 Qwen text 与 omni models 的 same-platform path，但不允许单个模型拥有整个系统。
+第一批先做 Slow LLM JSON probe，因为它不涉及 raw audio，最容易验证 schema、timeout、retry、provider error 与 redaction policy。TTS、ASR、Thinker、Duplex 的顺序应跟随 `docs/research/model-spike-execution-plan.md`，逐步进入 audio-heavy experiments。
 
 ## DashScope / Bailian Considerations
 
