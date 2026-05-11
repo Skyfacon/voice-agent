@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from voice_agent.events.envelope import EventValidationError, validate_event_envelope
-from voice_agent.events.registry import get_event_definition
+from voice_agent.events.registry import MVP1_EVENT_NAMES, get_event_definition
 from voice_agent.replay.manifest import ReplayManifest, validate_replay_manifest
 from voice_agent.replay.state_digest import state_digest
 from voice_agent.router.router import MVP0_TASK_FOCUS_BY_DECISION
@@ -78,6 +78,10 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
             trace_privacy_state.reduce_event(event),
         ]
         if not any(handled):
+            if event["event_name"] in MVP1_EVENT_NAMES:
+                raise ReplayValidationError(
+                    f"MVP-1 event requires reducer support before replay can pass: {event['event_name']}"
+                )
             diagnostics["ignored_events"].append(
                 {
                     "event_id": event["event_id"],

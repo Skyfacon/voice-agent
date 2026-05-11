@@ -1,0 +1,21 @@
+{
+  "replay_manifest": {
+    "manifest_schema_version": "1.0",
+    "replay_id": "replay_mvp1_empty_session_000",
+    "source_trace_ref": "fixture://mvp1/000-empty-mvp1-session",
+    "replay_mode": "deterministic",
+    "event_schema_version_range": [
+      "1.0"
+    ],
+    "fixture_domain": "GITHUB_ALLOWED",
+    "generated_from": "hand_written_minimal",
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false,
+    "allowed_re_eval_components": []
+  },
+  "events": []
+}
