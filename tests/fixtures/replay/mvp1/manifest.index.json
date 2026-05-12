@@ -1,0 +1,30 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP1-SLICE0-1",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "scope": "MVP-1 Slice 0/1 safety and registry skeleton only; acceptance scenario fixtures arrive in later slices.",
+  "required_scenarios": [],
+  "forbidden_event_names": [
+    "TOOL_EXECUTION_STARTED",
+    "TOOL_PROGRESS_UPDATED",
+    "TOOL_UI_STATE_PATCHED",
+    "TOOL_MANIFEST_LOADED",
+    "TOOL_EXECUTION_AUTHORIZED",
+    "SPOKEN_PLAN_EMITTED",
+    "COMMITMENT_COVERAGE_CHECK_PASSED",
+    "COMMITMENT_COVERAGE_CHECK_FAILED",
+    "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+    "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+    "SEMANTIC_COMMITMENT_CREATED",
+    "STALE_TOOL_RESULT_RECORDED",
+    "SPOKEN_PLAN_CREATED"
+  ],
+  "fixture_checks": [
+    {
+      "fixture": "000-empty-mvp1-session.fixture.json",
+      "purpose": "empty MVP-1 replay safety skeleton"
+    }
+  ],
+  "scenarios": []
+}

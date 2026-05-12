@@ -5,10 +5,15 @@ from typing import Any
 
 import pytest
 
-from conftest import MVP0_REPLAY_FIXTURE_DIR, REPO_ROOT, load_json_fixture
+from conftest import MVP0_REPLAY_FIXTURE_DIR, MVP1_REPLAY_FIXTURE_DIR, REPO_ROOT, load_json_fixture
+from voice_agent.events.registry import MVP1_EVENT_NAMES
+from voice_agent.privacy.redaction import is_safe_authorization_ref
+from voice_agent.replay.runner import run_replay_fixture
 
 
 GITHUB_ALLOWED_FIXTURE = MVP0_REPLAY_FIXTURE_DIR / "000-empty-session.fixture.json"
+MVP1_EMPTY_FIXTURE = MVP1_REPLAY_FIXTURE_DIR / "000-empty-mvp1-session.fixture.json"
+MVP1_MANIFEST_INDEX = MVP1_REPLAY_FIXTURE_DIR / "manifest.index.json"
 
 REQUIRED_GITIGNORE_LINES = {
     "diagnostics/",
@@ -64,6 +69,9 @@ ALLOWED_MANIFEST_SAFETY_FLAGS = {
 ALLOWED_SAFE_SECRET_METADATA_KEYS = {
     "secret_kind",
 }
+ALLOWED_SAFE_REF_KEYS = {
+    "authorization_ref",
+}
 REQUIRED_REPLAY_MANIFEST_FIELDS = {
     "manifest_schema_version",
     "replay_id",
@@ -79,6 +87,27 @@ REQUIRED_REPLAY_MANIFEST_FIELDS = {
     "contains_unredacted_tool_result",
     "contains_large_raw_web_content",
 }
+MVP2_ONLY_EVENT_NAMES = frozenset(
+    {
+        "TOOL_EXECUTION_STARTED",
+        "TOOL_PROGRESS_UPDATED",
+        "TOOL_UI_STATE_PATCHED",
+        "TOOL_MANIFEST_LOADED",
+        "TOOL_EXECUTION_AUTHORIZED",
+        "SPOKEN_PLAN_EMITTED",
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        "COMMITMENT_COVERAGE_CHECK_FAILED",
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+        "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+    }
+)
+NON_CANONICAL_RELATIONSHIP_LABELS = frozenset(
+    {
+        "SEMANTIC_COMMITMENT_CREATED",
+        "STALE_TOOL_RESULT_RECORDED",
+        "SPOKEN_PLAN_CREATED",
+    }
+)
 
 
 def iter_json_values(value: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
@@ -143,21 +172,31 @@ def assert_fixture_is_github_safe(fixture: dict[str, Any]) -> None:
             assert isinstance(value, str), key_path
             assert not value.lower().startswith(("sk-", "bearer ")), key_path
             continue
+        if last_key in ALLOWED_SAFE_REF_KEYS:
+            assert isinstance(value, str), key_path
+            _assert_safe_string_fixture_value(value, key_path)
+            if last_key == "authorization_ref":
+                assert is_safe_authorization_ref(value, allow_local=False), key_path
+            continue
 
         assert not any(pattern.search(last_key) for pattern in FORBIDDEN_KEY_PATTERNS), key_path
         assert not any(pattern.search(last_key) for pattern in RAW_TRACE_KEY_PATTERNS), key_path
         assert not any(pattern.search(last_key) for pattern in REAL_USER_TEXT_KEY_PATTERNS), key_path
 
         if isinstance(value, str):
-            lower_value = value.lower()
-            assert not lower_value.startswith(("sk-", "bearer ")), key_path
-            assert not any(lower_value.endswith(extension) for extension in RAW_AUDIO_EXTENSIONS), key_path
-            assert "audio/raw/" not in lower_value, key_path
-            assert "traces/" not in lower_value, key_path
-            assert "diagnostics/" not in lower_value, key_path
-            assert "replays/local/" not in lower_value, key_path
-            assert "raw trace" not in lower_value, key_path
-            assert "real user" not in lower_value, key_path
+            _assert_safe_string_fixture_value(value, key_path)
+
+
+def _assert_safe_string_fixture_value(value: str, key_path: str) -> None:
+    lower_value = value.lower()
+    assert not lower_value.startswith(("sk-", "bearer ")), key_path
+    assert not any(lower_value.endswith(extension) for extension in RAW_AUDIO_EXTENSIONS), key_path
+    assert "audio/raw/" not in lower_value, key_path
+    assert "traces/" not in lower_value, key_path
+    assert "diagnostics/" not in lower_value, key_path
+    assert "replays/local/" not in lower_value, key_path
+    assert "raw trace" not in lower_value, key_path
+    assert "real user" not in lower_value, key_path
 
 
 def test_local_debug_artifacts_are_ignored_before_runtime_writes() -> None:
@@ -212,12 +251,85 @@ def test_empty_session_fixture_is_synthetic_minimal_and_github_safe() -> None:
     assert fixture["events"] == []
 
 
+def test_empty_mvp1_fixture_lives_in_github_allowed_fixture_dir() -> None:
+    assert MVP1_EMPTY_FIXTURE.parent == MVP1_REPLAY_FIXTURE_DIR
+    assert "replays/local" not in MVP1_EMPTY_FIXTURE.as_posix()
+    assert MVP1_EMPTY_FIXTURE.is_file()
+
+
+def test_empty_mvp1_fixture_is_synthetic_minimal_and_github_safe() -> None:
+    fixture = load_json_fixture(MVP1_EMPTY_FIXTURE)
+
+    assert_fixture_is_github_safe(fixture)
+    assert fixture["replay_manifest"]["replay_id"] == "replay_mvp1_empty_session_000"
+    assert fixture["replay_manifest"]["source_trace_ref"] == "fixture://mvp1/000-empty-mvp1-session"
+    assert fixture["replay_manifest"]["replay_mode"] == "deterministic"
+    assert fixture["replay_manifest"]["fixture_domain"] == "GITHUB_ALLOWED"
+    assert fixture["replay_manifest"]["generated_from"] == "hand_written_minimal"
+    assert fixture["events"] == []
+
+
+def test_empty_mvp1_fixture_replays_with_empty_task_and_slowtask_digest_fields() -> None:
+    result = run_replay_fixture(load_json_fixture(MVP1_EMPTY_FIXTURE))
+
+    assert result.replay_mode == "deterministic"
+    assert result.fixture_domain == "GITHUB_ALLOWED"
+    assert result.ordered_events == ()
+    assert result.state_digest["source_session_id"] is None
+    assert result.state_digest["last_event_seq"] == 0
+    assert result.state_digest["task_focus_state_hash"]
+    assert result.state_digest["slowtask_state_hash"]
+    assert [event["event_name"] for event in result.replay_events] == [
+        "REPLAY_STARTED",
+        "REPLAY_COMPLETED",
+    ]
+
+
+def test_mvp1_manifest_index_is_slice0_1_only_and_repo_safe() -> None:
+    manifest_index = load_json_fixture(MVP1_MANIFEST_INDEX)
+
+    assert manifest_index["manifest_index_schema_version"] == "1.0"
+    assert manifest_index["suite_id"] == "MVP1-SLICE0-1"
+    assert manifest_index["fixture_domain"] == "GITHUB_ALLOWED"
+    assert manifest_index["replay_mode"] == "deterministic"
+    assert manifest_index["required_scenarios"] == []
+    assert manifest_index["fixture_checks"] == [
+        {
+            "fixture": "000-empty-mvp1-session.fixture.json",
+            "purpose": "empty MVP-1 replay safety skeleton",
+        }
+    ]
+    assert MVP2_ONLY_EVENT_NAMES <= set(manifest_index["forbidden_event_names"])
+    assert NON_CANONICAL_RELATIONSHIP_LABELS <= set(manifest_index["forbidden_event_names"])
+
+
 @pytest.mark.parametrize("fixture_path", sorted(MVP0_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))
 def test_all_mvp0_replay_fixtures_are_github_safe(fixture_path) -> None:
     assert fixture_path.parent == MVP0_REPLAY_FIXTURE_DIR
     assert "replays/local" not in fixture_path.as_posix()
 
     assert_fixture_is_github_safe(load_json_fixture(fixture_path))
+
+
+@pytest.mark.parametrize("fixture_path", sorted(MVP1_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))
+def test_all_mvp1_replay_fixtures_are_github_safe(fixture_path) -> None:
+    assert fixture_path.parent == MVP1_REPLAY_FIXTURE_DIR
+    assert "replays/local" not in fixture_path.as_posix()
+
+    assert_fixture_is_github_safe(load_json_fixture(fixture_path))
+
+
+def test_mvp0_manifest_forbids_mvp1_and_later_event_names() -> None:
+    manifest_index = load_json_fixture(MVP0_REPLAY_FIXTURE_DIR / "manifest.index.json")
+    forbidden_event_names = set(manifest_index["forbidden_event_names"])
+
+    assert MVP1_EVENT_NAMES <= forbidden_event_names
+    assert MVP2_ONLY_EVENT_NAMES <= forbidden_event_names
+
+    for fixture_path in MVP0_REPLAY_FIXTURE_DIR.glob("*.fixture.json"):
+        fixture = load_json_fixture(fixture_path)
+        emitted_event_names = {event["event_name"] for event in fixture["events"]}
+        assert emitted_event_names.isdisjoint(MVP1_EVENT_NAMES | MVP2_ONLY_EVENT_NAMES), fixture_path.name
 
 
 def test_fixture_safety_gate_allows_blocked_secret_metadata_without_secret_value() -> None:
@@ -236,12 +348,59 @@ def test_fixture_safety_gate_allows_blocked_secret_metadata_without_secret_value
     assert_fixture_is_github_safe(fixture)
 
 
+def test_fixture_safety_gate_allows_redacted_authorization_ref_without_secret_value() -> None:
+    fixture = {
+        "replay_manifest": github_allowed_manifest(),
+        "events": [
+            {
+                "event_name": "CONFIRMATION_ACCEPTED",
+                "event_id": "evt_synthetic_confirmation_accepted",
+                "authorization_ref": "authorization://synthetic/mvp1/current-plan-confirmation",
+            }
+        ],
+    }
+
+    assert_fixture_is_github_safe(fixture)
+
+
+@pytest.mark.parametrize(
+    "authorization_ref",
+    [
+        "authorization://sk-live-secret",
+        "authorization://synthetic/mvp1/current?token=abc123",
+        "authorization://synthetic/mvp1/current?access_token=abc123",
+        "authorization://synthetic/mvp1/current#token=abc123",
+        "authorization://synthetic/mvp1/%3Faccess_token=abc123",
+        "authorization://synthetic/mvp1/%23token=abc123",
+        "authorization://synthetic/mvp1/%26token=abc123",
+        "authorization://synthetic/mvp1/bearer abc123",
+    ],
+)
+def test_fixture_safety_gate_rejects_authorization_ref_with_embedded_secret(
+    authorization_ref: str,
+) -> None:
+    fixture = {
+        "replay_manifest": github_allowed_manifest(),
+        "events": [
+            {
+                "event_name": "CONFIRMATION_ACCEPTED",
+                "event_id": "evt_synthetic_confirmation_accepted",
+                "authorization_ref": authorization_ref,
+            }
+        ],
+    }
+
+    with pytest.raises(AssertionError):
+        assert_fixture_is_github_safe(fixture)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
         {"raw_audio_ref": "audio/raw/session.wav"},
         {"raw_trace_payload": {"debug": "trace data should stay local"}},
         {"api_key": "sk-test-secret"},
+        {"authorization_header": "Bearer sk-test-secret"},
         {"user_text": "unredacted input"},
     ],
 )
