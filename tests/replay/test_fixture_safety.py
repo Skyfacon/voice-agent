@@ -285,11 +285,11 @@ def test_empty_mvp1_fixture_replays_with_empty_task_and_slowtask_digest_fields()
     ]
 
 
-def test_mvp1_manifest_index_is_slice0_3_and_repo_safe() -> None:
+def test_mvp1_manifest_index_is_slice0_4_and_repo_safe() -> None:
     manifest_index = load_json_fixture(MVP1_MANIFEST_INDEX)
 
     assert manifest_index["manifest_index_schema_version"] == "1.0"
-    assert manifest_index["suite_id"] == "MVP1-SLICE0-3"
+    assert manifest_index["suite_id"] == "MVP1-SLICE0-4"
     assert manifest_index["fixture_domain"] == "GITHUB_ALLOWED"
     assert manifest_index["replay_mode"] == "deterministic"
     assert manifest_index["required_scenarios"] == []
@@ -300,7 +300,7 @@ def test_mvp1_manifest_index_is_slice0_3_and_repo_safe() -> None:
         },
         {
             "fixture": "002-task-focus-router.fixture.json",
-            "purpose": "TaskFocusState router decision replay for MVP-1 Slice 2",
+            "purpose": "TaskFocusState router decision replay for MVP-1 Slice 2 with prior synthetic active SlowTask creation",
         },
         {
             "fixture": "003-slowtask-reducer-skeleton.fixture.json",
@@ -309,6 +309,10 @@ def test_mvp1_manifest_index_is_slice0_3_and_repo_safe() -> None:
         {
             "fixture": "003-slowtask-failed-sticky.fixture.json",
             "purpose": "SlowTaskState failed terminal stickiness with late metadata-only events",
+        },
+        {
+            "fixture": "004-spawn-planning-completed.fixture.json",
+            "purpose": "SlowTask Runtime create/planning/completed happy path for MVP-1 Slice 4",
         },
     ]
     assert MVP2_ONLY_EVENT_NAMES <= set(manifest_index["forbidden_event_names"])

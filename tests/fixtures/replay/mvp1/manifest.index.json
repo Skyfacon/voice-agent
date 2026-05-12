@@ -1,9 +1,9 @@
 {
   "manifest_index_schema_version": "1.0",
-  "suite_id": "MVP1-SLICE0-3",
+  "suite_id": "MVP1-SLICE0-4",
   "fixture_domain": "GITHUB_ALLOWED",
   "replay_mode": "deterministic",
-  "scope": "MVP-1 Slice 0/1 safety and registry skeleton, Slice 2 TaskFocusState router replay fixture, and Slice 3 SlowTaskState reducer replay fixtures.",
+  "scope": "MVP-1 Slice 0/1 safety and registry skeleton, Slice 2 TaskFocusState router replay fixture, Slice 3 SlowTaskState reducer replay fixtures, and Slice 4 SlowTask happy-path replay fixture.",
   "required_scenarios": [],
   "forbidden_event_names": [
     "TOOL_EXECUTION_STARTED",
@@ -27,7 +27,7 @@
     },
     {
       "fixture": "002-task-focus-router.fixture.json",
-      "purpose": "TaskFocusState router decision replay for MVP-1 Slice 2"
+      "purpose": "TaskFocusState router decision replay for MVP-1 Slice 2 with prior synthetic active SlowTask creation"
     },
     {
       "fixture": "003-slowtask-reducer-skeleton.fixture.json",
@@ -36,6 +36,10 @@
     {
       "fixture": "003-slowtask-failed-sticky.fixture.json",
       "purpose": "SlowTaskState failed terminal stickiness with late metadata-only events"
+    },
+    {
+      "fixture": "004-spawn-planning-completed.fixture.json",
+      "purpose": "SlowTask Runtime create/planning/completed happy path for MVP-1 Slice 4"
     }
   ],
   "scenarios": []

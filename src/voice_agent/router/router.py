@@ -76,6 +76,46 @@ class MVP1RouterDecisionResult:
     task_focus_state_event: dict[str, Any]
 
 
+class MVP1TaskFocusUpdateEmitter:
+    def __init__(self, journal: InMemoryEventJournal) -> None:
+        self._journal = journal
+
+    def emit_update(
+        self,
+        *,
+        router_decision_event: Mapping[str, Any],
+        event_id: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        active_task_id: str | None,
+        foreground_mode: str,
+        default_patch_policy: str,
+        side_conversation_allowed: bool = True,
+        ambiguous_input_policy: str = "CLARIFY",
+    ) -> dict[str, Any]:
+        if router_decision_event.get("event_name") != "ROUTER_DECISION_EMITTED":
+            raise ValueError("TaskFocus update requires a ROUTER_DECISION_EMITTED event")
+
+        return self._journal.append(
+            event_name="TASK_FOCUS_STATE_UPDATED",
+            event_id=event_id,
+            source_module="router",
+            caused_by_event_id=str(router_decision_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            trace_redaction_level="metadata_only",
+            active_task_id=active_task_id,
+            foreground_mode=foreground_mode,
+            side_conversation_allowed=side_conversation_allowed,
+            default_patch_policy=default_patch_policy,
+            ambiguous_input_policy=ambiguous_input_policy,
+            last_focus_decision=str(router_decision_event.get("task_focus", "NEW_TASK_CANDIDATE")),
+            last_focus_confidence=float(router_decision_event.get("confidence", 1.0)),
+            router_decision_event_id=str(router_decision_event["event_id"]),
+            last_focus_event_id=str(router_decision_event["event_id"]),
+        )
+
+
 class MVP0Router:
     def __init__(self, journal: InMemoryEventJournal) -> None:
         self._journal = journal
