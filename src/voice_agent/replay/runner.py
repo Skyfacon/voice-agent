@@ -162,6 +162,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_audio_turn_opened_before_commit(ordered_events)
     _validate_router_decision_scope(ordered_events, manifest=manifest)
     _validate_task_focus_state_update_causality(ordered_events)
+    _validate_task_focus_active_task_creation_order(ordered_events)
     _validate_post_commit_understanding_and_router_order(ordered_events)
     return ordered_events
 
@@ -366,6 +367,26 @@ def _validate_task_focus_state_update_causality(ordered_events: Sequence[Mapping
         if last_focus_event_id not in (None, "", router_decision_event_id):
             raise ReplayValidationError(
                 "TASK_FOCUS_STATE_UPDATED last_focus_event_id must match router_decision_event_id"
+            )
+
+
+def _validate_task_focus_active_task_creation_order(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    seen_created_task_ids: set[str] = set()
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "SLOWTASK_CREATED":
+            seen_created_task_ids.add(str(event["task_id"]))
+            continue
+        if event_name not in {"ROUTER_DECISION_EMITTED", "TASK_FOCUS_STATE_UPDATED"}:
+            continue
+
+        active_task_id = event.get("active_task_id")
+        if active_task_id in (None, ""):
+            continue
+        if str(active_task_id) not in seen_created_task_ids:
+            raise ReplayValidationError(
+                f"{event_name} active_task_id must not be exposed before "
+                f"corresponding SLOWTASK_CREATED exists: {active_task_id}"
             )
 
 

@@ -62,8 +62,12 @@ def test_mvp1_task_focus_router_fixture_replays_deterministically() -> None:
     assert event_names.count("ROUTER_DECISION_EMITTED") == 3
     assert event_names.count("TASK_FOCUS_STATE_UPDATED") == 3
     assert "USER_PATCH_RECEIVED" not in event_names
-    assert "SLOWTASK_CREATED" not in event_names
-    assert "SLOWTASK_STATE_CHANGED" not in event_names
+    assert event_names.count("SLOWTASK_CREATED") == 1
+    assert event_names.count("SLOWTASK_STATE_CHANGED") == 2
+
+    active_task = result.slowtask_state.tasks["task_mvp1_slice2_focus_001"]
+    assert active_task.lifecycle_state == "PLANNING"
+    assert active_task.current_plan_version == 1
 
     assert result.task_focus_state.active_task_id == "task_mvp1_slice2_focus_001"
     assert result.task_focus_state.foreground_mode == "FAST_RESPONSE"
@@ -80,20 +84,21 @@ def test_mvp1_task_focus_router_fixture_replays_deterministically() -> None:
 
 def test_mvp1_replay_rejects_slowtask_state_change_without_prior_creation() -> None:
     fixture = load_json_fixture(TASK_FOCUS_FIXTURE)
+    last_event = max(fixture["events"], key=lambda event: int(event["event_seq"]))
     fixture["events"].append(
         {
             "event_name": "SLOWTASK_STATE_CHANGED",
             "event_id": "evt_mvp1_slice2_out_of_order_slowtask_state_changed",
-            "event_seq": 27,
+            "event_seq": int(last_event["event_seq"]) + 1,
             "event_schema_version": "1.0",
             "session_id": "sess_mvp1_slice2_task_focus",
             "conversation_id": "conv_mvp1_slice2_task_focus",
             "source_module": "slowtask_runtime",
             "created_monotonic_ms": 270,
             "created_wall_clock_ms": 1700000000270,
-            "caused_by_event_id": "evt_mvp1_slice2_focus_ambiguous",
+            "caused_by_event_id": str(last_event["event_id"]),
             "trace_redaction_level": "metadata_only",
-            "task_id": "task_mvp1_slice2_focus_001",
+            "task_id": "task_mvp1_slice2_missing",
             "plan_version": 1,
             "task_event_seq": 1,
             "from_state": "PLANNING",
