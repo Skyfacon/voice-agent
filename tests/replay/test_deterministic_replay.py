@@ -148,7 +148,7 @@ def test_replay_rejects_duplicate_event_seq_before_reducing() -> None:
         run_replay_fixture(fixture)
 
 
-def test_replay_rejects_unreduced_mvp1_state_events_until_reducer_is_wired() -> None:
+def test_replay_accepts_mvp1_slowtask_created_after_slice3_reducer_is_wired() -> None:
     fixture = {
         "replay_manifest": {
             "manifest_schema_version": "1.0",
@@ -201,8 +201,12 @@ def test_replay_rejects_unreduced_mvp1_state_events_until_reducer_is_wired() -> 
         ],
     }
 
-    with pytest.raises(ReplayValidationError, match="MVP-1 event requires reducer support"):
-        run_replay_fixture(fixture)
+    result = run_replay_fixture(fixture)
+
+    task = result.slowtask_state.tasks["task_mvp1_unreduced_001"]
+    assert task.lifecycle_state == "CREATED"
+    assert task.current_plan_version == 1
+    assert result.state_digest["slowtask_state_hash"]
 
 
 def test_slice3_fixture_exists_in_expected_repo_safe_location() -> None:

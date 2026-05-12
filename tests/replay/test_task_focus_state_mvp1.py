@@ -78,12 +78,12 @@ def test_mvp1_task_focus_router_fixture_replays_deterministically() -> None:
     assert result.result_status == "passed"
 
 
-def test_mvp1_replay_accepts_slice2_router_decisions_but_still_rejects_slice3_slowtask_events() -> None:
+def test_mvp1_replay_rejects_slowtask_state_change_without_prior_creation() -> None:
     fixture = load_json_fixture(TASK_FOCUS_FIXTURE)
     fixture["events"].append(
         {
             "event_name": "SLOWTASK_STATE_CHANGED",
-            "event_id": "evt_mvp1_slice2_unimplemented_slowtask_state_changed",
+            "event_id": "evt_mvp1_slice2_out_of_order_slowtask_state_changed",
             "event_seq": 27,
             "event_schema_version": "1.0",
             "session_id": "sess_mvp1_slice2_task_focus",
@@ -98,11 +98,11 @@ def test_mvp1_replay_accepts_slice2_router_decisions_but_still_rejects_slice3_sl
             "task_event_seq": 1,
             "from_state": "PLANNING",
             "to_state": "COMPLETED",
-            "reason": "synthetic_slice3_not_implemented",
+            "reason": "out_of_order_state_change",
         }
     )
 
-    with pytest.raises(ReplayValidationError, match="MVP-1 event requires reducer support"):
+    with pytest.raises(ReplayValidationError, match="references unknown task_id"):
         run_replay_fixture(fixture)
 
 

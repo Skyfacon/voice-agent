@@ -13,6 +13,7 @@ from voice_agent.router.router import MVP0_TASK_FOCUS_BY_DECISION, MVP1_ROUTER_D
 from voice_agent.state.adapter_health_state import AdapterHealthState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
+from voice_agent.state.slowtask_state import SlowTaskState
 from voice_agent.state.task_focus_state import TaskFocusState
 from voice_agent.state.trace_privacy_state import TracePrivacyState
 
@@ -33,6 +34,7 @@ class ReplayResult:
     playback_state: PlaybackState
     adapter_health_state: AdapterHealthState
     trace_privacy_state: TracePrivacyState
+    slowtask_state: SlowTaskState
     diagnostics: dict[str, Any]
     state_digest: dict[str, Any]
     result_status: str
@@ -64,19 +66,24 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     }
     interaction_state = InteractionState()
     task_focus_state = TaskFocusState()
+    slowtask_state = SlowTaskState()
     playback_state = PlaybackState()
     adapter_health_state = AdapterHealthState()
     trace_privacy_state = TracePrivacyState.from_manifest(manifest.to_dict())
 
     for event in ordered_events:
         diagnostics["data_plane_refs"].extend(_unavailable_data_plane_refs(event))
-        handled = [
-            interaction_state.reduce_event(event),
-            task_focus_state.reduce_event(event),
-            playback_state.reduce_event(event),
-            adapter_health_state.reduce_event(event),
-            trace_privacy_state.reduce_event(event),
-        ]
+        try:
+            handled = [
+                interaction_state.reduce_event(event),
+                task_focus_state.reduce_event(event),
+                slowtask_state.reduce_event(event),
+                playback_state.reduce_event(event),
+                adapter_health_state.reduce_event(event),
+                trace_privacy_state.reduce_event(event),
+            ]
+        except ValueError as exc:
+            raise ReplayValidationError(str(exc)) from exc
         if not any(handled):
             if event["event_name"] in MVP1_EVENT_NAMES:
                 raise ReplayValidationError(
@@ -90,6 +97,11 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
                 }
             )
 
+    try:
+        slowtask_state.validate_replay_complete()
+    except ValueError as exc:
+        raise ReplayValidationError(str(exc)) from exc
+
     result_status = "degraded" if manifest.replay_mode == "degraded" else "passed"
     trace_privacy_state.mark_replay_completed(result_status=result_status)
     digest = state_digest(
@@ -101,6 +113,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
+        slowtask_state=slowtask_state,
     )
     replay_events = _build_replay_marker_events(
         manifest=manifest,
@@ -117,6 +130,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         replay_events=replay_events,
         interaction_state=interaction_state,
         task_focus_state=task_focus_state,
+        slowtask_state=slowtask_state,
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,

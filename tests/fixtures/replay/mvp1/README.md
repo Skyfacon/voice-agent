@@ -9,10 +9,16 @@ Slice 0/1 scope:
 - empty deterministic replay fixture
 - MVP-1 event registry validation through unit tests
 
-Out of scope for this directory in Slice 0/1:
+Slice 2/3 scope:
+
+- TaskFocusState router decision replay fixture
+- SlowTaskState reducer skeleton replay fixtures
+- completed, cancelled, and failed terminal sticky behavior
+
+Out of scope for this directory through Slice 3:
 
 - SlowTask runtime behavior
-- Router behavior changes
+- UserPatch construction
 - UserPatch interpretation
 - Tool execution
 - Composer, spoken plan, coverage, truthfulness, or frontend UI patch events
