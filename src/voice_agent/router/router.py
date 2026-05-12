@@ -299,7 +299,7 @@ def _router_decision_for_focus(
 
 
 def _task_focus_hint(*events: Mapping[str, Any]) -> str | None:
-    for event in events:
+    for event in reversed(events):
         value = event.get("task_focus_hint")
         if value not in (None, ""):
             return str(value)

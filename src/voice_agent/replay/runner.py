@@ -9,7 +9,12 @@ from voice_agent.events.envelope import EventValidationError, validate_event_env
 from voice_agent.events.registry import MVP1_EVENT_NAMES, get_event_definition
 from voice_agent.replay.manifest import ReplayManifest, validate_replay_manifest
 from voice_agent.replay.state_digest import state_digest
-from voice_agent.router.router import MVP0_TASK_FOCUS_BY_DECISION, MVP1_ROUTER_DECISIONS, MVP1_TASK_FOCUS_VALUES
+from voice_agent.router.router import (
+    MVP0_TASK_FOCUS_BY_DECISION,
+    MVP1_PATCH_FOCUS_VALUES,
+    MVP1_ROUTER_DECISIONS,
+    MVP1_TASK_FOCUS_VALUES,
+)
 from voice_agent.state.adapter_health_state import AdapterHealthState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
@@ -319,8 +324,16 @@ def _validate_router_decision_scope(
             raise ReplayValidationError("MVP-1 router_decision must be a canonical RouterDecision")
 
         task_focus = event.get("task_focus")
-        if task_focus is not None and str(task_focus) not in MVP1_TASK_FOCUS_VALUES:
+        if task_focus in (None, ""):
+            raise ReplayValidationError("MVP-1 router_decision requires task_focus")
+        task_focus = str(task_focus)
+        if task_focus not in MVP1_TASK_FOCUS_VALUES:
             raise ReplayValidationError("MVP-1 task_focus must be an ADR-006 focus value")
+        if router_decision == "PATCH_ACTIVE_SLOW_TASK":
+            if task_focus not in MVP1_PATCH_FOCUS_VALUES:
+                raise ReplayValidationError("PATCH_ACTIVE_SLOW_TASK requires active-task task_focus")
+            if event.get("active_task_id") in (None, ""):
+                raise ReplayValidationError("PATCH_ACTIVE_SLOW_TASK requires active_task_id")
 
 
 def _is_mvp0_fixture(manifest: ReplayManifest) -> bool:

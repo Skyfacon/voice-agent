@@ -126,3 +126,25 @@ def test_replay_rejects_task_focus_update_with_unknown_router_decision_event_id(
 
     with pytest.raises(ReplayValidationError, match="TASK_FOCUS_STATE_UPDATED.*router_decision_event_id"):
         run_replay_fixture(fixture)
+
+
+def test_replay_rejects_mvp1_router_decision_without_task_focus() -> None:
+    fixture = load_json_fixture(TASK_FOCUS_FIXTURE)
+    router_event = next(
+        event for event in fixture["events"] if event["event_id"] == "evt_mvp1_slice2_router_patch"
+    )
+    router_event.pop("task_focus")
+
+    with pytest.raises(ReplayValidationError, match="MVP-1 router_decision requires task_focus"):
+        run_replay_fixture(fixture)
+
+
+def test_replay_rejects_patch_router_decision_without_active_task_id() -> None:
+    fixture = load_json_fixture(TASK_FOCUS_FIXTURE)
+    router_event = next(
+        event for event in fixture["events"] if event["event_id"] == "evt_mvp1_slice2_router_patch"
+    )
+    router_event.pop("active_task_id")
+
+    with pytest.raises(ReplayValidationError, match="PATCH_ACTIVE_SLOW_TASK requires active_task_id"):
+        run_replay_fixture(fixture)

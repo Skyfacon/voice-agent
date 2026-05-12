@@ -204,6 +204,31 @@ def test_unknown_mvp1_focus_hint_is_rejected_instead_of_extending_router_scope()
         )
 
 
+def test_thinker_focus_hint_takes_precedence_over_asr_focus_hint() -> None:
+    startup, turn_committed, asr_event, thinker_event = _committed_turn_with_mock_frames(
+        suffix="conflicting_focus_hints",
+        task_focus_hint="NON_ASSISTANT",
+        focus_confidence=0.72,
+    )
+    asr_event["task_focus_hint"] = "ACTIVE_TASK_PATCH"
+    asr_event["focus_confidence"] = 0.93
+
+    result = MVP1Router(startup.journal).emit_decision(
+        turn_committed_event=turn_committed,
+        asr_frame_event=asr_event,
+        thinker_frame_event=thinker_event,
+        router_context=RouterContext(task_focus_snapshot=_active_snapshot()),
+        event_id="evt_mvp1_slice2_conflicting_hints_router_decision",
+        task_focus_state_event_id="evt_mvp1_slice2_conflicting_hints_focus_state",
+        created_monotonic_ms=1040,
+        created_wall_clock_ms=1700000001040,
+    )
+
+    assert result.router_decision_event["router_decision"] == "IGNORE"
+    assert result.router_decision_event["task_focus"] == "NON_ASSISTANT"
+    assert result.task_focus_state_event["last_focus_decision"] == "NON_ASSISTANT"
+
+
 @pytest.mark.parametrize(
     "snapshot",
     [

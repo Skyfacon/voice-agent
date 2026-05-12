@@ -284,6 +284,7 @@ class SlowTaskRecord:
     adopted_evidence: tuple[AdoptedEvidence, ...] = ()
     confirmation_state: ConfirmationState = field(default_factory=ConfirmationState)
     cancel_request_event_id: str | None = None
+    cancelled_event_id: str | None = None
     cancel_reason: str | None = None
     failure_reason: str | None = None
     degraded_reasons: tuple[str, ...] = ()
@@ -313,6 +314,7 @@ class SlowTaskState:
             return True
 
         task = self._task_for_event(event)
+        self._require_next_task_event_seq(task, event)
         if task.is_terminal:
             if event_name in LATE_TERMINAL_EVIDENCE_EVENTS:
                 self._record_late_event(task, event)
@@ -443,6 +445,10 @@ class SlowTaskState:
             raise SlowTaskStateError(f"Unknown SlowTask state: {to_state}")
         if to_state not in LEGAL_TRANSITIONS[from_state]:
             raise SlowTaskStateError(f"Illegal SlowTask transition: {from_state} -> {to_state}")
+        if to_state == "CANCELLED" and task.cancelled_event_id is None:
+            raise SlowTaskStateError(
+                "SLOWTASK_STATE_CHANGED to_state=CANCELLED requires prior SLOWTASK_CANCELLED"
+            )
 
         task.state_transitions = (
             *task.state_transitions,
@@ -665,6 +671,11 @@ class SlowTaskState:
                 raise SlowTaskStateError(
                     "CONFIRMATION_ACCEPTED requires prior USER_CONFIRMATION_RECEIVED accepted signal"
                 )
+            accepted_scope = str(event["accepted_scope"])
+            if accepted_scope != task.confirmation_state.confirmation_scope:
+                raise SlowTaskStateError(
+                    "CONFIRMATION_ACCEPTED accepted_scope must match pending confirmation_scope"
+                )
             task.confirmation_state = ConfirmationState(
                 pending_confirmation_id=None,
                 status="accepted",
@@ -672,7 +683,7 @@ class SlowTaskState:
                 confirmation_scope=task.confirmation_state.confirmation_scope,
                 required_for_event_id=task.confirmation_state.required_for_event_id,
                 prompt_ref=task.confirmation_state.prompt_ref,
-                accepted_scope=str(event["accepted_scope"]),
+                accepted_scope=accepted_scope,
                 authorization_ref=str(event["authorization_ref"]),
                 last_confirmation_event_id=str(event["event_id"]),
             )
@@ -698,6 +709,8 @@ class SlowTaskState:
             raise SlowTaskStateError("SLOWTASK_CANCELLED requires prior SLOWTASK_CANCEL_REQUESTED")
         if event_name == "SLOWTASK_CANCEL_REQUESTED":
             task.cancel_request_event_id = str(event["event_id"])
+        elif event_name == "SLOWTASK_CANCELLED":
+            task.cancelled_event_id = str(event["event_id"])
         task.cancel_reason = str(event["cancel_reason"])
         task.progress_events = (
             *task.progress_events,
@@ -724,11 +737,16 @@ class SlowTaskState:
         event_plan_version = _int_field(event, "plan_version")
         if event_plan_version > task.current_plan_version:
             raise SlowTaskStateError("TOOL_RESULT_RECEIVED cannot come from a future plan_version")
+        tool_call_id = str(event["tool_call_id"])
+        if not _has_matching_tool_call(task, tool_call_id=tool_call_id, plan_version=event_plan_version):
+            raise SlowTaskStateError(
+                "TOOL_RESULT_RECEIVED requires prior matching TOOL_CALL_STARTED"
+            )
         task.tool_results = (
             *task.tool_results,
             ToolResultMetadata(
                 event_id=str(event["event_id"]),
-                tool_call_id=str(event["tool_call_id"]),
+                tool_call_id=tool_call_id,
                 plan_version=event_plan_version,
                 task_event_seq=_int_field(event, "task_event_seq"),
                 result_status=str(event["result_status"]),
@@ -883,6 +901,14 @@ class SlowTaskState:
             )
         task.current_task_event_seq = task_event_seq
 
+    def _require_next_task_event_seq(self, task: SlowTaskRecord, event: Mapping[str, Any]) -> None:
+        task_event_seq = _int_field(event, "task_event_seq")
+        if task_event_seq <= task.current_task_event_seq:
+            raise SlowTaskStateError(
+                f"{event['event_name']} task_event_seq={task_event_seq} must be greater than current "
+                f"task_event_seq={task.current_task_event_seq}"
+            )
+
 
 def _ref_event(
     event: Mapping[str, Any],
@@ -926,6 +952,14 @@ def _has_received_user_patch_evidence(task: SlowTaskRecord, *, patch_id: str) ->
         evidence.patch_id == patch_id
         and evidence.plan_version == task.current_plan_version
         for evidence in task.user_patch_evidence
+    )
+
+
+def _has_matching_tool_call(task: SlowTaskRecord, *, tool_call_id: str, plan_version: int) -> bool:
+    return any(
+        tool_call.tool_call_id == tool_call_id
+        and tool_call.plan_version == plan_version
+        for tool_call in task.tool_calls
     )
 
 

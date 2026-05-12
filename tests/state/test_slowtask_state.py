@@ -358,6 +358,70 @@ def test_confirmation_acceptance_requires_matching_pending_confirmation_and_user
     assert state.tasks["task_slice3_001"].confirmation_state.status == "accepted"
 
 
+def test_confirmation_acceptance_requires_scope_to_match_pending_confirmation() -> None:
+    state = create_planning_state()
+    state.reduce_event(
+        slowtask_event(
+            "CONFIRMATION_REQUIRED",
+            event_id="evt_slice3_confirmation_required",
+            task_event_seq=3,
+            confirmation_id="confirmation_slice3_scope",
+            confirmation_scope="TASK_CANCEL",
+            required_for_event_id="evt_slice3_required_action",
+            prompt_ref="prompt://synthetic/mvp1/slice3/confirm-scope",
+        )
+    )
+    state.reduce_event(
+        slowtask_event(
+            "USER_PATCH_RECEIVED",
+            event_id="evt_slice3_scope_patch_received",
+            task_event_seq=4,
+            patch_id="patch_slice3_scope",
+            observed_plan_version=1,
+            evidence_ref="evidence://synthetic/mvp1/slice3/scope-patch",
+        )
+    )
+    state.reduce_event(
+        slowtask_event(
+            "USER_PATCH_INTERPRETED",
+            event_id="evt_slice3_scope_patch_interpreted",
+            task_event_seq=5,
+            patch_id="patch_slice3_scope",
+            observed_plan_version=1,
+            interpreted_against_plan_version=1,
+            interpretation_type="confirmation",
+            materially_changes_task=False,
+        )
+    )
+    state.reduce_event(
+        slowtask_event(
+            "USER_CONFIRMATION_RECEIVED",
+            event_id="evt_slice3_scope_confirmation_received",
+            task_event_seq=6,
+            confirmation_id="confirmation_slice3_scope",
+            patch_id="patch_slice3_scope",
+            confirmation_signal="accepted",
+        )
+    )
+
+    with pytest.raises(SlowTaskStateError, match="accepted_scope"):
+        state.reduce_event(
+            slowtask_event(
+                "CONFIRMATION_ACCEPTED",
+                event_id="evt_slice3_scope_confirmation_accepted",
+                task_event_seq=7,
+                confirmation_id="confirmation_slice3_scope",
+                accepted_scope="DEMO_DESTRUCTIVE_ACTION",
+                authorization_ref="authorization://synthetic/mvp1/slice3/wrong-scope",
+            )
+        )
+
+    confirmation_state = state.tasks["task_slice3_001"].confirmation_state
+    assert confirmation_state.pending_confirmation_id == "confirmation_slice3_scope"
+    assert confirmation_state.status == "accepted"
+    assert confirmation_state.authorization_ref is None
+
+
 def test_user_confirmation_received_requires_matching_interpreted_user_patch() -> None:
     state = create_planning_state()
     state.reduce_event(
@@ -502,9 +566,19 @@ def test_old_plan_tool_result_requires_stale_mark_and_record_before_replay_compl
     state = create_planning_state()
     state.reduce_event(
         slowtask_event(
+            "TOOL_CALL_STARTED",
+            event_id="evt_slice3_old_plan_tool_call",
+            task_event_seq=3,
+            tool_call_id="tool_call_slice3_old_plan",
+            tool_name="demo.synthetic",
+            idempotency_key="idem://synthetic/mvp1/slice3/old-plan",
+        )
+    )
+    state.reduce_event(
+        slowtask_event(
             "PLAN_VERSION_ADVANCED",
             event_id="evt_slice3_plan_advanced",
-            task_event_seq=3,
+            task_event_seq=4,
             plan_version=2,
             from_plan_version=1,
             to_plan_version=2,
@@ -515,7 +589,7 @@ def test_old_plan_tool_result_requires_stale_mark_and_record_before_replay_compl
         slowtask_event(
             "TOOL_RESULT_RECEIVED",
             event_id="evt_slice3_old_plan_tool_result",
-            task_event_seq=4,
+            task_event_seq=5,
             plan_version=1,
             tool_call_id="tool_call_slice3_old_plan",
             result_status="succeeded",
@@ -530,7 +604,7 @@ def test_old_plan_tool_result_requires_stale_mark_and_record_before_replay_compl
         slowtask_event(
             "TOOL_RESULT_MARKED_STALE",
             event_id="evt_slice3_old_plan_marked_stale",
-            task_event_seq=5,
+            task_event_seq=6,
             plan_version=2,
             tool_call_id="tool_call_slice3_old_plan",
             result_plan_version=1,
@@ -545,7 +619,7 @@ def test_old_plan_tool_result_requires_stale_mark_and_record_before_replay_compl
         slowtask_event(
             "STALE_EVIDENCE_RECORDED",
             event_id="evt_slice3_stale_evidence_recorded",
-            task_event_seq=6,
+            task_event_seq=7,
             plan_version=2,
             stale_evidence_ref="stale-evidence://synthetic/mvp1/slice3/old-plan",
             source_tool_result_event_id="evt_slice3_old_plan_tool_result",
@@ -561,9 +635,19 @@ def test_stale_evidence_adoption_requires_recorded_stale_evidence() -> None:
     state = create_planning_state()
     state.reduce_event(
         slowtask_event(
+            "TOOL_CALL_STARTED",
+            event_id="evt_slice3_old_plan_tool_call",
+            task_event_seq=3,
+            tool_call_id="tool_call_slice3_old_plan",
+            tool_name="demo.synthetic",
+            idempotency_key="idem://synthetic/mvp1/slice3/old-plan",
+        )
+    )
+    state.reduce_event(
+        slowtask_event(
             "PLAN_VERSION_ADVANCED",
             event_id="evt_slice3_plan_advanced",
-            task_event_seq=3,
+            task_event_seq=4,
             plan_version=2,
             from_plan_version=1,
             to_plan_version=2,
@@ -576,7 +660,7 @@ def test_stale_evidence_adoption_requires_recorded_stale_evidence() -> None:
             slowtask_event(
                 "STALE_EVIDENCE_ADOPTED",
                 event_id="evt_slice3_stale_adopted_without_record",
-                task_event_seq=4,
+                task_event_seq=5,
                 plan_version=2,
                 stale_evidence_ref="stale-evidence://synthetic/mvp1/slice3/missing",
                 source_tool_result_event_id="evt_slice3_missing_tool_result",
@@ -592,7 +676,7 @@ def test_stale_evidence_adoption_requires_recorded_stale_evidence() -> None:
         slowtask_event(
             "TOOL_RESULT_RECEIVED",
             event_id="evt_slice3_old_plan_tool_result",
-            task_event_seq=4,
+            task_event_seq=5,
             plan_version=1,
             tool_call_id="tool_call_slice3_old_plan",
             result_status="succeeded",
@@ -603,7 +687,7 @@ def test_stale_evidence_adoption_requires_recorded_stale_evidence() -> None:
         slowtask_event(
             "TOOL_RESULT_MARKED_STALE",
             event_id="evt_slice3_old_plan_marked_stale",
-            task_event_seq=5,
+            task_event_seq=6,
             plan_version=2,
             tool_call_id="tool_call_slice3_old_plan",
             result_plan_version=1,
@@ -615,7 +699,7 @@ def test_stale_evidence_adoption_requires_recorded_stale_evidence() -> None:
         slowtask_event(
             "STALE_EVIDENCE_RECORDED",
             event_id="evt_slice3_stale_evidence_recorded",
-            task_event_seq=6,
+            task_event_seq=7,
             plan_version=2,
             stale_evidence_ref="stale-evidence://synthetic/mvp1/slice3/old-plan",
             source_tool_result_event_id="evt_slice3_old_plan_tool_result",
@@ -625,7 +709,7 @@ def test_stale_evidence_adoption_requires_recorded_stale_evidence() -> None:
         slowtask_event(
             "STALE_EVIDENCE_ADOPTED",
             event_id="evt_slice3_stale_adopted",
-            task_event_seq=7,
+            task_event_seq=8,
             plan_version=2,
             stale_evidence_ref="stale-evidence://synthetic/mvp1/slice3/old-plan",
             source_tool_result_event_id="evt_slice3_old_plan_tool_result",
@@ -696,6 +780,27 @@ def test_slowtask_cancelled_requires_prior_cancel_request() -> None:
     )
 
 
+def test_cancelled_state_requires_prior_cancelled_event() -> None:
+    state = create_planning_state()
+
+    with pytest.raises(SlowTaskStateError, match="SLOWTASK_CANCELLED"):
+        state.reduce_event(
+            slowtask_event(
+                "SLOWTASK_STATE_CHANGED",
+                event_id="evt_slice3_cancelled_state_without_lifecycle",
+                task_event_seq=3,
+                from_state="PLANNING",
+                to_state="CANCELLED",
+                reason="synthetic_cancel",
+            )
+        )
+
+    task = state.tasks["task_slice3_001"]
+    assert task.lifecycle_state == "PLANNING"
+    assert task.terminal_outcome is None
+    assert task.state_transitions[-1].to_state == "PLANNING"
+
+
 def test_reused_task_event_seq_is_rejected_for_mutating_slowtask_events() -> None:
     state = SlowTaskState()
     state.reduce_event(created_event(task_event_seq=1))
@@ -710,6 +815,50 @@ def test_reused_task_event_seq_is_rejected_for_mutating_slowtask_events() -> Non
                 reason="reused_task_event_seq",
             )
         )
+
+    task = state.tasks["task_slice3_001"]
+    assert task.lifecycle_state == "CREATED"
+    assert task.state_transitions == ()
+
+
+def test_rejected_user_patch_received_does_not_append_patch_evidence() -> None:
+    state = create_planning_state()
+    task = state.tasks["task_slice3_001"]
+
+    with pytest.raises(SlowTaskStateError, match="task_event_seq"):
+        state.reduce_event(
+            slowtask_event(
+                "USER_PATCH_RECEIVED",
+                event_id="evt_slice3_patch_reused_seq",
+                task_event_seq=2,
+                patch_id="patch_slice3_reused_seq",
+                observed_plan_version=1,
+                evidence_ref="evidence://synthetic/mvp1/slice3/reused-seq",
+            )
+        )
+
+    assert task.user_patch_evidence == ()
+    assert task.current_task_event_seq == 2
+
+
+def test_tool_result_requires_prior_matching_tool_call() -> None:
+    state = create_planning_state()
+
+    with pytest.raises(SlowTaskStateError, match="TOOL_CALL_STARTED"):
+        state.reduce_event(
+            slowtask_event(
+                "TOOL_RESULT_RECEIVED",
+                event_id="evt_slice3_tool_result_without_call",
+                task_event_seq=3,
+                tool_call_id="tool_call_slice3_missing",
+                result_status="succeeded",
+                result_ref="tool-result://synthetic/mvp1/slice3/missing-call",
+            )
+        )
+
+    task = state.tasks["task_slice3_001"]
+    assert task.tool_results == ()
+    assert task.current_task_event_seq == 2
 
 
 def test_slowtask_failed_then_state_changed_failed_produces_terminal_failed_state() -> None:
