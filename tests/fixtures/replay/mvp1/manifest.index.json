@@ -1,9 +1,9 @@
 {
   "manifest_index_schema_version": "1.0",
-  "suite_id": "MVP1-SLICE0-1",
+  "suite_id": "MVP1-SLICE0-2",
   "fixture_domain": "GITHUB_ALLOWED",
   "replay_mode": "deterministic",
-  "scope": "MVP-1 Slice 0/1 safety and registry skeleton only; acceptance scenario fixtures arrive in later slices.",
+  "scope": "MVP-1 Slice 0/1 safety and registry skeleton plus Slice 2 TaskFocusState router replay fixture.",
   "required_scenarios": [],
   "forbidden_event_names": [
     "TOOL_EXECUTION_STARTED",
@@ -24,6 +24,10 @@
     {
       "fixture": "000-empty-mvp1-session.fixture.json",
       "purpose": "empty MVP-1 replay safety skeleton"
+    },
+    {
+      "fixture": "002-task-focus-router.fixture.json",
+      "purpose": "TaskFocusState router decision replay for MVP-1 Slice 2"
     }
   ],
   "scenarios": []

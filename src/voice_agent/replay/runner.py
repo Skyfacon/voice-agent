@@ -9,7 +9,7 @@ from voice_agent.events.envelope import EventValidationError, validate_event_env
 from voice_agent.events.registry import MVP1_EVENT_NAMES, get_event_definition
 from voice_agent.replay.manifest import ReplayManifest, validate_replay_manifest
 from voice_agent.replay.state_digest import state_digest
-from voice_agent.router.router import MVP0_TASK_FOCUS_BY_DECISION
+from voice_agent.router.router import MVP0_TASK_FOCUS_BY_DECISION, MVP1_ROUTER_DECISIONS, MVP1_TASK_FOCUS_VALUES
 from voice_agent.state.adapter_health_state import AdapterHealthState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
@@ -56,7 +56,7 @@ DATA_PLANE_REF_FIELDS = frozenset(
 def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     manifest = validate_replay_manifest(_required_mapping(fixture, "replay_manifest"))
     raw_events = _required_sequence(fixture, "events")
-    ordered_events = _validate_and_order_events(raw_events)
+    ordered_events = _validate_and_order_events(raw_events, manifest=manifest)
 
     diagnostics: dict[str, Any] = {
         "ignored_events": [],
@@ -126,7 +126,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     )
 
 
-def _validate_and_order_events(raw_events: Sequence[object]) -> list[dict[str, Any]]:
+def _validate_and_order_events(raw_events: Sequence[object], *, manifest: ReplayManifest) -> list[dict[str, Any]]:
     validated_events: list[dict[str, Any]] = []
     for raw_event in raw_events:
         if not isinstance(raw_event, Mapping):
@@ -141,7 +141,8 @@ def _validate_and_order_events(raw_events: Sequence[object]) -> list[dict[str, A
     _validate_single_session(ordered_events)
     _validate_causal_links_after_sort(ordered_events)
     _validate_audio_turn_opened_before_commit(ordered_events)
-    _validate_mvp0_router_decision_scope(ordered_events)
+    _validate_router_decision_scope(ordered_events, manifest=manifest)
+    _validate_task_focus_state_update_causality(ordered_events)
     _validate_post_commit_understanding_and_router_order(ordered_events)
     return ordered_events
 
@@ -280,19 +281,65 @@ def _validate_audio_turn_opened_before_commit(ordered_events: Sequence[Mapping[s
                 raise ReplayValidationError(f"{event_name} requires prior matching audio TURN_OPENED")
 
 
-def _validate_mvp0_router_decision_scope(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+def _validate_router_decision_scope(
+    ordered_events: Sequence[Mapping[str, Any]],
+    *,
+    manifest: ReplayManifest,
+) -> None:
     for event in ordered_events:
         if event["event_name"] != "ROUTER_DECISION_EMITTED":
             continue
 
         router_decision = str(event["router_decision"])
-        expected_task_focus = MVP0_TASK_FOCUS_BY_DECISION.get(router_decision)
-        if expected_task_focus is None:
-            raise ReplayValidationError("MVP0 router_decision must be FAST_ONLY or IGNORE")
+        if _is_mvp0_fixture(manifest):
+            expected_task_focus = MVP0_TASK_FOCUS_BY_DECISION.get(router_decision)
+            if expected_task_focus is None:
+                raise ReplayValidationError("MVP0 router_decision must be FAST_ONLY or IGNORE")
+
+            task_focus = event.get("task_focus")
+            if task_focus is not None and str(task_focus) != expected_task_focus:
+                raise ReplayValidationError("MVP0 task_focus must match FAST_ONLY/IGNORE skeleton labels")
+            continue
+
+        if router_decision not in MVP1_ROUTER_DECISIONS:
+            raise ReplayValidationError("MVP-1 router_decision must be a canonical RouterDecision")
 
         task_focus = event.get("task_focus")
-        if task_focus is not None and str(task_focus) != expected_task_focus:
-            raise ReplayValidationError("MVP0 task_focus must match FAST_ONLY/IGNORE skeleton labels")
+        if task_focus is not None and str(task_focus) not in MVP1_TASK_FOCUS_VALUES:
+            raise ReplayValidationError("MVP-1 task_focus must be an ADR-006 focus value")
+
+
+def _is_mvp0_fixture(manifest: ReplayManifest) -> bool:
+    return manifest.source_trace_ref.startswith("fixture://mvp0/")
+
+
+def _validate_task_focus_state_update_causality(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    seen_router_decision_event_ids: set[str] = set()
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+        if event_name == "ROUTER_DECISION_EMITTED":
+            seen_router_decision_event_ids.add(event_id)
+            continue
+        if event_name != "TASK_FOCUS_STATE_UPDATED":
+            continue
+
+        router_decision_event_id = str(event["router_decision_event_id"])
+        if router_decision_event_id not in seen_router_decision_event_ids:
+            raise ReplayValidationError(
+                "TASK_FOCUS_STATE_UPDATED router_decision_event_id must reference an earlier "
+                "ROUTER_DECISION_EMITTED"
+            )
+        if event.get("caused_by_event_id") != router_decision_event_id:
+            raise ReplayValidationError(
+                "TASK_FOCUS_STATE_UPDATED caused_by_event_id must match router_decision_event_id"
+            )
+
+        last_focus_event_id = event.get("last_focus_event_id")
+        if last_focus_event_id not in (None, "", router_decision_event_id):
+            raise ReplayValidationError(
+                "TASK_FOCUS_STATE_UPDATED last_focus_event_id must match router_decision_event_id"
+            )
 
 
 def _is_audio_ingress_event(event: Mapping[str, Any]) -> bool:
