@@ -618,8 +618,10 @@ class SlowTaskState:
             reason = str(event["review_result"])
         elif event_name == "AMBIGUITY_DETECTED":
             refs = (*_string_tuple(event.get("ambiguous_fields", ())), *_string_tuple(event.get("source_evidence_refs", ())))
+            _require_stale_evidence_adopted_for_advancement(task, event, refs=refs)
         elif event_name == "AMBIGUITY_RESOLVED":
             refs = (*_string_tuple(event.get("resolved_fields", ())), *_string_tuple(event.get("source_evidence_refs", ())))
+            _require_stale_evidence_adopted_for_advancement(task, event, refs=refs)
             reason = str(event["resolution_reason"])
         elif event_name == "CLARIFICATION_REQUESTED":
             refs = (
@@ -639,9 +641,11 @@ class SlowTaskState:
             refs = (resolved_arguments_ref, provenance_ref)
         elif event_name == "ARGUMENT_RESOLUTION_PROVENANCE":
             refs = _string_tuple(event.get("field_provenance_refs", ()))
+            _require_stale_evidence_adopted_for_advancement(task, event, refs=refs)
             task.argument_provenance_refs = _append_many_unique(task.argument_provenance_refs, refs)
         elif event_name == "INSUFFICIENT_EVIDENCE_FOR_ACTION":
             refs = (*_string_tuple(event.get("blocking_fields", ())), *_string_tuple(event.get("source_evidence_refs", ())))
+            _require_stale_evidence_adopted_for_advancement(task, event, refs=refs)
         task.evidence_events = (*task.evidence_events, _ref_event(event, refs=refs, reason=reason))
         self._advance_task_event_seq(task, event)
 
@@ -1063,7 +1067,7 @@ def _require_stale_evidence_adopted_for_advancement(
     unadopted_old_result_refs = _unadopted_old_tool_result_refs(task, refs)
     unadopted_event_ids = _unadopted_stale_dependency_event_ids(
         task,
-        (*source_event_ids, *_optional_ref_tuple(event.get("caused_by_event_id"))),
+        (*refs, *source_event_ids, *_optional_ref_tuple(event.get("caused_by_event_id"))),
     )
     blocked_refs = sorted(unadopted_stale_refs | unadopted_old_result_refs)
     blocked_event_ids = sorted(unadopted_event_ids)

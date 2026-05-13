@@ -235,6 +235,127 @@ def test_replay_rejects_downstream_stale_advancement_without_review_or_adoption(
         run_replay_fixture(deepcopy(fixture))
 
 
+@pytest.mark.parametrize(
+    "event_name,extra_fields",
+    [
+        (
+            "AMBIGUITY_DETECTED",
+            {
+                "ambiguous_fields": ["availability_status"],
+                "source_evidence_refs": ["stale-evidence://synthetic/mvp1/slice8/no-adoption/old-tool-result"],
+            },
+        ),
+        (
+            "AMBIGUITY_RESOLVED",
+            {
+                "resolved_fields": ["availability_status"],
+                "resolution_reason": "illegal_unadopted_stale_resolution",
+                "source_evidence_refs": ["stale-evidence://synthetic/mvp1/slice8/no-adoption/old-tool-result"],
+            },
+        ),
+    ],
+)
+def test_replay_rejects_ambiguity_events_citing_unadopted_stale_refs(
+    event_name: str,
+    extra_fields: dict[str, object],
+) -> None:
+    fixture = load_json_fixture(NO_ADOPTION_FIXTURE)
+    recorded = fixture["events"][-1]
+    state_replanned = next(
+        event for event in fixture["events"] if event["event_id"] == "evt_mvp1_slice8_no_adoption_state_replanned"
+    )
+    fixture["events"].append(
+        {
+            "event_name": event_name,
+            "event_id": f"evt_mvp1_slice8_no_adoption_illegal_{event_name.lower()}",
+            "event_seq": recorded["event_seq"] + 1,
+            "event_schema_version": "1.0",
+            "session_id": recorded["session_id"],
+            "conversation_id": recorded["conversation_id"],
+            "source_module": "slowtask_runtime",
+            "created_monotonic_ms": recorded["created_monotonic_ms"] + 1,
+            "created_wall_clock_ms": recorded["created_wall_clock_ms"] + 1,
+            "caused_by_event_id": state_replanned["event_id"],
+            "trace_redaction_level": "metadata_only",
+            "task_id": recorded["task_id"],
+            "plan_version": recorded["plan_version"],
+            "task_event_seq": recorded["task_event_seq"] + 1,
+            **extra_fields,
+        }
+    )
+
+    with pytest.raises(ReplayValidationError, match="STALE_EVIDENCE_ADOPTED"):
+        run_replay_fixture(deepcopy(fixture))
+
+
+def test_replay_rejects_provenance_event_citing_unadopted_stale_ref() -> None:
+    fixture = load_json_fixture(NO_ADOPTION_FIXTURE)
+    recorded = fixture["events"][-1]
+    state_replanned = next(
+        event for event in fixture["events"] if event["event_id"] == "evt_mvp1_slice8_no_adoption_state_replanned"
+    )
+    fixture["events"].append(
+        {
+            "event_name": "ARGUMENT_RESOLUTION_PROVENANCE",
+            "event_id": "evt_mvp1_slice8_no_adoption_illegal_argument_provenance",
+            "event_seq": recorded["event_seq"] + 1,
+            "event_schema_version": "1.0",
+            "session_id": recorded["session_id"],
+            "conversation_id": recorded["conversation_id"],
+            "source_module": "slowtask_runtime",
+            "created_monotonic_ms": recorded["created_monotonic_ms"] + 1,
+            "created_wall_clock_ms": recorded["created_wall_clock_ms"] + 1,
+            "caused_by_event_id": state_replanned["event_id"],
+            "trace_redaction_level": "metadata_only",
+            "task_id": recorded["task_id"],
+            "plan_version": recorded["plan_version"],
+            "task_event_seq": recorded["task_event_seq"] + 1,
+            "field_provenance_refs": [recorded["stale_evidence_ref"]],
+        }
+    )
+
+    with pytest.raises(ReplayValidationError, match="STALE_EVIDENCE_ADOPTED"):
+        run_replay_fixture(deepcopy(fixture))
+
+
+@pytest.mark.parametrize(
+    "dependency_event_name",
+    ["TOOL_RESULT_RECEIVED", "TOOL_RESULT_MARKED_STALE", "STALE_EVIDENCE_RECORDED"],
+)
+def test_replay_rejects_stale_dependency_event_ids_inside_evidence_refs(
+    dependency_event_name: str,
+) -> None:
+    fixture = load_json_fixture(NO_ADOPTION_FIXTURE)
+    dependency = next(event for event in fixture["events"] if event["event_name"] == dependency_event_name)
+    recorded = fixture["events"][-1]
+    state_replanned = next(
+        event for event in fixture["events"] if event["event_id"] == "evt_mvp1_slice8_no_adoption_state_replanned"
+    )
+    fixture["events"].append(
+        {
+            "event_name": "EVIDENCE_REVIEWED",
+            "event_id": f"evt_mvp1_slice8_no_adoption_illegal_{dependency_event_name.lower()}_ref",
+            "event_seq": recorded["event_seq"] + 1,
+            "event_schema_version": "1.0",
+            "session_id": recorded["session_id"],
+            "conversation_id": recorded["conversation_id"],
+            "source_module": "slowtask_runtime",
+            "created_monotonic_ms": recorded["created_monotonic_ms"] + 1,
+            "created_wall_clock_ms": recorded["created_wall_clock_ms"] + 1,
+            "caused_by_event_id": state_replanned["event_id"],
+            "trace_redaction_level": "metadata_only",
+            "task_id": recorded["task_id"],
+            "plan_version": recorded["plan_version"],
+            "task_event_seq": recorded["task_event_seq"] + 1,
+            "evidence_refs": [dependency["event_id"]],
+            "review_result": "illegal_stale_dependency_event_id_ref",
+        }
+    )
+
+    with pytest.raises(ReplayValidationError, match="STALE_EVIDENCE_ADOPTED"):
+        run_replay_fixture(deepcopy(fixture))
+
+
 def test_replay_allows_current_then_old_result_to_be_marked_recorded_and_adopted() -> None:
     fixture, result_received, state_replanned = _current_then_old_result_fixture()
     marked = {
