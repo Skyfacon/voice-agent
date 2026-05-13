@@ -285,11 +285,11 @@ def test_empty_mvp1_fixture_replays_with_empty_task_and_slowtask_digest_fields()
     ]
 
 
-def test_mvp1_manifest_index_is_slice0_7_and_repo_safe() -> None:
+def test_mvp1_manifest_index_is_slice0_8_and_repo_safe() -> None:
     manifest_index = load_json_fixture(MVP1_MANIFEST_INDEX)
 
     assert manifest_index["manifest_index_schema_version"] == "1.0"
-    assert manifest_index["suite_id"] == "MVP1-SLICE0-7"
+    assert manifest_index["suite_id"] == "MVP1-SLICE0-8"
     assert manifest_index["fixture_domain"] == "GITHUB_ALLOWED"
     assert manifest_index["replay_mode"] == "deterministic"
     assert manifest_index["required_scenarios"] == []
@@ -325,6 +325,14 @@ def test_mvp1_manifest_index_is_slice0_7_and_repo_safe() -> None:
         {
             "fixture": "007-evidence-review-waiting-slot.fixture.json",
             "purpose": "SlowTask-led evidence review with context-resolved ambiguity, resolved-argument provenance, and missing-slot waiting state",
+        },
+        {
+            "fixture": "008-stale-result-no-adoption.fixture.json",
+            "purpose": "Old-plan mock ToolResult is marked stale and recorded without advancing current-plan reasoning",
+        },
+        {
+            "fixture": "008-stale-result-adopted.fixture.json",
+            "purpose": "Explicit stale evidence adoption gates current-plan evidence review, resolved arguments, and SemanticCommitment metadata",
         },
     ]
     assert MVP2_ONLY_EVENT_NAMES <= set(manifest_index["forbidden_event_names"])
