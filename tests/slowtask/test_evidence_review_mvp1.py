@@ -274,6 +274,49 @@ def test_partially_context_resolved_ambiguity_is_recorded_as_unresolved_ambiguou
     assert result.produced_events[3]["missing_or_ambiguous_fields"] == ["destination", "date"]
 
 
+def test_mixed_missing_and_ambiguous_fields_preserves_ambiguity_evidence() -> None:
+    journal, cause = _active_planning_journal("task_mvp1_slice7_mixed_blockers")
+
+    result = MockSlowTaskRuntime(journal).review_evidence(
+        task_id="task_mvp1_slice7_mixed_blockers",
+        plan_version=1,
+        caused_by_event_id=cause["event_id"],
+        event_id_prefix="evt_mvp1_slice7_mixed_blockers",
+        created_monotonic_ms=160,
+        created_wall_clock_ms=1700000007160,
+        start_task_event_seq=4,
+        evidence_refs=(
+            "asr://synthetic/mvp1/slice7/mixed-blockers",
+            "thinker://synthetic/mvp1/slice7/mixed-blockers",
+        ),
+        required_fields=("destination", "date"),
+        missing_fields=("date",),
+        ambiguous_fields=("destination",),
+        clarification_prompt_ref="prompt://synthetic/mvp1/slice7/mixed-blockers",
+    )
+
+    assert [event["event_name"] for event in result.produced_events] == [
+        "EVIDENCE_REVIEWED",
+        "AMBIGUITY_DETECTED",
+        "INSUFFICIENT_EVIDENCE_FOR_ACTION",
+        "CLARIFICATION_REQUESTED",
+        "WAITING_FOR_SLOT",
+        "SLOWTASK_STATE_CHANGED",
+    ]
+    reviewed, detected, insufficient, clarification, waiting, state_changed = result.produced_events
+    assert reviewed["review_result"] == "insufficient"
+    assert detected["ambiguous_fields"] == ["destination"]
+    assert detected["source_evidence_refs"] == list(reviewed["evidence_refs"])
+    assert insufficient["caused_by_event_id"] == detected["event_id"]
+    assert insufficient["blocking_fields"] == ["date", "destination"]
+    assert clarification["missing_or_ambiguous_fields"] == ["date", "destination"]
+    assert waiting["missing_fields"] == ["date", "destination"]
+    assert state_changed["to_state"] == "WAITING_FOR_SLOT"
+    assert _event_names(result.produced_events).isdisjoint(
+        {"AMBIGUITY_RESOLVED", "ARGUMENTS_RESOLVED", "ARGUMENT_RESOLUTION_PROVENANCE"}
+    )
+
+
 def test_unresolved_ambiguity_requires_prompt_ref_before_appending() -> None:
     journal, cause = _active_planning_journal("task_mvp1_slice7_ambiguity_prompt")
     event_count_before = len(journal.events())
