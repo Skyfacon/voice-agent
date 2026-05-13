@@ -164,6 +164,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_task_focus_state_update_causality(ordered_events)
     _validate_task_focus_active_task_creation_order(ordered_events)
     _validate_post_commit_understanding_and_router_order(ordered_events)
+    _validate_user_patch_evidence_pack_source_links(ordered_events)
     return ordered_events
 
 
@@ -443,6 +444,81 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED thinker_frame_event_id must reference prior mock Thinker"
                 )
+
+
+def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id = {str(event["event_id"]): event for event in ordered_events}
+    for event in ordered_events:
+        if event["event_name"] != "USER_PATCH_RECEIVED" or "evidence_pack" not in event:
+            continue
+
+        caused_by_event_id = str(event["caused_by_event_id"])
+        router_event = events_by_id.get(caused_by_event_id)
+        if router_event is None or router_event["event_name"] != "ROUTER_DECISION_EMITTED":
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack must be caused by ROUTER_DECISION_EMITTED")
+        if router_event.get("router_decision") != "PATCH_ACTIVE_SLOW_TASK":
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack requires PATCH_ACTIVE_SLOW_TASK router decision")
+        if router_event.get("active_task_id") != event.get("task_id"):
+            raise ReplayValidationError("USER_PATCH_RECEIVED task_id must match router active_task_id")
+        for field in ("turn_id", "utterance_id"):
+            if event.get(field) != router_event.get(field):
+                raise ReplayValidationError(f"USER_PATCH_RECEIVED {field} must match router decision")
+
+        evidence_pack = event["evidence_pack"]
+        if not isinstance(evidence_pack, Mapping):
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack must be an object")
+        authoritative = evidence_pack.get("authoritative_evidence", {})
+        hypothesis = evidence_pack.get("non_authoritative_hypothesis", {})
+        if not isinstance(authoritative, Mapping) or not isinstance(hypothesis, Mapping):
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack sections must be objects")
+
+        source_event_ids = _string_set(authoritative.get("source_event_ids", ()))
+        _require_source_id_in_refs(
+            router_event,
+            source_id_field="turn_committed_event_id",
+            source_event_ids=source_event_ids,
+        )
+        if authoritative.get("asr_frame_ref") not in (None, "") or authoritative.get("asr_nbest"):
+            _require_source_id_in_refs(
+                router_event,
+                source_id_field="asr_frame_event_id",
+                source_event_ids=source_event_ids,
+            )
+
+        if hypothesis.get("semantic_frame_ref") not in (None, "") or hypothesis.get("semantic_summary_ref") not in (None, ""):
+            provenance = hypothesis.get("provenance", {})
+            if not isinstance(provenance, Mapping):
+                raise ReplayValidationError("USER_PATCH_RECEIVED hypothesis provenance must be an object")
+            semantic_summary_provenance = provenance.get("semantic_summary_ref", {})
+            if not isinstance(semantic_summary_provenance, Mapping):
+                raise ReplayValidationError("USER_PATCH_RECEIVED semantic summary provenance must be an object")
+            expected_thinker_event_id = router_event.get("thinker_frame_event_id")
+            actual_thinker_event_id = semantic_summary_provenance.get("source_event_id")
+            if expected_thinker_event_id in (None, "") or actual_thinker_event_id != expected_thinker_event_id:
+                raise ReplayValidationError(
+                    "USER_PATCH_RECEIVED thinker evidence must match router thinker_frame_event_id"
+                )
+
+
+def _require_source_id_in_refs(
+    router_event: Mapping[str, Any],
+    *,
+    source_id_field: str,
+    source_event_ids: set[str],
+) -> None:
+    expected_event_id = router_event.get(source_id_field)
+    if expected_event_id in (None, "") or str(expected_event_id) not in source_event_ids:
+        raise ReplayValidationError(f"USER_PATCH_RECEIVED evidence_pack must include router {source_id_field}")
+
+
+def _string_set(value: object) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, (str, bytes)):
+        return {str(value)}
+    if not isinstance(value, Sequence):
+        raise ReplayValidationError("USER_PATCH_RECEIVED source_event_ids must be a list")
+    return {str(item) for item in value}
 
 
 def _turn_key(event: Mapping[str, Any]) -> tuple[str, str]:
