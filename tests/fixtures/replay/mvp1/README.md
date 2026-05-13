@@ -15,11 +15,16 @@ Slice 2/3 scope:
 - SlowTaskState reducer skeleton replay fixtures
 - completed, cancelled, and failed terminal sticky behavior
 
-Out of scope for this directory through Slice 3:
+Slice 4/5/6 scope:
 
-- SlowTask runtime behavior
-- UserPatch construction
+- SlowTask runtime happy path
+- UserPatch evidence construction
 - UserPatch interpretation
+- material patch plan advance and replanning
+
+Out of scope for this directory through Slice 6:
+
+- stale result adoption runtime
 - Tool execution
 - Composer, spoken plan, coverage, truthfulness, or frontend UI patch events
 
