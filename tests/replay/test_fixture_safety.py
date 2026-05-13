@@ -285,11 +285,11 @@ def test_empty_mvp1_fixture_replays_with_empty_task_and_slowtask_digest_fields()
     ]
 
 
-def test_mvp1_manifest_index_is_slice0_6_and_repo_safe() -> None:
+def test_mvp1_manifest_index_is_slice0_7_and_repo_safe() -> None:
     manifest_index = load_json_fixture(MVP1_MANIFEST_INDEX)
 
     assert manifest_index["manifest_index_schema_version"] == "1.0"
-    assert manifest_index["suite_id"] == "MVP1-SLICE0-6"
+    assert manifest_index["suite_id"] == "MVP1-SLICE0-7"
     assert manifest_index["fixture_domain"] == "GITHUB_ALLOWED"
     assert manifest_index["replay_mode"] == "deterministic"
     assert manifest_index["required_scenarios"] == []
@@ -321,6 +321,10 @@ def test_mvp1_manifest_index_is_slice0_6_and_repo_safe() -> None:
         {
             "fixture": "006-plan-advance-replanning.fixture.json",
             "purpose": "UserPatch interpretation for a material active-task patch with plan_version advance and replanning events",
+        },
+        {
+            "fixture": "007-evidence-review-waiting-slot.fixture.json",
+            "purpose": "SlowTask-led evidence review with context-resolved ambiguity, resolved-argument provenance, and missing-slot waiting state",
         },
     ]
     assert MVP2_ONLY_EVENT_NAMES <= set(manifest_index["forbidden_event_names"])

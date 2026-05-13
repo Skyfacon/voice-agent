@@ -425,6 +425,328 @@ class MockSlowTaskRuntime:
             produced_events=tuple(produced_events),
         )
 
+    def review_evidence(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        caused_by_event_id: str,
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        evidence_refs: Sequence[str],
+        required_fields: Sequence[str],
+        resolved_fields: Sequence[str] = (),
+        ambiguous_fields: Sequence[str] = (),
+        context_resolved_fields: Sequence[str] = (),
+        missing_fields: Sequence[str] = (),
+        resolved_arguments_ref: str | None = None,
+        provenance_ref: str | None = None,
+        field_provenance_refs: Sequence[str] = (),
+        clarification_prompt_ref: str | None = None,
+        resolution_reason: str = "mock_context_resolution",
+    ) -> MockSlowTaskRunResult:
+        if not task_id:
+            raise ValueError("task_id is required")
+        if not event_id_prefix:
+            raise ValueError("event_id_prefix is required")
+
+        reviewed_refs = _string_tuple(evidence_refs)
+        required = _string_tuple(required_fields)
+        resolved = _string_tuple(resolved_fields)
+        ambiguous = _string_tuple(ambiguous_fields)
+        context_resolved = _string_tuple(context_resolved_fields)
+        missing = _string_tuple(missing_fields)
+        field_provenance = _string_tuple(field_provenance_refs)
+        ambiguity_fully_resolved = bool(ambiguous) and _fields_cover(ambiguous, context_resolved)
+
+        if missing:
+            return self._review_missing_slot(
+                task_id=task_id,
+                plan_version=plan_version,
+                caused_by_event_id=caused_by_event_id,
+                event_id_prefix=event_id_prefix,
+                created_monotonic_ms=created_monotonic_ms,
+                created_wall_clock_ms=created_wall_clock_ms,
+                start_task_event_seq=start_task_event_seq,
+                evidence_refs=reviewed_refs,
+                missing_fields=missing,
+                clarification_prompt_ref=clarification_prompt_ref,
+            )
+
+        if ambiguous and not ambiguity_fully_resolved:
+            _validate_clarification_prompt_ref(clarification_prompt_ref)
+        if not ambiguous or ambiguity_fully_resolved:
+            _validate_resolved_arguments_inputs(
+                required_fields=required,
+                resolved_fields=resolved,
+                resolved_arguments_ref=resolved_arguments_ref,
+                provenance_ref=provenance_ref,
+            )
+
+        produced_events: list[dict[str, Any]] = []
+        if ambiguity_fully_resolved:
+            review_result = "context_resolvable_ambiguity"
+        elif ambiguous:
+            review_result = "ambiguous"
+        else:
+            review_result = "sufficient"
+
+        evidence_reviewed = self._append_slowtask_event(
+            event_name="EVIDENCE_REVIEWED",
+            event_id=f"{event_id_prefix}_evidence_reviewed",
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            evidence_refs=list(reviewed_refs),
+            review_result=review_result,
+        )
+        produced_events.append(evidence_reviewed)
+
+        previous_event_id = str(evidence_reviewed["event_id"])
+        next_task_event_seq = start_task_event_seq + 1
+        next_time_offset = 1
+
+        if ambiguous:
+            ambiguity_detected = self._append_slowtask_event(
+                event_name="AMBIGUITY_DETECTED",
+                event_id=f"{event_id_prefix}_ambiguity_detected",
+                caused_by_event_id=previous_event_id,
+                created_monotonic_ms=created_monotonic_ms + next_time_offset,
+                created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+                task_id=task_id,
+                plan_version=plan_version,
+                task_event_seq=next_task_event_seq,
+                ambiguous_fields=list(ambiguous),
+                source_evidence_refs=list(reviewed_refs),
+            )
+            produced_events.append(ambiguity_detected)
+            previous_event_id = str(ambiguity_detected["event_id"])
+            next_task_event_seq += 1
+            next_time_offset += 1
+
+            if not ambiguity_fully_resolved:
+                insufficient = self._append_slowtask_event(
+                    event_name="INSUFFICIENT_EVIDENCE_FOR_ACTION",
+                    event_id=f"{event_id_prefix}_insufficient_evidence",
+                    caused_by_event_id=previous_event_id,
+                    created_monotonic_ms=created_monotonic_ms + next_time_offset,
+                    created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+                    task_id=task_id,
+                    plan_version=plan_version,
+                    task_event_seq=next_task_event_seq,
+                    blocking_fields=list(ambiguous),
+                    source_evidence_refs=list(reviewed_refs),
+                )
+                produced_events.append(insufficient)
+                previous_event_id = str(insufficient["event_id"])
+                next_task_event_seq += 1
+                next_time_offset += 1
+
+                clarification = self._append_slowtask_event(
+                    event_name="CLARIFICATION_REQUESTED",
+                    event_id=f"{event_id_prefix}_clarification_requested",
+                    caused_by_event_id=previous_event_id,
+                    created_monotonic_ms=created_monotonic_ms + next_time_offset,
+                    created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+                    task_id=task_id,
+                    plan_version=plan_version,
+                    task_event_seq=next_task_event_seq,
+                    missing_or_ambiguous_fields=list(ambiguous),
+                    clarification_prompt_ref=clarification_prompt_ref,
+                )
+                produced_events.append(clarification)
+                previous_event_id = str(clarification["event_id"])
+                next_task_event_seq += 1
+                next_time_offset += 1
+
+                waiting = self._append_slowtask_event(
+                    event_name="WAITING_FOR_SLOT",
+                    event_id=f"{event_id_prefix}_waiting_for_slot",
+                    caused_by_event_id=previous_event_id,
+                    created_monotonic_ms=created_monotonic_ms + next_time_offset,
+                    created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+                    task_id=task_id,
+                    plan_version=plan_version,
+                    task_event_seq=next_task_event_seq,
+                    missing_fields=list(ambiguous),
+                )
+                produced_events.append(waiting)
+                previous_event_id = str(waiting["event_id"])
+                next_task_event_seq += 1
+                next_time_offset += 1
+
+                state_changed = self._append_slowtask_event(
+                    event_name="SLOWTASK_STATE_CHANGED",
+                    event_id=f"{event_id_prefix}_state_waiting_for_slot",
+                    caused_by_event_id=previous_event_id,
+                    created_monotonic_ms=created_monotonic_ms + next_time_offset,
+                    created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+                    task_id=task_id,
+                    plan_version=plan_version,
+                    task_event_seq=next_task_event_seq,
+                    from_state="PLANNING",
+                    to_state="WAITING_FOR_SLOT",
+                    reason="unresolved_ambiguity",
+                )
+                produced_events.append(state_changed)
+                return MockSlowTaskRunResult(
+                    task_id=task_id,
+                    plan_version=plan_version,
+                    produced_events=tuple(produced_events),
+                )
+
+            ambiguity_resolved = self._append_slowtask_event(
+                event_name="AMBIGUITY_RESOLVED",
+                event_id=f"{event_id_prefix}_ambiguity_resolved",
+                caused_by_event_id=previous_event_id,
+                created_monotonic_ms=created_monotonic_ms + next_time_offset,
+                created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+                task_id=task_id,
+                plan_version=plan_version,
+                task_event_seq=next_task_event_seq,
+                resolved_fields=list(context_resolved),
+                resolution_reason=resolution_reason,
+                source_evidence_refs=list(reviewed_refs),
+            )
+            produced_events.append(ambiguity_resolved)
+            previous_event_id = str(ambiguity_resolved["event_id"])
+            next_task_event_seq += 1
+            next_time_offset += 1
+
+        arguments_resolved = self._append_slowtask_event(
+            event_name="ARGUMENTS_RESOLVED",
+            event_id=f"{event_id_prefix}_arguments_resolved",
+            caused_by_event_id=previous_event_id,
+            created_monotonic_ms=created_monotonic_ms + next_time_offset,
+            created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=next_task_event_seq,
+            resolved_arguments_ref=resolved_arguments_ref,
+            provenance_ref=provenance_ref,
+        )
+        produced_events.append(arguments_resolved)
+        previous_event_id = str(arguments_resolved["event_id"])
+        next_task_event_seq += 1
+        next_time_offset += 1
+
+        provenance = self._append_slowtask_event(
+            event_name="ARGUMENT_RESOLUTION_PROVENANCE",
+            event_id=f"{event_id_prefix}_argument_provenance",
+            caused_by_event_id=previous_event_id,
+            created_monotonic_ms=created_monotonic_ms + next_time_offset,
+            created_wall_clock_ms=created_wall_clock_ms + next_time_offset,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=next_task_event_seq,
+            field_provenance_refs=list(field_provenance),
+        )
+        produced_events.append(provenance)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
+            produced_events=tuple(produced_events),
+        )
+
+    def _review_missing_slot(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        caused_by_event_id: str,
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        evidence_refs: tuple[str, ...],
+        missing_fields: tuple[str, ...],
+        clarification_prompt_ref: str | None,
+    ) -> MockSlowTaskRunResult:
+        _validate_clarification_prompt_ref(clarification_prompt_ref)
+
+        produced_events: list[dict[str, Any]] = []
+        evidence_reviewed = self._append_slowtask_event(
+            event_name="EVIDENCE_REVIEWED",
+            event_id=f"{event_id_prefix}_evidence_reviewed",
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            evidence_refs=list(evidence_refs),
+            review_result="insufficient",
+        )
+        produced_events.append(evidence_reviewed)
+
+        insufficient = self._append_slowtask_event(
+            event_name="INSUFFICIENT_EVIDENCE_FOR_ACTION",
+            event_id=f"{event_id_prefix}_insufficient_evidence",
+            caused_by_event_id=str(evidence_reviewed["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 1,
+            blocking_fields=list(missing_fields),
+            source_evidence_refs=list(evidence_refs),
+        )
+        produced_events.append(insufficient)
+
+        clarification = self._append_slowtask_event(
+            event_name="CLARIFICATION_REQUESTED",
+            event_id=f"{event_id_prefix}_clarification_requested",
+            caused_by_event_id=str(insufficient["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 2,
+            created_wall_clock_ms=created_wall_clock_ms + 2,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 2,
+            missing_or_ambiguous_fields=list(missing_fields),
+            clarification_prompt_ref=clarification_prompt_ref,
+        )
+        produced_events.append(clarification)
+
+        waiting = self._append_slowtask_event(
+            event_name="WAITING_FOR_SLOT",
+            event_id=f"{event_id_prefix}_waiting_for_slot",
+            caused_by_event_id=str(clarification["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 3,
+            created_wall_clock_ms=created_wall_clock_ms + 3,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 3,
+            missing_fields=list(missing_fields),
+        )
+        produced_events.append(waiting)
+
+        state_changed = self._append_slowtask_event(
+            event_name="SLOWTASK_STATE_CHANGED",
+            event_id=f"{event_id_prefix}_state_waiting_for_slot",
+            caused_by_event_id=str(waiting["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 4,
+            created_wall_clock_ms=created_wall_clock_ms + 4,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 4,
+            from_state="PLANNING",
+            to_state="WAITING_FOR_SLOT",
+            reason="missing_critical_slot",
+        )
+        produced_events.append(state_changed)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
+            produced_events=tuple(produced_events),
+        )
+
     def _append_slowtask_event(
         self,
         *,
@@ -484,6 +806,30 @@ def _source_evidence_refs_from_user_patch(event: Mapping[str, Any]) -> tuple[str
     for field in ("evidence_ref", "authoritative_evidence_refs", "non_authoritative_hypothesis_refs"):
         refs.extend(_string_tuple(event.get(field)))
     return tuple(dict.fromkeys(ref for ref in refs if ref))
+
+
+def _fields_cover(required_fields: tuple[str, ...], candidate_fields: tuple[str, ...]) -> bool:
+    return set(required_fields).issubset(set(candidate_fields))
+
+
+def _validate_resolved_arguments_inputs(
+    *,
+    required_fields: tuple[str, ...],
+    resolved_fields: tuple[str, ...],
+    resolved_arguments_ref: str | None,
+    provenance_ref: str | None,
+) -> None:
+    if not _fields_cover(required_fields, resolved_fields):
+        raise ValueError("sufficient evidence review requires resolved_fields to cover required_fields")
+    if not resolved_arguments_ref:
+        raise ValueError("sufficient evidence review requires resolved_arguments_ref")
+    if not provenance_ref:
+        raise ValueError("sufficient evidence review requires provenance_ref")
+
+
+def _validate_clarification_prompt_ref(clarification_prompt_ref: str | None) -> None:
+    if not clarification_prompt_ref:
+        raise ValueError("evidence review requires clarification_prompt_ref")
 
 
 def _int_field(event: Mapping[str, Any], field: str) -> int:
