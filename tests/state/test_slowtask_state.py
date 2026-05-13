@@ -136,6 +136,7 @@ def test_plan_version_advanced_is_the_only_current_plan_mutator() -> None:
         slowtask_event(
             "USER_PATCH_INTERPRETED",
             event_id="evt_slice3_patch_interpreted",
+            caused_by_event_id="evt_slice3_patch_received",
             task_event_seq=4,
             patch_id="patch_slice3_001",
             observed_plan_version=1,
@@ -155,6 +156,7 @@ def test_plan_version_advanced_is_the_only_current_plan_mutator() -> None:
             from_plan_version=1,
             to_plan_version=2,
             planning_reason="material_user_patch",
+            caused_by_user_patch_event_id="evt_slice3_patch_received",
         )
     )
 
@@ -505,7 +507,7 @@ def test_plan_version_advance_rejects_or_supersedes_pending_confirmation() -> No
                 plan_version=2,
                 from_plan_version=1,
                 to_plan_version=2,
-                planning_reason="material_user_patch",
+                planning_reason="synthetic_confirmation_supersede_probe",
             )
         )
 
@@ -526,7 +528,7 @@ def test_plan_version_advance_rejects_or_supersedes_pending_confirmation() -> No
             plan_version=2,
             from_plan_version=1,
             to_plan_version=2,
-            planning_reason="material_user_patch",
+            planning_reason="synthetic_confirmation_superseded_replan",
         )
     )
     assert state.tasks["task_slice3_001"].confirmation_state.pending_confirmation_id is None
@@ -582,7 +584,7 @@ def test_old_plan_tool_result_requires_stale_mark_and_record_before_replay_compl
             plan_version=2,
             from_plan_version=1,
             to_plan_version=2,
-            planning_reason="material_user_patch",
+            planning_reason="synthetic_old_plan_stale_result_probe",
         )
     )
     state.reduce_event(
@@ -651,7 +653,7 @@ def test_stale_evidence_adoption_requires_recorded_stale_evidence() -> None:
             plan_version=2,
             from_plan_version=1,
             to_plan_version=2,
-            planning_reason="material_user_patch",
+            planning_reason="synthetic_stale_evidence_adoption_probe",
         )
     )
 

@@ -132,6 +132,7 @@ class UserPatchEvidence:
 @dataclass(frozen=True)
 class UserPatchInterpretation:
     event_id: str
+    caused_by_event_id: str | None
     patch_id: str
     plan_version: int
     task_event_seq: int
@@ -139,6 +140,8 @@ class UserPatchInterpretation:
     interpreted_against_plan_version: int
     interpretation_type: str
     materially_changes_task: bool
+    interpretation_reason: str | None = None
+    source_evidence_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -158,6 +161,7 @@ class PlanAdvance:
     from_plan_version: int
     to_plan_version: int
     planning_reason: str
+    caused_by_user_patch_event_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -475,6 +479,8 @@ class SlowTaskState:
         from_plan_version = _int_field(event, "from_plan_version")
         to_plan_version = _int_field(event, "to_plan_version")
         event_plan_version = _int_field(event, "plan_version")
+        caused_by_user_patch_event_id = _optional_str(event.get("caused_by_user_patch_event_id"))
+        planning_reason = str(event["planning_reason"])
         if from_plan_version != task.current_plan_version:
             raise SlowTaskStateError(
                 f"PLAN_VERSION_ADVANCED from_plan_version={from_plan_version} does not match "
@@ -488,6 +494,20 @@ class SlowTaskState:
             raise SlowTaskStateError(
                 "PLAN_VERSION_ADVANCED requires pending confirmation to be rejected or superseded first"
             )
+        if _is_material_user_patch_planning_reason(planning_reason) and caused_by_user_patch_event_id is None:
+            raise SlowTaskStateError(
+                "PLAN_VERSION_ADVANCED planning_reason=material_user_patch requires "
+                "caused_by_user_patch_event_id"
+            )
+        if caused_by_user_patch_event_id is not None and not _has_material_user_patch_interpretation_for_event(
+            task,
+            user_patch_event_id=caused_by_user_patch_event_id,
+            plan_version=from_plan_version,
+        ):
+            raise SlowTaskStateError(
+                "PLAN_VERSION_ADVANCED caused_by_user_patch_event_id requires prior material "
+                "USER_PATCH_INTERPRETED"
+            )
 
         task.plan_advances = (
             *task.plan_advances,
@@ -496,7 +516,8 @@ class SlowTaskState:
                 task_event_seq=_int_field(event, "task_event_seq"),
                 from_plan_version=from_plan_version,
                 to_plan_version=to_plan_version,
-                planning_reason=str(event["planning_reason"]),
+                planning_reason=planning_reason,
+                caused_by_user_patch_event_id=caused_by_user_patch_event_id,
             ),
         )
         task.current_plan_version = to_plan_version
@@ -545,6 +566,7 @@ class SlowTaskState:
             *task.user_patch_interpretations,
             UserPatchInterpretation(
                 event_id=str(event["event_id"]),
+                caused_by_event_id=_optional_str(event.get("caused_by_event_id")),
                 patch_id=patch_id,
                 plan_version=_int_field(event, "plan_version"),
                 task_event_seq=_int_field(event, "task_event_seq"),
@@ -552,6 +574,8 @@ class SlowTaskState:
                 interpreted_against_plan_version=interpreted_against,
                 interpretation_type=str(event["interpretation_type"]),
                 materially_changes_task=bool(event["materially_changes_task"]),
+                interpretation_reason=_optional_str(event.get("interpretation_reason")),
+                source_evidence_refs=_string_tuple(event.get("source_evidence_refs", ())),
             ),
         )
         self._advance_task_event_seq(task, event)
@@ -953,6 +977,32 @@ def _has_received_user_patch_evidence(task: SlowTaskRecord, *, patch_id: str) ->
         and evidence.plan_version == task.current_plan_version
         for evidence in task.user_patch_evidence
     )
+
+
+def _has_material_user_patch_interpretation_for_event(
+    task: SlowTaskRecord,
+    *,
+    user_patch_event_id: str,
+    plan_version: int,
+) -> bool:
+    patch_ids = {
+        evidence.patch_id
+        for evidence in task.user_patch_evidence
+        if evidence.event_id == user_patch_event_id and evidence.plan_version == plan_version
+    }
+    if not patch_ids:
+        return False
+    return any(
+        interpretation.patch_id in patch_ids
+        and interpretation.caused_by_event_id == user_patch_event_id
+        and interpretation.plan_version == plan_version
+        and interpretation.materially_changes_task
+        for interpretation in task.user_patch_interpretations
+    )
+
+
+def _is_material_user_patch_planning_reason(planning_reason: str) -> bool:
+    return planning_reason == "material_user_patch" or planning_reason.startswith("material_user_patch:")
 
 
 def _has_matching_tool_call(task: SlowTaskRecord, *, tool_call_id: str, plan_version: int) -> bool:

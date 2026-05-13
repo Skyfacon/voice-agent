@@ -204,7 +204,7 @@ def test_replay_rejects_old_plan_tool_result_without_stale_evidence_chain() -> N
                 "task_event_seq": 4,
                 "from_plan_version": 1,
                 "to_plan_version": 2,
-                "planning_reason": "material_user_patch",
+                "planning_reason": "synthetic_old_plan_stale_result_probe",
             },
             {
                 "event_name": "TOOL_RESULT_RECEIVED",

@@ -9,6 +9,22 @@ from voice_agent.events.journal import InMemoryEventJournal
 
 MOCK_SLOWTASK_SOURCE_MODULE = "slowtask_runtime"
 INITIAL_PLAN_VERSION = 1
+MATERIAL_PATCH_CANDIDATES = {
+    "slot_update_candidate": ("slot_update", "mock_slot_update_candidate"),
+    "constraint_update_candidate": ("constraint_update", "mock_constraint_update_candidate"),
+    "goal_rewrite_candidate": ("goal_rewrite", "mock_goal_rewrite_candidate"),
+}
+NON_MATERIAL_PATCH_CANDIDATES = {
+    "feedback_candidate": ("feedback", "mock_feedback_candidate"),
+    "irrelevant_candidate": ("irrelevant", "mock_irrelevant_candidate"),
+}
+CONTROL_PATCH_CANDIDATES = frozenset(
+    {
+        "confirmation_candidate",
+        "cancel_candidate",
+        "switch_task_candidate",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -287,6 +303,128 @@ class MockSlowTaskRuntime:
             produced_events=tuple(produced_events),
         )
 
+    def interpret_user_patch(
+        self,
+        *,
+        user_patch_event: Mapping[str, Any],
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        current_lifecycle_state: str = "PLANNING",
+        supersedes_event_id: str | None = None,
+    ) -> MockSlowTaskRunResult:
+        _validate_user_patch_received_event(user_patch_event)
+        if not event_id_prefix:
+            raise ValueError("event_id_prefix is required")
+
+        task_id = str(user_patch_event["task_id"])
+        patch_id = str(user_patch_event["patch_id"])
+        observed_plan_version = _int_field(user_patch_event, "observed_plan_version")
+        current_plan_version = _int_field(user_patch_event, "plan_version")
+        next_task_event_seq = _int_field(user_patch_event, "task_event_seq") + 1
+        interpretation_type, materially_changes_task, interpretation_reason = (
+            _mock_interpretation_from_user_patch(user_patch_event)
+        )
+        source_evidence_refs = _source_evidence_refs_from_user_patch(user_patch_event)
+        produced_events: list[dict[str, Any]] = []
+
+        interpreted = self._append_slowtask_event(
+            event_name="USER_PATCH_INTERPRETED",
+            event_id=f"{event_id_prefix}_user_patch_interpreted",
+            caused_by_event_id=str(user_patch_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            patch_id=patch_id,
+            task_id=task_id,
+            plan_version=current_plan_version,
+            task_event_seq=next_task_event_seq,
+            observed_plan_version=observed_plan_version,
+            interpreted_against_plan_version=observed_plan_version,
+            interpretation_type=interpretation_type,
+            materially_changes_task=materially_changes_task,
+            interpretation_reason=interpretation_reason,
+            source_evidence_refs=list(source_evidence_refs),
+        )
+        produced_events.append(interpreted)
+
+        if not materially_changes_task:
+            return MockSlowTaskRunResult(
+                task_id=task_id,
+                plan_version=current_plan_version,
+                produced_events=tuple(produced_events),
+            )
+
+        planning_reason = f"material_user_patch:{interpretation_type}"
+        advance_task_event_seq = next_task_event_seq + 1
+        time_offset = 1
+        advance_fields: dict[str, Any] = {}
+        if supersedes_event_id is not None:
+            advance_fields["supersedes_event_id"] = supersedes_event_id
+        advanced = self._append_slowtask_event(
+            event_name="PLAN_VERSION_ADVANCED",
+            event_id=f"{event_id_prefix}_plan_version_advanced",
+            caused_by_event_id=str(interpreted["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + time_offset,
+            created_wall_clock_ms=created_wall_clock_ms + time_offset,
+            task_id=task_id,
+            plan_version=current_plan_version + 1,
+            task_event_seq=advance_task_event_seq,
+            from_plan_version=current_plan_version,
+            to_plan_version=current_plan_version + 1,
+            planning_reason=planning_reason,
+            caused_by_user_patch_event_id=str(user_patch_event["event_id"]),
+            **advance_fields,
+        )
+        produced_events.append(advanced)
+
+        restarted = self._append_slowtask_event(
+            event_name="PLANNING_RESTARTED",
+            event_id=f"{event_id_prefix}_planning_restarted",
+            caused_by_event_id=str(advanced["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + time_offset + 1,
+            created_wall_clock_ms=created_wall_clock_ms + time_offset + 1,
+            task_id=task_id,
+            plan_version=current_plan_version + 1,
+            task_event_seq=advance_task_event_seq + 1,
+            restart_reason=planning_reason,
+        )
+        produced_events.append(restarted)
+
+        replanned = self._append_slowtask_event(
+            event_name="TASK_REPLANNED",
+            event_id=f"{event_id_prefix}_task_replanned",
+            caused_by_event_id=str(advanced["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + time_offset + 2,
+            created_wall_clock_ms=created_wall_clock_ms + time_offset + 2,
+            task_id=task_id,
+            plan_version=current_plan_version + 1,
+            task_event_seq=advance_task_event_seq + 2,
+            planning_reason=planning_reason,
+            superseded_plan_version=current_plan_version,
+        )
+        produced_events.append(replanned)
+
+        planning_state = self._append_slowtask_event(
+            event_name="SLOWTASK_STATE_CHANGED",
+            event_id=f"{event_id_prefix}_state_planning",
+            caused_by_event_id=str(replanned["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + time_offset + 3,
+            created_wall_clock_ms=created_wall_clock_ms + time_offset + 3,
+            task_id=task_id,
+            plan_version=current_plan_version + 1,
+            task_event_seq=advance_task_event_seq + 3,
+            from_state=current_lifecycle_state,
+            to_state="PLANNING",
+            reason="material_user_patch_replanning",
+        )
+        produced_events.append(planning_state)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=current_plan_version + 1,
+            produced_events=tuple(produced_events),
+        )
+
     def _append_slowtask_event(
         self,
         *,
@@ -314,3 +452,52 @@ def _validate_spawn_router_decision(event: Mapping[str, Any]) -> None:
         raise ValueError("MockSlowTaskRuntime requires a ROUTER_DECISION_EMITTED event")
     if event.get("router_decision") != "SPAWN_SLOW_TASK":
         raise ValueError("MockSlowTaskRuntime requires router_decision=SPAWN_SLOW_TASK")
+
+
+def _validate_user_patch_received_event(event: Mapping[str, Any]) -> None:
+    if event.get("event_name") != "USER_PATCH_RECEIVED":
+        raise ValueError("MockSlowTaskRuntime requires a USER_PATCH_RECEIVED event")
+    for field in ("event_id", "patch_id", "task_id", "plan_version", "task_event_seq", "observed_plan_version"):
+        if field not in event:
+            raise ValueError(f"USER_PATCH_RECEIVED missing required field: {field}")
+
+
+def _mock_interpretation_from_user_patch(event: Mapping[str, Any]) -> tuple[str, bool, str]:
+    candidate_types = _string_tuple(event.get("candidate_patch_types", ()))
+    control_candidates = CONTROL_PATCH_CANDIDATES.intersection(candidate_types)
+    if control_candidates:
+        raise ValueError(
+            "Slice 6 mock runtime does not handle control UserPatch candidate; "
+            f"defer to ADR-016 confirmation/cancel slice: {sorted(control_candidates)}"
+        )
+    for candidate_type, (interpretation_type, reason) in MATERIAL_PATCH_CANDIDATES.items():
+        if candidate_type in candidate_types:
+            return interpretation_type, True, reason
+    for candidate_type, (interpretation_type, reason) in NON_MATERIAL_PATCH_CANDIDATES.items():
+        if candidate_type in candidate_types:
+            return interpretation_type, False, reason
+    return "irrelevant", False, "mock_no_material_candidate"
+
+
+def _source_evidence_refs_from_user_patch(event: Mapping[str, Any]) -> tuple[str, ...]:
+    refs: list[str] = []
+    for field in ("evidence_ref", "authoritative_evidence_refs", "non_authoritative_hypothesis_refs"):
+        refs.extend(_string_tuple(event.get(field)))
+    return tuple(dict.fromkeys(ref for ref in refs if ref))
+
+
+def _int_field(event: Mapping[str, Any], field: str) -> int:
+    value = event[field]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field} must be an integer")
+    return value
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        return (str(value),)
+    if not isinstance(value, Sequence):
+        raise ValueError("expected a sequence of strings")
+    return tuple(str(item) for item in value)
