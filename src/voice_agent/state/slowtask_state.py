@@ -203,6 +203,7 @@ class PendingStaleToolResult:
     task_event_seq: int
     marked_stale_event_id: str | None = None
     stale_evidence_ref: str | None = None
+    stale_evidence_recorded_event_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -598,6 +599,11 @@ class SlowTaskState:
             refs = (confirmation_id,)
         elif event_name == "FINALIZING":
             refs = _string_tuple(event.get("source_events", ()))
+            _require_stale_evidence_adopted_for_advancement(
+                task,
+                event,
+                source_event_ids=refs,
+            )
         task.progress_events = (*task.progress_events, _ref_event(event, refs=refs, reason=reason))
         self._advance_task_event_seq(task, event)
 
@@ -608,6 +614,7 @@ class SlowTaskState:
         reason: str | None = None
         if event_name == "EVIDENCE_REVIEWED":
             refs = _string_tuple(event.get("evidence_refs", ()))
+            _require_stale_evidence_adopted_for_advancement(task, event, refs=refs)
             reason = str(event["review_result"])
         elif event_name == "AMBIGUITY_DETECTED":
             refs = (*_string_tuple(event.get("ambiguous_fields", ())), *_string_tuple(event.get("source_evidence_refs", ())))
@@ -622,6 +629,11 @@ class SlowTaskState:
         elif event_name == "ARGUMENTS_RESOLVED":
             resolved_arguments_ref = str(event["resolved_arguments_ref"])
             provenance_ref = str(event["provenance_ref"])
+            _require_stale_evidence_adopted_for_advancement(
+                task,
+                event,
+                refs=(resolved_arguments_ref, provenance_ref),
+            )
             task.resolved_arguments_refs = _append_unique(task.resolved_arguments_refs, resolved_arguments_ref)
             task.argument_provenance_refs = _append_unique(task.argument_provenance_refs, provenance_ref)
             refs = (resolved_arguments_ref, provenance_ref)
@@ -803,6 +815,11 @@ class SlowTaskState:
             tool_call_id=str(event["tool_call_id"]),
             result_plan_version=result_plan_version,
         )
+        task.pending_stale_tool_results = _ensure_pending_stale_tool_result(
+            task.pending_stale_tool_results,
+            task.tool_results,
+            source_tool_result_event_id=source_tool_result_event_id,
+        )
         task.stale_marks = (
             *task.stale_marks,
             StaleMark(
@@ -839,6 +856,7 @@ class SlowTaskState:
             task.pending_stale_tool_results,
             source_tool_result_event_id=source_tool_result_event_id,
             stale_evidence_ref=stale_evidence_ref,
+            stale_evidence_recorded_event_id=str(event["event_id"]),
         )
         self._advance_task_event_seq(task, event)
 
@@ -875,6 +893,12 @@ class SlowTaskState:
 
     def _handle_semantic_commitment(self, event: Mapping[str, Any], task: SlowTaskRecord) -> None:
         self._require_current_plan(event, task)
+        source_events = _string_tuple(event.get("source_events", ()))
+        _require_stale_evidence_adopted_for_advancement(
+            task,
+            event,
+            source_event_ids=source_events,
+        )
         task.semantic_commitments = (
             *task.semantic_commitments,
             SemanticCommitment(
@@ -882,7 +906,7 @@ class SlowTaskState:
                 commitment_id=str(event["commitment_id"]),
                 plan_version=_int_field(event, "plan_version"),
                 task_event_seq=_int_field(event, "task_event_seq"),
-                source_events=_string_tuple(event.get("source_events", ())),
+                source_events=source_events,
                 commitment_ref=_optional_str(event.get("commitment_ref")),
             ),
         )
@@ -1028,6 +1052,95 @@ def _has_recorded_stale_evidence(
     )
 
 
+def _require_stale_evidence_adopted_for_advancement(
+    task: SlowTaskRecord,
+    event: Mapping[str, Any],
+    *,
+    refs: tuple[str, ...] = (),
+    source_event_ids: tuple[str, ...] = (),
+) -> None:
+    unadopted_stale_refs = _unadopted_stale_evidence_refs(task, refs)
+    unadopted_old_result_refs = _unadopted_old_tool_result_refs(task, refs)
+    unadopted_event_ids = _unadopted_stale_dependency_event_ids(
+        task,
+        (*source_event_ids, *_optional_ref_tuple(event.get("caused_by_event_id"))),
+    )
+    blocked_refs = sorted(unadopted_stale_refs | unadopted_old_result_refs)
+    blocked_event_ids = sorted(unadopted_event_ids)
+    if blocked_refs or blocked_event_ids:
+        raise SlowTaskStateError(
+            f"{event['event_name']} requires STALE_EVIDENCE_ADOPTED before stale evidence "
+            "can advance current-plan reasoning: "
+            f"refs={blocked_refs}, source_events={blocked_event_ids}"
+        )
+
+
+def _unadopted_stale_evidence_refs(task: SlowTaskRecord, refs: tuple[str, ...]) -> set[str]:
+    stale_refs = set(task.stale_evidence_refs).intersection(refs)
+    if not stale_refs:
+        return set()
+    adopted_refs = {
+        adopted.stale_evidence_ref
+        for adopted in task.adopted_evidence
+        if adopted.plan_version == task.current_plan_version
+    }
+    return stale_refs - adopted_refs
+
+
+def _unadopted_old_tool_result_refs(task: SlowTaskRecord, refs: tuple[str, ...]) -> set[str]:
+    ref_set = set(refs)
+    if not ref_set:
+        return set()
+    adopted_source_event_ids = {
+        adopted.source_tool_result_event_id
+        for adopted in task.adopted_evidence
+        if adopted.plan_version == task.current_plan_version
+    }
+    return {
+        result.result_ref
+        for result in task.tool_results
+        if result.plan_version < task.current_plan_version
+        and result.result_ref in ref_set
+        and result.event_id not in adopted_source_event_ids
+    }
+
+
+def _unadopted_stale_dependency_event_ids(
+    task: SlowTaskRecord,
+    event_ids: tuple[str, ...],
+) -> set[str]:
+    event_id_set = set(event_ids)
+    if not event_id_set:
+        return set()
+    adopted_source_event_ids = {
+        adopted.source_tool_result_event_id
+        for adopted in task.adopted_evidence
+        if adopted.plan_version == task.current_plan_version
+    }
+    adoption_event_ids = {
+        adopted.event_id
+        for adopted in task.adopted_evidence
+        if adopted.plan_version == task.current_plan_version
+    }
+    blocked_ids = {
+        result.event_id
+        for result in task.tool_results
+        if result.plan_version < task.current_plan_version
+        and result.event_id in event_id_set
+        and result.event_id not in adopted_source_event_ids
+    }
+    for pending in task.pending_stale_tool_results:
+        if pending.source_tool_result_event_id in adopted_source_event_ids:
+            continue
+        stale_dependency_ids = {
+            pending.source_tool_result_event_id,
+            *_optional_ref_tuple(pending.marked_stale_event_id),
+            *_optional_ref_tuple(pending.stale_evidence_recorded_event_id),
+        }
+        blocked_ids.update(event_id_set.intersection(stale_dependency_ids))
+    return blocked_ids - adoption_event_ids
+
+
 def _pending_stale_source_for_mark(
     task: SlowTaskRecord,
     *,
@@ -1041,11 +1154,67 @@ def _pending_stale_source_for_mark(
         and pending.result_plan_version == result_plan_version
         and pending.stale_evidence_ref is None
     ]
+    if matches:
+        return matches[0]
+    matches = [
+        result.event_id
+        for result in task.tool_results
+        if result.tool_call_id == tool_call_id
+        and result.plan_version == result_plan_version
+        and result.plan_version < task.current_plan_version
+        and not _has_pending_stale_tool_result(
+            task.pending_stale_tool_results,
+            source_tool_result_event_id=result.event_id,
+        )
+    ]
     if not matches:
         raise SlowTaskStateError(
             "TOOL_RESULT_MARKED_STALE requires a prior old-plan TOOL_RESULT_RECEIVED"
         )
     return matches[0]
+
+
+def _has_pending_stale_tool_result(
+    pending_results: tuple[PendingStaleToolResult, ...],
+    *,
+    source_tool_result_event_id: str,
+) -> bool:
+    return any(
+        pending.source_tool_result_event_id == source_tool_result_event_id
+        for pending in pending_results
+    )
+
+
+def _ensure_pending_stale_tool_result(
+    pending_results: tuple[PendingStaleToolResult, ...],
+    tool_results: tuple[ToolResultMetadata, ...],
+    *,
+    source_tool_result_event_id: str,
+) -> tuple[PendingStaleToolResult, ...]:
+    if _has_pending_stale_tool_result(
+        pending_results,
+        source_tool_result_event_id=source_tool_result_event_id,
+    ):
+        return pending_results
+    matches = [
+        result
+        for result in tool_results
+        if result.event_id == source_tool_result_event_id
+    ]
+    if not matches:
+        raise SlowTaskStateError(
+            "TOOL_RESULT_MARKED_STALE requires a prior TOOL_RESULT_RECEIVED source"
+        )
+    result = matches[0]
+    return (
+        *pending_results,
+        PendingStaleToolResult(
+            source_tool_result_event_id=result.event_id,
+            tool_call_id=result.tool_call_id,
+            result_plan_version=result.plan_version,
+            task_event_seq=result.task_event_seq,
+        ),
+    )
 
 
 def _mark_pending_stale_tool_result(
@@ -1064,6 +1233,7 @@ def _mark_pending_stale_tool_result(
             if pending.source_tool_result_event_id == source_tool_result_event_id
             else pending.marked_stale_event_id,
             stale_evidence_ref=pending.stale_evidence_ref,
+            stale_evidence_recorded_event_id=pending.stale_evidence_recorded_event_id,
         )
         for pending in pending_results
     )
@@ -1087,6 +1257,7 @@ def _record_pending_stale_evidence(
     *,
     source_tool_result_event_id: str,
     stale_evidence_ref: str,
+    stale_evidence_recorded_event_id: str,
 ) -> tuple[PendingStaleToolResult, ...]:
     return tuple(
         PendingStaleToolResult(
@@ -1098,6 +1269,9 @@ def _record_pending_stale_evidence(
             stale_evidence_ref=stale_evidence_ref
             if pending.source_tool_result_event_id == source_tool_result_event_id
             else pending.stale_evidence_ref,
+            stale_evidence_recorded_event_id=stale_evidence_recorded_event_id
+            if pending.source_tool_result_event_id == source_tool_result_event_id
+            else pending.stale_evidence_recorded_event_id,
         )
         for pending in pending_results
     )

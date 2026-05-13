@@ -8,6 +8,7 @@ from voice_agent.events.journal import InMemoryEventJournal
 
 
 MOCK_SLOWTASK_SOURCE_MODULE = "slowtask_runtime"
+MOCK_TOOL_EVENT_SOURCE_MODULE = "mock_tool_event_emitter"
 INITIAL_PLAN_VERSION = 1
 MATERIAL_PATCH_CANDIDATES = {
     "slot_update_candidate": ("slot_update", "mock_slot_update_candidate"),
@@ -425,6 +426,295 @@ class MockSlowTaskRuntime:
             produced_events=tuple(produced_events),
         )
 
+    def record_mock_tool_call(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        caused_by_event_id: str,
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        task_event_seq: int,
+        tool_call_id: str,
+        tool_name: str,
+        idempotency_key: str,
+    ) -> MockSlowTaskRunResult:
+        if not task_id:
+            raise ValueError("task_id is required")
+        if not event_id_prefix:
+            raise ValueError("event_id_prefix is required")
+        if not tool_call_id:
+            raise ValueError("tool_call_id is required")
+        if not tool_name:
+            raise ValueError("tool_name is required")
+        if not idempotency_key:
+            raise ValueError("idempotency_key is required")
+
+        tool_call = self._append_mock_tool_event(
+            event_name="TOOL_CALL_STARTED",
+            event_id=f"{event_id_prefix}_tool_call_started",
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=task_event_seq,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+        )
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
+            produced_events=(tool_call,),
+        )
+
+    def record_old_plan_tool_result(
+        self,
+        *,
+        task_id: str,
+        current_plan_version: int,
+        result_plan_version: int,
+        caused_by_event_id: str,
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        tool_call_id: str,
+        result_status: str,
+        result_ref: str,
+        stale_evidence_ref: str,
+        stale_reason: str,
+    ) -> MockSlowTaskRunResult:
+        if not task_id:
+            raise ValueError("task_id is required")
+        if not event_id_prefix:
+            raise ValueError("event_id_prefix is required")
+        if not tool_call_id:
+            raise ValueError("tool_call_id is required")
+        if not result_status:
+            raise ValueError("result_status is required")
+        if not result_ref:
+            raise ValueError("result_ref is required")
+        if not stale_evidence_ref:
+            raise ValueError("stale_evidence_ref is required")
+        if not stale_reason:
+            raise ValueError("stale_reason is required")
+        if result_plan_version >= current_plan_version:
+            raise ValueError("record_old_plan_tool_result requires result_plan_version older than current_plan_version")
+
+        produced_events: list[dict[str, Any]] = []
+        late_result = self._append_mock_tool_event(
+            event_name="TOOL_RESULT_RECEIVED",
+            event_id=f"{event_id_prefix}_tool_result_received",
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            task_id=task_id,
+            plan_version=result_plan_version,
+            task_event_seq=start_task_event_seq,
+            tool_call_id=tool_call_id,
+            result_status=result_status,
+            result_ref=result_ref,
+        )
+        produced_events.append(late_result)
+
+        marked_stale = self._append_slowtask_event(
+            event_name="TOOL_RESULT_MARKED_STALE",
+            event_id=f"{event_id_prefix}_tool_result_marked_stale",
+            caused_by_event_id=str(late_result["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            task_id=task_id,
+            plan_version=current_plan_version,
+            task_event_seq=start_task_event_seq + 1,
+            tool_call_id=tool_call_id,
+            result_plan_version=result_plan_version,
+            current_plan_version=current_plan_version,
+            stale_reason=stale_reason,
+        )
+        produced_events.append(marked_stale)
+
+        recorded = self._append_slowtask_event(
+            event_name="STALE_EVIDENCE_RECORDED",
+            event_id=f"{event_id_prefix}_stale_evidence_recorded",
+            caused_by_event_id=str(marked_stale["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 2,
+            created_wall_clock_ms=created_wall_clock_ms + 2,
+            task_id=task_id,
+            plan_version=current_plan_version,
+            task_event_seq=start_task_event_seq + 2,
+            stale_evidence_ref=stale_evidence_ref,
+            source_tool_result_event_id=str(late_result["event_id"]),
+        )
+        produced_events.append(recorded)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=current_plan_version,
+            produced_events=tuple(produced_events),
+        )
+
+    def adopt_stale_evidence_for_commitment(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        caused_by_event_id: str,
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        stale_evidence_ref: str,
+        source_tool_result_event_id: str,
+        adopted_from_plan_version: int,
+        adoption_reason: str,
+        adopted_scope: Sequence[str],
+        adopted_by_event_id: str,
+        resolved_arguments_ref: str,
+        provenance_ref: str,
+        field_provenance_refs: Sequence[str],
+        commitment_id: str,
+        commitment_ref: str | None = None,
+        current_lifecycle_state: str = "PLANNING",
+    ) -> MockSlowTaskRunResult:
+        if not task_id:
+            raise ValueError("task_id is required")
+        if not event_id_prefix:
+            raise ValueError("event_id_prefix is required")
+        if not stale_evidence_ref:
+            raise ValueError("stale_evidence_ref is required")
+        if not source_tool_result_event_id:
+            raise ValueError("source_tool_result_event_id is required")
+        if not adoption_reason:
+            raise ValueError("adoption_reason is required")
+        bounded_scope = _string_tuple(adopted_scope)
+        if not bounded_scope:
+            raise ValueError("adopted_scope is required")
+        if not adopted_by_event_id:
+            raise ValueError("adopted_by_event_id is required")
+        if not resolved_arguments_ref:
+            raise ValueError("resolved_arguments_ref is required")
+        if not provenance_ref:
+            raise ValueError("provenance_ref is required")
+        if not commitment_id:
+            raise ValueError("commitment_id is required")
+
+        produced_events: list[dict[str, Any]] = []
+        adopted = self._append_slowtask_event(
+            event_name="STALE_EVIDENCE_ADOPTED",
+            event_id=f"{event_id_prefix}_stale_evidence_adopted",
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            stale_evidence_ref=stale_evidence_ref,
+            source_tool_result_event_id=source_tool_result_event_id,
+            adopted_from_plan_version=adopted_from_plan_version,
+            adoption_mode="adopt_or_rebase",
+            adoption_reason=adoption_reason,
+            adopted_scope=list(bounded_scope),
+            adopted_by_event_id=adopted_by_event_id,
+        )
+        produced_events.append(adopted)
+
+        evidence_reviewed = self._append_slowtask_event(
+            event_name="EVIDENCE_REVIEWED",
+            event_id=f"{event_id_prefix}_evidence_reviewed",
+            caused_by_event_id=str(adopted["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 1,
+            evidence_refs=[stale_evidence_ref],
+            review_result="adopted_stale_evidence_sufficient",
+        )
+        produced_events.append(evidence_reviewed)
+
+        arguments = self._append_slowtask_event(
+            event_name="ARGUMENTS_RESOLVED",
+            event_id=f"{event_id_prefix}_arguments_resolved",
+            caused_by_event_id=str(evidence_reviewed["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 2,
+            created_wall_clock_ms=created_wall_clock_ms + 2,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 2,
+            resolved_arguments_ref=resolved_arguments_ref,
+            provenance_ref=provenance_ref,
+        )
+        produced_events.append(arguments)
+
+        provenance = self._append_slowtask_event(
+            event_name="ARGUMENT_RESOLUTION_PROVENANCE",
+            event_id=f"{event_id_prefix}_argument_provenance",
+            caused_by_event_id=str(arguments["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 3,
+            created_wall_clock_ms=created_wall_clock_ms + 3,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 3,
+            field_provenance_refs=list(_string_tuple(field_provenance_refs)),
+        )
+        produced_events.append(provenance)
+
+        finalizing = self._append_slowtask_event(
+            event_name="FINALIZING",
+            event_id=f"{event_id_prefix}_finalizing",
+            caused_by_event_id=str(provenance["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 4,
+            created_wall_clock_ms=created_wall_clock_ms + 4,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 4,
+            source_events=[str(adopted["event_id"]), str(provenance["event_id"])],
+        )
+        produced_events.append(finalizing)
+
+        commitment_fields: dict[str, Any] = {}
+        if commitment_ref is not None:
+            commitment_fields["commitment_ref"] = commitment_ref
+        commitment = self._append_slowtask_event(
+            event_name="SEMANTIC_COMMITMENT_EMITTED",
+            event_id=f"{event_id_prefix}_semantic_commitment",
+            caused_by_event_id=str(finalizing["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 5,
+            created_wall_clock_ms=created_wall_clock_ms + 5,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 5,
+            commitment_id=commitment_id,
+            source_events=[str(adopted["event_id"]), str(finalizing["event_id"])],
+            **commitment_fields,
+        )
+        produced_events.append(commitment)
+
+        completed = self._append_slowtask_event(
+            event_name="SLOWTASK_STATE_CHANGED",
+            event_id=f"{event_id_prefix}_state_completed",
+            caused_by_event_id=str(commitment["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 6,
+            created_wall_clock_ms=created_wall_clock_ms + 6,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 6,
+            from_state=current_lifecycle_state,
+            to_state="COMPLETED",
+            reason="synthetic_adopted_stale_evidence_commitment_complete",
+        )
+        produced_events.append(completed)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
+            produced_events=tuple(produced_events),
+        )
+
     def review_evidence(
         self,
         *,
@@ -825,6 +1115,27 @@ class MockSlowTaskRuntime:
             event_name=event_name,
             event_id=event_id,
             source_module=MOCK_SLOWTASK_SOURCE_MODULE,
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            trace_redaction_level="metadata_only",
+            **fields,
+        )
+
+    def _append_mock_tool_event(
+        self,
+        *,
+        event_name: str,
+        event_id: str,
+        caused_by_event_id: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        return self._journal.append(
+            event_name=event_name,
+            event_id=event_id,
+            source_module=MOCK_TOOL_EVENT_SOURCE_MODULE,
             caused_by_event_id=caused_by_event_id,
             created_monotonic_ms=created_monotonic_ms,
             created_wall_clock_ms=created_wall_clock_ms,
