@@ -285,14 +285,17 @@ def test_empty_mvp1_fixture_replays_with_empty_task_and_slowtask_digest_fields()
     ]
 
 
-def test_mvp1_manifest_index_is_slice0_8_and_repo_safe() -> None:
+def test_mvp1_manifest_index_is_slice0_9_and_repo_safe() -> None:
     manifest_index = load_json_fixture(MVP1_MANIFEST_INDEX)
 
     assert manifest_index["manifest_index_schema_version"] == "1.0"
-    assert manifest_index["suite_id"] == "MVP1-SLICE0-8"
+    assert manifest_index["suite_id"] == "MVP1-SLICE0-9"
     assert manifest_index["fixture_domain"] == "GITHUB_ALLOWED"
     assert manifest_index["replay_mode"] == "deterministic"
-    assert manifest_index["required_scenarios"] == []
+    assert manifest_index["required_scenarios"] == [
+        "MVP1-CANCEL-001",
+        "MVP1-SWITCH-TASK-001",
+    ]
     assert manifest_index["fixture_checks"] == [
         {
             "fixture": "000-empty-mvp1-session.fixture.json",
@@ -333,6 +336,18 @@ def test_mvp1_manifest_index_is_slice0_8_and_repo_safe() -> None:
         {
             "fixture": "008-stale-result-adopted.fixture.json",
             "purpose": "Explicit stale evidence adoption gates current-plan evidence review, resolved arguments, and SemanticCommitment metadata",
+        },
+        {
+            "fixture": "009-cancel-confirmation.fixture.json",
+            "purpose": "Cancel candidate goes through UserPatch interpretation, SlowTask-owned TASK_CANCEL confirmation, terminal cancellation, focus cleanup, and late-event stickiness",
+        },
+        {
+            "fixture": "009-switch-task-confirmation-accepted.fixture.json",
+            "purpose": "Switch-task candidate goes through SWITCH_TASK confirmation, cancels the active task, clears focus, then later spawns the preserved replacement candidate",
+        },
+        {
+            "fixture": "009-switch-task-confirmation-rejected.fixture.json",
+            "purpose": "Rejected SWITCH_TASK confirmation returns the active task to planning without mutating current goal, arguments, or plan_version",
         },
     ]
     assert MVP2_ONLY_EVENT_NAMES <= set(manifest_index["forbidden_event_names"])

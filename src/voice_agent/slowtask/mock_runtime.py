@@ -19,13 +19,23 @@ NON_MATERIAL_PATCH_CANDIDATES = {
     "feedback_candidate": ("feedback", "mock_feedback_candidate"),
     "irrelevant_candidate": ("irrelevant", "mock_irrelevant_candidate"),
 }
-CONTROL_PATCH_CANDIDATES = frozenset(
-    {
-        "confirmation_candidate",
-        "cancel_candidate",
-        "switch_task_candidate",
-    }
-)
+CONTROL_PATCH_INTERPRETATIONS = {
+    "cancel_candidate": ("cancel", "mock_cancel_candidate"),
+    "switch_task_candidate": ("switch_task", "mock_switch_task_candidate"),
+    "confirmation_candidate": ("confirmation", "mock_confirmation_candidate"),
+}
+CONFIRMATION_SCOPES_BY_INTERPRETATION = {
+    "cancel": "TASK_CANCEL",
+    "switch_task": "SWITCH_TASK",
+}
+CANCEL_REASONS_BY_CONFIRMATION_SCOPE = {
+    "TASK_CANCEL": "task_cancel_accepted",
+    "SWITCH_TASK": "switch_task_accepted",
+}
+REJECTION_REASONS_BY_CONFIRMATION_SCOPE = {
+    "TASK_CANCEL": "user_rejected_task_cancel",
+    "SWITCH_TASK": "user_rejected_switch_task",
+}
 
 
 @dataclass(frozen=True)
@@ -313,6 +323,13 @@ class MockSlowTaskRuntime:
         created_wall_clock_ms: int,
         current_lifecycle_state: str = "PLANNING",
         supersedes_event_id: str | None = None,
+        confirmation_id: str | None = None,
+        prompt_ref: str | None = None,
+        pending_confirmation_id: str | None = None,
+        pending_confirmation_scope: str | None = None,
+        confirmation_signal: str | None = None,
+        authorization_ref: str | None = None,
+        return_to_state: str = "PLANNING",
     ) -> MockSlowTaskRunResult:
         _validate_user_patch_received_event(user_patch_event)
         if not event_id_prefix:
@@ -326,6 +343,21 @@ class MockSlowTaskRuntime:
         interpretation_type, materially_changes_task, interpretation_reason = (
             _mock_interpretation_from_user_patch(user_patch_event)
         )
+        if interpretation_type == "confirmation":
+            _validate_confirmation_response_inputs(
+                pending_confirmation_id=pending_confirmation_id,
+                pending_confirmation_scope=pending_confirmation_scope,
+                confirmation_signal=confirmation_signal,
+            )
+        if (
+            current_lifecycle_state == "WAITING_FOR_USER_CONFIRMATION"
+            and interpretation_type in CONFIRMATION_SCOPES_BY_INTERPRETATION
+        ):
+            _validate_confirmation_response_inputs(
+                pending_confirmation_id=pending_confirmation_id,
+                pending_confirmation_scope=pending_confirmation_scope,
+                confirmation_signal="rejected",
+            )
         source_evidence_refs = _source_evidence_refs_from_user_patch(user_patch_event)
         produced_events: list[dict[str, Any]] = []
 
@@ -347,6 +379,59 @@ class MockSlowTaskRuntime:
             source_evidence_refs=list(source_evidence_refs),
         )
         produced_events.append(interpreted)
+
+        if interpretation_type in CONFIRMATION_SCOPES_BY_INTERPRETATION:
+            if current_lifecycle_state == "WAITING_FOR_USER_CONFIRMATION":
+                return self._apply_pending_confirmation_signal(
+                    task_id=task_id,
+                    plan_version=current_plan_version,
+                    user_patch_event=user_patch_event,
+                    interpreted_event=interpreted,
+                    event_id_prefix=event_id_prefix,
+                    created_monotonic_ms=created_monotonic_ms + 1,
+                    created_wall_clock_ms=created_wall_clock_ms + 1,
+                    start_task_event_seq=next_task_event_seq + 1,
+                    current_lifecycle_state=current_lifecycle_state,
+                    pending_confirmation_id=pending_confirmation_id,
+                    pending_confirmation_scope=pending_confirmation_scope,
+                    confirmation_signal="rejected",
+                    authorization_ref=None,
+                    return_to_state=return_to_state,
+                    produced_events=produced_events,
+                )
+            return self._require_control_confirmation(
+                task_id=task_id,
+                plan_version=current_plan_version,
+                interpreted_event=interpreted,
+                event_id_prefix=event_id_prefix,
+                created_monotonic_ms=created_monotonic_ms + 1,
+                created_wall_clock_ms=created_wall_clock_ms + 1,
+                start_task_event_seq=next_task_event_seq + 1,
+                current_lifecycle_state=current_lifecycle_state,
+                confirmation_id=confirmation_id,
+                confirmation_scope=CONFIRMATION_SCOPES_BY_INTERPRETATION[interpretation_type],
+                prompt_ref=prompt_ref,
+                produced_events=produced_events,
+            )
+
+        if interpretation_type == "confirmation":
+            return self._apply_pending_confirmation_signal(
+                task_id=task_id,
+                plan_version=current_plan_version,
+                user_patch_event=user_patch_event,
+                interpreted_event=interpreted,
+                event_id_prefix=event_id_prefix,
+                created_monotonic_ms=created_monotonic_ms + 1,
+                created_wall_clock_ms=created_wall_clock_ms + 1,
+                start_task_event_seq=next_task_event_seq + 1,
+                current_lifecycle_state=current_lifecycle_state,
+                pending_confirmation_id=pending_confirmation_id,
+                pending_confirmation_scope=pending_confirmation_scope,
+                confirmation_signal=confirmation_signal,
+                authorization_ref=authorization_ref,
+                return_to_state=return_to_state,
+                produced_events=produced_events,
+            )
 
         if not materially_changes_task:
             return MockSlowTaskRunResult(
@@ -423,6 +508,284 @@ class MockSlowTaskRuntime:
         return MockSlowTaskRunResult(
             task_id=task_id,
             plan_version=current_plan_version + 1,
+            produced_events=tuple(produced_events),
+        )
+
+    def _require_control_confirmation(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        interpreted_event: Mapping[str, Any],
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        current_lifecycle_state: str,
+        confirmation_id: str | None,
+        confirmation_scope: str,
+        prompt_ref: str | None,
+        produced_events: list[dict[str, Any]],
+    ) -> MockSlowTaskRunResult:
+        resolved_confirmation_id = confirmation_id or f"confirmation_{event_id_prefix}"
+        resolved_prompt_ref = prompt_ref or f"prompt://synthetic/mvp1/control-confirmation/{event_id_prefix}"
+        required = self._append_slowtask_event(
+            event_name="CONFIRMATION_REQUIRED",
+            event_id=f"{event_id_prefix}_confirmation_required",
+            caused_by_event_id=str(interpreted_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            confirmation_id=resolved_confirmation_id,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            confirmation_scope=confirmation_scope,
+            required_for_event_id=str(interpreted_event["event_id"]),
+            prompt_ref=resolved_prompt_ref,
+        )
+        produced_events.append(required)
+
+        waiting = self._append_slowtask_event(
+            event_name="WAITING_FOR_USER_CONFIRMATION",
+            event_id=f"{event_id_prefix}_waiting_for_user_confirmation",
+            caused_by_event_id=str(required["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 1,
+            confirmation_id=resolved_confirmation_id,
+        )
+        produced_events.append(waiting)
+
+        state_changed = self._append_slowtask_event(
+            event_name="SLOWTASK_STATE_CHANGED",
+            event_id=f"{event_id_prefix}_state_waiting_for_user_confirmation",
+            caused_by_event_id=str(waiting["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 2,
+            created_wall_clock_ms=created_wall_clock_ms + 2,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 2,
+            from_state=current_lifecycle_state,
+            to_state="WAITING_FOR_USER_CONFIRMATION",
+            reason="control_confirmation_required",
+        )
+        produced_events.append(state_changed)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
+            produced_events=tuple(produced_events),
+        )
+
+    def _apply_pending_confirmation_signal(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        user_patch_event: Mapping[str, Any],
+        interpreted_event: Mapping[str, Any],
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        current_lifecycle_state: str,
+        pending_confirmation_id: str | None,
+        pending_confirmation_scope: str | None,
+        confirmation_signal: str | None,
+        authorization_ref: str | None,
+        return_to_state: str,
+        produced_events: list[dict[str, Any]],
+    ) -> MockSlowTaskRunResult:
+        _validate_confirmation_response_inputs(
+            pending_confirmation_id=pending_confirmation_id,
+            pending_confirmation_scope=pending_confirmation_scope,
+            confirmation_signal=confirmation_signal,
+        )
+
+        user_confirmation = self._append_slowtask_event(
+            event_name="USER_CONFIRMATION_RECEIVED",
+            event_id=f"{event_id_prefix}_user_confirmation_received",
+            caused_by_event_id=str(interpreted_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            confirmation_id=str(pending_confirmation_id),
+            patch_id=str(user_patch_event["patch_id"]),
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            confirmation_signal=confirmation_signal,
+        )
+        produced_events.append(user_confirmation)
+
+        if confirmation_signal == "accepted":
+            return self._accept_control_confirmation(
+                task_id=task_id,
+                plan_version=plan_version,
+                user_patch_event=user_patch_event,
+                user_confirmation_event=user_confirmation,
+                event_id_prefix=event_id_prefix,
+                created_monotonic_ms=created_monotonic_ms + 1,
+                created_wall_clock_ms=created_wall_clock_ms + 1,
+                start_task_event_seq=start_task_event_seq + 1,
+                current_lifecycle_state=current_lifecycle_state,
+                pending_confirmation_id=str(pending_confirmation_id),
+                pending_confirmation_scope=str(pending_confirmation_scope),
+                authorization_ref=authorization_ref,
+                produced_events=produced_events,
+            )
+
+        return self._reject_control_confirmation(
+            task_id=task_id,
+            plan_version=plan_version,
+            user_confirmation_event=user_confirmation,
+            event_id_prefix=event_id_prefix,
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            start_task_event_seq=start_task_event_seq + 1,
+            current_lifecycle_state=current_lifecycle_state,
+            return_to_state=return_to_state,
+            pending_confirmation_id=str(pending_confirmation_id),
+            pending_confirmation_scope=str(pending_confirmation_scope),
+            produced_events=produced_events,
+        )
+
+    def _accept_control_confirmation(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        user_patch_event: Mapping[str, Any],
+        user_confirmation_event: Mapping[str, Any],
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        current_lifecycle_state: str,
+        pending_confirmation_id: str,
+        pending_confirmation_scope: str,
+        authorization_ref: str | None,
+        produced_events: list[dict[str, Any]],
+    ) -> MockSlowTaskRunResult:
+        resolved_authorization_ref = (
+            authorization_ref
+            or f"authorization://synthetic/mvp1/{pending_confirmation_scope.lower()}/accepted"
+        )
+        accepted = self._append_slowtask_event(
+            event_name="CONFIRMATION_ACCEPTED",
+            event_id=f"{event_id_prefix}_confirmation_accepted",
+            caused_by_event_id=str(user_confirmation_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            confirmation_id=pending_confirmation_id,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            accepted_scope=pending_confirmation_scope,
+            authorization_ref=resolved_authorization_ref,
+        )
+        produced_events.append(accepted)
+
+        cancel_reason = CANCEL_REASONS_BY_CONFIRMATION_SCOPE[pending_confirmation_scope]
+        cancel_requested = self._append_slowtask_event(
+            event_name="SLOWTASK_CANCEL_REQUESTED",
+            event_id=f"{event_id_prefix}_cancel_requested",
+            caused_by_event_id=str(accepted["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 1,
+            cancel_reason=cancel_reason,
+            source_user_patch_event_id=str(user_patch_event["event_id"]),
+        )
+        produced_events.append(cancel_requested)
+
+        cancelled = self._append_slowtask_event(
+            event_name="SLOWTASK_CANCELLED",
+            event_id=f"{event_id_prefix}_cancelled",
+            caused_by_event_id=str(cancel_requested["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 2,
+            created_wall_clock_ms=created_wall_clock_ms + 2,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 2,
+            cancel_reason=cancel_reason,
+            inflight_tool_policy="no_inflight_tools",
+        )
+        produced_events.append(cancelled)
+
+        state_changed = self._append_slowtask_event(
+            event_name="SLOWTASK_STATE_CHANGED",
+            event_id=f"{event_id_prefix}_state_cancelled",
+            caused_by_event_id=str(cancelled["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 3,
+            created_wall_clock_ms=created_wall_clock_ms + 3,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 3,
+            from_state=current_lifecycle_state,
+            to_state="CANCELLED",
+            reason=cancel_reason,
+        )
+        produced_events.append(state_changed)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
+            produced_events=tuple(produced_events),
+        )
+
+    def _reject_control_confirmation(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        user_confirmation_event: Mapping[str, Any],
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+        current_lifecycle_state: str,
+        return_to_state: str,
+        pending_confirmation_id: str,
+        pending_confirmation_scope: str,
+        produced_events: list[dict[str, Any]],
+    ) -> MockSlowTaskRunResult:
+        rejection_reason = REJECTION_REASONS_BY_CONFIRMATION_SCOPE[pending_confirmation_scope]
+        rejected = self._append_slowtask_event(
+            event_name="CONFIRMATION_REJECTED",
+            event_id=f"{event_id_prefix}_confirmation_rejected",
+            caused_by_event_id=str(user_confirmation_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            confirmation_id=pending_confirmation_id,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            rejection_reason=rejection_reason,
+        )
+        produced_events.append(rejected)
+
+        state_changed = self._append_slowtask_event(
+            event_name="SLOWTASK_STATE_CHANGED",
+            event_id=f"{event_id_prefix}_state_{return_to_state.lower()}",
+            caused_by_event_id=str(rejected["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 1,
+            from_state=current_lifecycle_state,
+            to_state=return_to_state,
+            reason="confirmation_rejected",
+        )
+        produced_events.append(state_changed)
+
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
             produced_events=tuple(produced_events),
         )
 
@@ -1159,14 +1522,26 @@ def _validate_user_patch_received_event(event: Mapping[str, Any]) -> None:
             raise ValueError(f"USER_PATCH_RECEIVED missing required field: {field}")
 
 
+def _validate_confirmation_response_inputs(
+    *,
+    pending_confirmation_id: str | None,
+    pending_confirmation_scope: str | None,
+    confirmation_signal: str | None,
+) -> None:
+    if pending_confirmation_id in (None, ""):
+        raise ValueError("confirmation patch requires pending_confirmation_id")
+    if pending_confirmation_scope not in CANCEL_REASONS_BY_CONFIRMATION_SCOPE:
+        raise ValueError("confirmation patch requires TASK_CANCEL or SWITCH_TASK pending_confirmation_scope")
+    if confirmation_signal not in {"accepted", "rejected"}:
+        raise ValueError("confirmation patch requires confirmation_signal accepted or rejected")
+
+
 def _mock_interpretation_from_user_patch(event: Mapping[str, Any]) -> tuple[str, bool, str]:
     candidate_types = _string_tuple(event.get("candidate_patch_types", ()))
-    control_candidates = CONTROL_PATCH_CANDIDATES.intersection(candidate_types)
-    if control_candidates:
-        raise ValueError(
-            "Slice 6 mock runtime does not handle control UserPatch candidate; "
-            f"defer to ADR-016 confirmation/cancel slice: {sorted(control_candidates)}"
-        )
+    for candidate_type in ("cancel_candidate", "switch_task_candidate", "confirmation_candidate"):
+        if candidate_type in candidate_types:
+            interpretation_type, reason = CONTROL_PATCH_INTERPRETATIONS[candidate_type]
+            return interpretation_type, False, reason
     for candidate_type, (interpretation_type, reason) in MATERIAL_PATCH_CANDIDATES.items():
         if candidate_type in candidate_types:
             return interpretation_type, True, reason

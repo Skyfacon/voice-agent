@@ -15,7 +15,7 @@ Slice 2/3 scope:
 - SlowTaskState reducer skeleton replay fixtures
 - completed, cancelled, and failed terminal sticky behavior
 
-Slice 4/5/6/7/8 scope:
+Slice 4/5/6/7/8/9 scope:
 
 - SlowTask runtime happy path
 - UserPatch evidence construction
@@ -26,11 +26,15 @@ Slice 4/5/6/7/8 scope:
 - missing critical slot clarification and waiting-slot state
 - stale ToolResult default recording without adoption
 - explicit stale evidence adoption before current-plan reuse
+- cancel confirmation through UserPatch interpretation and terminal cancellation
+- switch-task confirmation accepted path with cancel-then-later-spawn
+- switch-task confirmation rejected path preserving the active task
 
-Out of scope for this directory through Slice 8:
+Out of scope for this directory through Slice 9:
 
 - Tool execution
 - Composer, spoken plan, coverage, truthfulness, or frontend UI patch events
+- pause/resume or multiple active SlowTasks
 
 All committed fixtures in this directory must keep `fixture_domain=GITHUB_ALLOWED`
 and must not contain raw audio, raw trace, secrets, unredacted real user input,

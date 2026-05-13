@@ -83,23 +83,55 @@ def test_mock_runtime_interprets_constraint_patch_as_material_slowtask_decision(
 
 
 @pytest.mark.parametrize(
-    "candidate_patch_type",
-    ["cancel_candidate", "confirmation_candidate", "switch_task_candidate"],
+    "candidate_patch_type,expected_interpretation,expected_scope",
+    [
+        ("cancel_candidate", "cancel", "TASK_CANCEL"),
+        ("switch_task_candidate", "switch_task", "SWITCH_TASK"),
+    ],
 )
-def test_slice6_runtime_rejects_control_patch_candidates_instead_of_recording_noop_interpretation(
+def test_control_patch_candidates_require_confirmation_without_advancing_plan(
     candidate_patch_type: str,
+    expected_interpretation: str,
+    expected_scope: str,
 ) -> None:
     journal, patch_event = _active_planning_task_with_patch(
         candidate_patch_types=(candidate_patch_type,),
         patch_id=f"patch_mvp1_slice6_{candidate_patch_type}",
         evidence_ref=f"evidence://synthetic/mvp1/slice6/{candidate_patch_type}",
     )
+
+    result = MockSlowTaskRuntime(journal).interpret_user_patch(
+        user_patch_event=patch_event,
+        event_id_prefix=f"evt_mvp1_slice6_{candidate_patch_type}",
+        created_monotonic_ms=160,
+        created_wall_clock_ms=1700000006160,
+    )
+
+    assert result.plan_version == 1
+    assert [event["event_name"] for event in result.produced_events] == [
+        "USER_PATCH_INTERPRETED",
+        "CONFIRMATION_REQUIRED",
+        "WAITING_FOR_USER_CONFIRMATION",
+        "SLOWTASK_STATE_CHANGED",
+    ]
+    assert result.produced_events[0]["interpretation_type"] == expected_interpretation
+    assert result.produced_events[0]["materially_changes_task"] is False
+    assert result.produced_events[1]["confirmation_scope"] == expected_scope
+    assert result.produced_events[3]["to_state"] == "WAITING_FOR_USER_CONFIRMATION"
+
+
+def test_confirmation_candidate_requires_pending_confirmation_context_without_partial_append() -> None:
+    journal, patch_event = _active_planning_task_with_patch(
+        candidate_patch_types=("confirmation_candidate",),
+        patch_id="patch_mvp1_slice6_confirmation_candidate",
+        evidence_ref="evidence://synthetic/mvp1/slice6/confirmation_candidate",
+    )
     event_count_before = len(journal.events())
 
-    with pytest.raises(ValueError, match="control UserPatch candidate"):
+    with pytest.raises(ValueError, match="pending_confirmation_id"):
         MockSlowTaskRuntime(journal).interpret_user_patch(
             user_patch_event=patch_event,
-            event_id_prefix=f"evt_mvp1_slice6_{candidate_patch_type}",
+            event_id_prefix="evt_mvp1_slice6_confirmation_candidate",
             created_monotonic_ms=160,
             created_wall_clock_ms=1700000006160,
         )
