@@ -1,19 +1,36 @@
 {
   "manifest_index_schema_version": "1.0",
-  "suite_id": "MVP1-SLICE0-9",
+  "suite_id": "MVP1-ACCEPTANCE",
   "fixture_domain": "GITHUB_ALLOWED",
   "replay_mode": "deterministic",
-  "scope": "MVP-1 Slice 0/1 safety and registry skeleton, Slice 2 TaskFocusState router replay fixture, Slice 3 SlowTaskState reducer replay fixtures, Slice 4 SlowTask happy-path replay fixture, Slice 5 active UserPatch evidence replay fixture, Slice 6 UserPatch interpretation plus plan advance/replanning fixture, Slice 7 evidence review/waiting-slot fixture, Slice 8 stale ToolResult policy fixtures with and without explicit adoption, and Slice 9 cancel/switch-task confirmation fixtures.",
+  "scope": "MVP-1 acceptance closeout runner over Slice 0-9 synthetic fixtures, covering required SlowTask, TaskFocusState, UserPatch, stale evidence, confirmation, failure, SemanticCommitment, privacy, replay, and scope gates.",
   "required_scenarios": [
+    "MVP1-SPAWN-SLOWTASK-001",
+    "MVP1-ACTIVE-PATCH-001",
+    "MVP1-PLAN-ADVANCE-001",
+    "MVP1-FOREGROUND-CHAT-001",
+    "MVP1-AMBIGUOUS-NO-PATCH-001",
+    "MVP1-WAITING-SLOT-001",
+    "MVP1-STALE-RESULT-001",
+    "MVP1-STALE-ADOPTED-001",
     "MVP1-CANCEL-001",
-    "MVP1-SWITCH-TASK-001"
+    "MVP1-SWITCH-TASK-001",
+    "MVP1-FAILED-001",
+    "MVP1-SEMANTIC-COMMITMENT-001"
   ],
   "forbidden_event_names": [
+    "TOOL_MANIFEST_LOADED",
+    "TOOL_ARGUMENTS_PARTIAL",
+    "TOOL_ARGUMENTS_READY",
+    "TOOL_PREVIEW_AVAILABLE",
+    "TOOL_EXECUTION_AUTHORIZED",
     "TOOL_EXECUTION_STARTED",
     "TOOL_PROGRESS_UPDATED",
     "TOOL_UI_STATE_PATCHED",
-    "TOOL_MANIFEST_LOADED",
-    "TOOL_EXECUTION_AUTHORIZED",
+    "TOOL_EXECUTION_FAILED",
+    "TOOL_CALL_RETRYING",
+    "TOOL_EXECUTION_CANCELLED",
+    "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
     "SPOKEN_PLAN_EMITTED",
     "COMMITMENT_COVERAGE_CHECK_PASSED",
     "COMMITMENT_COVERAGE_CHECK_FAILED",
@@ -22,6 +39,17 @@
     "SEMANTIC_COMMITMENT_CREATED",
     "STALE_TOOL_RESULT_RECORDED",
     "SPOKEN_PLAN_CREATED"
+  ],
+  "forbidden_source_modules": [
+    "tool_executor",
+    "demo_tool_executor",
+    "composer",
+    "coverage_checker",
+    "truthfulness_checker",
+    "frontend",
+    "web_search",
+    "real_tool_executor",
+    "external_tool_adapter"
   ],
   "fixture_checks": [
     {
@@ -77,5 +105,89 @@
       "purpose": "Rejected SWITCH_TASK confirmation returns the active task to planning without mutating current goal, arguments, or plan_version"
     }
   ],
-  "scenarios": []
+  "scenarios": [
+    {
+      "scenario_id": "MVP1-SPAWN-SLOWTASK-001",
+      "fixture": "004-spawn-planning-completed.fixture.json",
+      "purpose": "Complex-task turn spawns one SlowTask, completes mock no-tool path, emits current-plan SemanticCommitment, and clears focus."
+    },
+    {
+      "scenario_id": "MVP1-ACTIVE-PATCH-001",
+      "fixture": "005-active-patch-evidence.fixture.json",
+      "purpose": "Obvious active-task input becomes a UserPatch evidence pack without direct mutation, interpretation, or plan advance."
+    },
+    {
+      "scenario_id": "MVP1-PLAN-ADVANCE-001",
+      "fixture": "006-plan-advance-replanning.fixture.json",
+      "purpose": "Material UserPatch is interpreted by SlowTask before PLAN_VERSION_ADVANCED and replayable replanning."
+    },
+    {
+      "scenario_id": "MVP1-FOREGROUND-CHAT-001",
+      "fixture": "002-task-focus-router.fixture.json",
+      "purpose": "Foreground chat during active SlowTask remains FAST_ONLY and does not generate UserPatch."
+    },
+    {
+      "scenario_id": "MVP1-AMBIGUOUS-NO-PATCH-001",
+      "fixture": "002-task-focus-router.fixture.json",
+      "purpose": "Ambiguous input keeps active task focus metadata but does not patch the SlowTask by default."
+    },
+    {
+      "scenario_id": "MVP1-WAITING-SLOT-001",
+      "fixture": "007-evidence-review-waiting-slot.fixture.json",
+      "purpose": "SlowTask-led evidence review detects missing information and replays WAITING_FOR_SLOT."
+    },
+    {
+      "scenario_id": "MVP1-STALE-RESULT-001",
+      "fixture": "008-stale-result-no-adoption.fixture.json",
+      "purpose": "Old-plan mock ToolResult is marked stale and recorded without adoption or current-plan advancement."
+    },
+    {
+      "scenario_id": "MVP1-STALE-ADOPTED-001",
+      "fixture": "008-stale-result-adopted.fixture.json",
+      "purpose": "Explicit STALE_EVIDENCE_ADOPTED gates current-plan reuse and commitment metadata."
+    },
+    {
+      "scenario_id": "MVP1-CANCEL-001",
+      "fixture": "009-cancel-confirmation.fixture.json",
+      "purpose": "Cancel intent goes through UserPatch interpretation, TASK_CANCEL confirmation, terminal cancellation, and focus cleanup."
+    },
+    {
+      "scenario_id": "MVP1-SWITCH-TASK-001",
+      "fixtures": [
+        "009-switch-task-confirmation-accepted.fixture.json",
+        "009-switch-task-confirmation-rejected.fixture.json"
+      ],
+      "purpose": "Switch-task candidate covers accepted cancel-then-spawn and rejected preserve-active-task branches."
+    },
+    {
+      "scenario_id": "MVP1-FAILED-001",
+      "fixture": "003-slowtask-failed-sticky.fixture.json",
+      "purpose": "Failed terminal state remains sticky under late metadata-only evidence."
+    },
+    {
+      "scenario_id": "MVP1-SEMANTIC-COMMITMENT-001",
+      "fixture": "004-spawn-planning-completed.fixture.json",
+      "purpose": "SemanticCommitment is current-plan SlowTask metadata and does not emit Composer, coverage, or truthfulness events."
+    }
+  ],
+  "synthetic_eval_table": [
+    {
+      "measurement": "patch_focus_correctness",
+      "fixture": "005-active-patch-evidence.fixture.json",
+      "output_mode": "mock",
+      "result_status": "passed"
+    },
+    {
+      "measurement": "ambiguity_no_patch_behavior",
+      "fixture": "002-task-focus-router.fixture.json",
+      "output_mode": "mock",
+      "result_status": "passed"
+    },
+    {
+      "measurement": "user_patch_interpretation_materiality",
+      "fixture": "006-plan-advance-replanning.fixture.json",
+      "output_mode": "mock",
+      "result_status": "passed"
+    }
+  ]
 }

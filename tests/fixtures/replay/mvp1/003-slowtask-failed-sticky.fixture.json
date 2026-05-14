@@ -130,7 +130,7 @@
       "event_schema_version": "1.0",
       "session_id": "sess_mvp1_slice3_failed",
       "conversation_id": "conv_mvp1_slice3_failed",
-      "source_module": "slowtask_runtime",
+      "source_module": "mock_tool_event_emitter",
       "created_monotonic_ms": 70,
       "created_wall_clock_ms": 1700000002070,
       "caused_by_event_id": "evt_mvp1_slice3_failed_late_patch",

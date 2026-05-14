@@ -30,7 +30,15 @@ Slice 4/5/6/7/8/9 scope:
 - switch-task confirmation accepted path with cancel-then-later-spawn
 - switch-task confirmation rejected path preserving the active task
 
-Out of scope for this directory through Slice 9:
+Slice 10 scope:
+
+- MVP-1 acceptance manifest over all required synthetic scenario IDs
+- closeout checks for replay determinism, state digests, repo-safe privacy flags,
+  MVP-2/MVP-3 scope exclusion, and ADR compliance
+- lightweight synthetic eval metadata for patch focus correctness, ambiguity
+  no-patch behavior, and UserPatch interpretation materiality
+
+Out of scope for this directory through Slice 10:
 
 - Tool execution
 - Composer, spoken plan, coverage, truthfulness, or frontend UI patch events
