@@ -8,10 +8,15 @@ from pathlib import Path
 import re
 from typing import Any
 
+from voice_agent.privacy.redaction import SECRET_VALUE_PATTERN, is_safe_authorization_ref
 from voice_agent.replay.runner import ReplayResult, run_replay_fixture
 
 
 class MVP0AcceptanceError(AssertionError):
+    pass
+
+
+class MVP1AcceptanceError(AssertionError):
     pass
 
 
@@ -23,6 +28,21 @@ MVP0_REQUIRED_SCENARIOS = (
     "MVP0-LOCAL-TRACE-SAFETY-001",
 )
 MVP0_OUTPUT_MODES = frozenset({"mock", "degraded", "fallback", "real"})
+MVP1_REQUIRED_SCENARIOS = (
+    "MVP1-SPAWN-SLOWTASK-001",
+    "MVP1-ACTIVE-PATCH-001",
+    "MVP1-PLAN-ADVANCE-001",
+    "MVP1-FOREGROUND-CHAT-001",
+    "MVP1-AMBIGUOUS-NO-PATCH-001",
+    "MVP1-WAITING-SLOT-001",
+    "MVP1-STALE-RESULT-001",
+    "MVP1-STALE-ADOPTED-001",
+    "MVP1-CANCEL-001",
+    "MVP1-SWITCH-TASK-001",
+    "MVP1-FAILED-001",
+    "MVP1-SEMANTIC-COMMITMENT-001",
+)
+MVP1_OUTPUT_MODES = frozenset({"mock", "degraded", "fallback"})
 DEFAULT_FORBIDDEN_EVENT_NAMES = frozenset(
     {
         "SLOWTASK_CREATED",
@@ -57,6 +77,30 @@ DEFAULT_FORBIDDEN_EVENT_NAMES = frozenset(
         "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
     }
 )
+MVP1_FORBIDDEN_EVENT_NAMES = frozenset(
+    {
+        "TOOL_MANIFEST_LOADED",
+        "TOOL_ARGUMENTS_PARTIAL",
+        "TOOL_ARGUMENTS_READY",
+        "TOOL_PREVIEW_AVAILABLE",
+        "TOOL_EXECUTION_AUTHORIZED",
+        "TOOL_EXECUTION_STARTED",
+        "TOOL_PROGRESS_UPDATED",
+        "TOOL_UI_STATE_PATCHED",
+        "TOOL_EXECUTION_FAILED",
+        "TOOL_CALL_RETRYING",
+        "TOOL_EXECUTION_CANCELLED",
+        "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
+        "SPOKEN_PLAN_EMITTED",
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        "COMMITMENT_COVERAGE_CHECK_FAILED",
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+        "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+        "SEMANTIC_COMMITMENT_CREATED",
+        "STALE_TOOL_RESULT_RECORDED",
+        "SPOKEN_PLAN_CREATED",
+    }
+)
 DEFAULT_FORBIDDEN_SOURCE_MODULES = frozenset(
     {
         "slowtask_runtime",
@@ -68,6 +112,19 @@ DEFAULT_FORBIDDEN_SOURCE_MODULES = frozenset(
         "truthfulness_checker",
         "frontend",
         "web_search",
+    }
+)
+MVP1_FORBIDDEN_SOURCE_MODULES = frozenset(
+    {
+        "tool_executor",
+        "demo_tool_executor",
+        "composer",
+        "coverage_checker",
+        "truthfulness_checker",
+        "frontend",
+        "web_search",
+        "real_tool_executor",
+        "external_tool_adapter",
     }
 )
 FORBIDDEN_SCOPE_FIELDS = frozenset({"task_id", "plan_version", "task_event_seq"})
@@ -82,6 +139,7 @@ ALLOWED_MANIFEST_SAFETY_FLAGS = frozenset(
     }
 )
 ALLOWED_SAFE_SECRET_METADATA_KEYS = frozenset({"secret_kind"})
+ALLOWED_SAFE_REF_KEYS = frozenset({"authorization_ref"})
 RAW_AUDIO_EXTENSIONS = (".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".weba")
 FORBIDDEN_FIXTURE_KEY_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -128,6 +186,30 @@ class MVP0ScenarioResult:
 class MVP0AcceptanceResult:
     scenario_results: tuple[MVP0ScenarioResult, ...]
     fixture_results: tuple[MVP0FixtureCheckResult, ...]
+    summary: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP1FixtureCheckResult:
+    fixture_name: str
+    result_status: str
+    state_digest: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP1ScenarioResult:
+    scenario_id: str
+    fixture_names: tuple[str, ...]
+    result_status: str
+    assertion_summary: dict[str, Any]
+    state_digest: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP1AcceptanceResult:
+    scenario_results: tuple[MVP1ScenarioResult, ...]
+    fixture_results: tuple[MVP1FixtureCheckResult, ...]
+    synthetic_eval_table: tuple[dict[str, Any], ...]
     summary: dict[str, Any]
 
 
@@ -216,6 +298,839 @@ def assert_fixture_has_no_forbidden_mvp0_scope(
         forbidden_fields = sorted(FORBIDDEN_SCOPE_FIELDS & set(event))
         if forbidden_fields:
             raise MVP0AcceptanceError(f"forbidden MVP0 task scope fields: {forbidden_fields}")
+
+
+def run_mvp1_acceptance_manifest(
+    manifest_index: Mapping[str, Any],
+    *,
+    fixture_dir: Path,
+) -> MVP1AcceptanceResult:
+    index = deepcopy(dict(manifest_index))
+    _validate_mvp1_manifest_index(index)
+
+    forbidden_event_names = frozenset(index.get("forbidden_event_names", MVP1_FORBIDDEN_EVENT_NAMES))
+    forbidden_source_modules = frozenset(index.get("forbidden_source_modules", MVP1_FORBIDDEN_SOURCE_MODULES))
+
+    fixture_results: list[MVP1FixtureCheckResult] = []
+    replay_results_by_fixture: dict[str, ReplayResult] = {}
+    fixtures_by_name: dict[str, dict[str, Any]] = {}
+    for fixture_name in _mvp1_fixture_check_names(index):
+        fixture = _load_fixture(fixture_dir / fixture_name)
+        assert_mvp1_fixture_is_repo_safe(fixture)
+        assert_fixture_has_no_forbidden_mvp1_scope(
+            fixture["events"],
+            forbidden_event_names=forbidden_event_names,
+            forbidden_source_modules=forbidden_source_modules,
+        )
+        _assert_mvp1_mock_degraded_real_labels(fixture)
+        result = run_replay_fixture(fixture)
+        _assert_mvp1_replay_matches_suite(index, fixture_name=fixture_name, result=result)
+        _assert_mvp1_replay_state_surface(result, fixture_name=fixture_name)
+        fixtures_by_name[fixture_name] = fixture
+        replay_results_by_fixture[fixture_name] = result
+        fixture_results.append(
+            MVP1FixtureCheckResult(
+                fixture_name=fixture_name,
+                result_status=result.result_status,
+                state_digest=result.state_digest,
+            )
+        )
+
+    scenario_entries = _mvp1_scenario_entries_by_id(index)
+    scenario_results: list[MVP1ScenarioResult] = []
+    for scenario_id in index["required_scenarios"]:
+        scenario = scenario_entries[scenario_id]
+        fixture_names = _mvp1_scenario_fixture_names(scenario)
+        fixtures = tuple(fixtures_by_name[name] for name in fixture_names)
+        replay_results = tuple(replay_results_by_fixture[name] for name in fixture_names)
+        assertion_summary = _assert_mvp1_scenario(
+            scenario_id,
+            fixtures=fixtures,
+            results=replay_results,
+        )
+        scenario_results.append(
+            MVP1ScenarioResult(
+                scenario_id=scenario_id,
+                fixture_names=fixture_names,
+                result_status="passed",
+                assertion_summary=assertion_summary,
+                state_digest=replay_results[-1].state_digest,
+            )
+        )
+
+    synthetic_eval_table = _validate_mvp1_synthetic_eval_table(index)
+    return MVP1AcceptanceResult(
+        scenario_results=tuple(scenario_results),
+        fixture_results=tuple(fixture_results),
+        synthetic_eval_table=synthetic_eval_table,
+        summary={
+            "suite_id": str(index["suite_id"]),
+            "result_status": "passed",
+            "scenario_count": len(scenario_results),
+            "fixture_count": len(fixture_results),
+            "validated_fixture_names": [fixture.fixture_name for fixture in fixture_results],
+            "blocking_readiness_findings": [],
+            "adr_update_required": False,
+            "hidden_future_scope_detected": False,
+        },
+    )
+
+
+def assert_fixture_has_no_forbidden_mvp1_scope(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    forbidden_event_names: frozenset[str] = MVP1_FORBIDDEN_EVENT_NAMES,
+    forbidden_source_modules: frozenset[str] = MVP1_FORBIDDEN_SOURCE_MODULES,
+) -> None:
+    for event in events:
+        event_name = str(event.get("event_name", ""))
+        if event_name in forbidden_event_names:
+            raise MVP1AcceptanceError(f"forbidden MVP-2 event_name in MVP-1 fixture: {event_name}")
+
+        source_module = str(event.get("source_module", ""))
+        if source_module in forbidden_source_modules:
+            raise MVP1AcceptanceError(f"forbidden MVP-2 source_module in MVP-1 fixture: {source_module}")
+
+        if event_name in {"TOOL_CALL_STARTED", "TOOL_RESULT_RECEIVED"}:
+            if source_module != "mock_tool_event_emitter":
+                raise MVP1AcceptanceError(
+                    "MVP-1 tool markers must come from the synthetic Tool Executor mock emitter"
+                )
+        if event_name == "TOOL_CALL_STARTED":
+            tool_name = str(event.get("tool_name", ""))
+            if not (tool_name.startswith("mock.") or "synthetic" in tool_name):
+                raise MVP1AcceptanceError("MVP-1 tool marker must use a mock/synthetic tool_name")
+        if event_name == "TOOL_RESULT_RECEIVED":
+            result_ref = str(event.get("result_ref", ""))
+            if "synthetic" not in result_ref or "external" in result_ref:
+                raise MVP1AcceptanceError("MVP-1 ToolResult refs must be synthetic/minimal")
+
+
+def assert_mvp1_fixture_is_repo_safe(fixture: Mapping[str, Any]) -> None:
+    try:
+        manifest = _required_mapping(fixture, "replay_manifest")
+        if manifest.get("fixture_domain") != "GITHUB_ALLOWED":
+            raise MVP1AcceptanceError("fixture_domain must be GITHUB_ALLOWED")
+        if manifest.get("generated_from") not in {"synthetic", "redacted", "hand_written_minimal"}:
+            raise MVP1AcceptanceError("GitHub fixtures must be synthetic, redacted, or hand_written_minimal")
+        if any(manifest.get(flag) is not False for flag in ALLOWED_MANIFEST_SAFETY_FLAGS):
+            raise MVP1AcceptanceError("GitHub fixture safety flags must all be false")
+
+        for path, value in _iter_json_values(fixture):
+            last_key = path[-1] if path else ""
+            if path[:1] == ("replay_manifest",) and last_key in ALLOWED_MANIFEST_SAFETY_FLAGS:
+                if value is not False:
+                    raise MVP1AcceptanceError(f"unsafe manifest safety flag: {'.'.join(path)}")
+                continue
+            if last_key in ALLOWED_SAFE_SECRET_METADATA_KEYS:
+                if not isinstance(value, str) or _contains_secret_like_value(value):
+                    raise MVP1AcceptanceError(f"unsafe secret metadata: {'.'.join(path)}")
+                continue
+            if last_key in ALLOWED_SAFE_REF_KEYS:
+                if not isinstance(value, str) or not is_safe_authorization_ref(value, allow_local=False):
+                    raise MVP1AcceptanceError(f"unsafe authorization ref: {'.'.join(path)}")
+                _assert_mvp1_safe_string_fixture_value(value, ".".join(path))
+                continue
+            if any(pattern.search(last_key) for pattern in FORBIDDEN_FIXTURE_KEY_PATTERNS):
+                raise MVP1AcceptanceError(f"forbidden fixture key: {'.'.join(path)}")
+            if isinstance(value, str):
+                _assert_mvp1_safe_string_fixture_value(value, ".".join(path))
+    except MVP1AcceptanceError as exc:
+        raise MVP1AcceptanceError(f"repo-unsafe MVP-1 fixture content: {exc}") from exc
+
+
+def _validate_mvp1_manifest_index(index: Mapping[str, Any]) -> None:
+    required_fields = {
+        "manifest_index_schema_version",
+        "suite_id",
+        "fixture_domain",
+        "replay_mode",
+        "required_scenarios",
+        "fixture_checks",
+        "scenarios",
+        "synthetic_eval_table",
+    }
+    missing = required_fields - set(index)
+    if missing:
+        raise MVP1AcceptanceError(f"Missing MVP-1 acceptance manifest fields: {sorted(missing)}")
+    if index["manifest_index_schema_version"] != "1.0":
+        raise MVP1AcceptanceError("manifest_index_schema_version must be '1.0'")
+    if index["suite_id"] != "MVP1-ACCEPTANCE":
+        raise MVP1AcceptanceError("suite_id must be 'MVP1-ACCEPTANCE'")
+    if index["fixture_domain"] != "GITHUB_ALLOWED":
+        raise MVP1AcceptanceError("MVP-1 acceptance fixtures must be GITHUB_ALLOWED")
+    if index["replay_mode"] != "deterministic":
+        raise MVP1AcceptanceError("MVP-1 acceptance uses deterministic replay")
+
+    required_scenarios = _string_tuple_mvp1(index["required_scenarios"], "required_scenarios")
+    if required_scenarios != MVP1_REQUIRED_SCENARIOS:
+        raise MVP1AcceptanceError(f"required_scenarios must be {list(MVP1_REQUIRED_SCENARIOS)}")
+
+    forbidden_event_names = set(_string_tuple_mvp1(index.get("forbidden_event_names", ()), "forbidden_event_names"))
+    missing_forbidden = sorted(MVP1_FORBIDDEN_EVENT_NAMES - forbidden_event_names)
+    if missing_forbidden:
+        raise MVP1AcceptanceError(f"forbidden_event_names missing MVP-2 scope gates: {missing_forbidden}")
+    forbidden_source_modules = set(
+        _string_tuple_mvp1(index.get("forbidden_source_modules", ()), "forbidden_source_modules")
+    )
+    missing_source_modules = sorted(MVP1_FORBIDDEN_SOURCE_MODULES - forbidden_source_modules)
+    if missing_source_modules:
+        raise MVP1AcceptanceError(
+            f"forbidden_source_modules missing MVP-2 scope gates: {missing_source_modules}"
+        )
+
+    scenario_entries = _mvp1_scenario_entries_by_id(index)
+    missing_scenarios = [scenario_id for scenario_id in required_scenarios if scenario_id not in scenario_entries]
+    if missing_scenarios:
+        raise MVP1AcceptanceError(f"Missing scenario entries: {missing_scenarios}")
+    fixture_check_names = set(_mvp1_fixture_check_names(index))
+    missing_fixture_checks = sorted(
+        {
+            fixture_name
+            for scenario in scenario_entries.values()
+            for fixture_name in _mvp1_scenario_fixture_names(scenario)
+            if fixture_name not in fixture_check_names
+        }
+    )
+    if missing_fixture_checks:
+        raise MVP1AcceptanceError(f"scenario fixtures must be listed in fixture_checks: {missing_fixture_checks}")
+
+
+def _mvp1_fixture_check_names(index: Mapping[str, Any]) -> tuple[str, ...]:
+    checks = _required_sequence_mvp1(index, "fixture_checks")
+    names: list[str] = []
+    for check in checks:
+        if not isinstance(check, Mapping) or not isinstance(check.get("fixture"), str):
+            raise MVP1AcceptanceError("fixture_checks entries must contain fixture")
+        names.append(str(check["fixture"]))
+    if len(names) != len(set(names)):
+        raise MVP1AcceptanceError("fixture_checks must not contain duplicate fixtures")
+    return tuple(names)
+
+
+def _mvp1_scenario_entries_by_id(index: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    scenarios = _required_sequence_mvp1(index, "scenarios")
+    entries: dict[str, Mapping[str, Any]] = {}
+    for scenario in scenarios:
+        if not isinstance(scenario, Mapping):
+            raise MVP1AcceptanceError("scenarios entries must be objects")
+        scenario_id = scenario.get("scenario_id")
+        if not isinstance(scenario_id, str) or not scenario_id:
+            raise MVP1AcceptanceError("scenario entry must include scenario_id")
+        _mvp1_scenario_fixture_names(scenario)
+        if scenario_id in entries:
+            raise MVP1AcceptanceError(f"duplicate scenario_id: {scenario_id}")
+        entries[scenario_id] = scenario
+    return entries
+
+
+def _mvp1_scenario_fixture_names(scenario: Mapping[str, Any]) -> tuple[str, ...]:
+    if "fixtures" in scenario:
+        fixture_names = _string_tuple_mvp1(scenario["fixtures"], "fixtures")
+    else:
+        fixture = scenario.get("fixture")
+        if not isinstance(fixture, str):
+            raise MVP1AcceptanceError("scenario entry must include fixture or fixtures")
+        fixture_names = (fixture,)
+    if not fixture_names or not all(name.endswith(".fixture.json") for name in fixture_names):
+        raise MVP1AcceptanceError("scenario fixtures must be .fixture.json files")
+    return fixture_names
+
+
+def _assert_mvp1_replay_matches_suite(
+    index: Mapping[str, Any],
+    *,
+    fixture_name: str,
+    result: ReplayResult,
+) -> None:
+    if result.fixture_domain != index["fixture_domain"]:
+        raise MVP1AcceptanceError(f"{fixture_name} fixture_domain mismatch")
+    if result.replay_mode != index["replay_mode"]:
+        raise MVP1AcceptanceError(f"{fixture_name} replay_mode mismatch")
+    if result.result_status != "passed":
+        raise MVP1AcceptanceError(f"{fixture_name} replay did not pass")
+
+
+def _assert_mvp1_replay_state_surface(result: ReplayResult, *, fixture_name: str) -> None:
+    required_digest_fields = {
+        "task_focus_state_hash",
+        "slowtask_state_hash",
+        "trace_privacy_state_hash",
+        "overall_digest",
+    }
+    missing = sorted(required_digest_fields - set(result.state_digest))
+    if missing:
+        raise MVP1AcceptanceError(f"{fixture_name} state digest missing fields: {missing}")
+    if result.trace_privacy_state.fixture_domain != "GITHUB_ALLOWED":
+        raise MVP1AcceptanceError(f"{fixture_name} did not replay TracePrivacyState fixture domain")
+    if result.trace_privacy_state.contains_raw_audio is not False:
+        raise MVP1AcceptanceError(f"{fixture_name} replayed unsafe raw audio flag")
+
+
+def _assert_mvp1_scenario(
+    scenario_id: str,
+    *,
+    fixtures: tuple[Mapping[str, Any], ...],
+    results: tuple[ReplayResult, ...],
+) -> dict[str, Any]:
+    if scenario_id == "MVP1-SPAWN-SLOWTASK-001":
+        return _assert_mvp1_spawn_slowtask(fixtures[0], results[0])
+    if scenario_id == "MVP1-ACTIVE-PATCH-001":
+        return _assert_mvp1_active_patch(fixtures[0], results[0])
+    if scenario_id == "MVP1-PLAN-ADVANCE-001":
+        return _assert_mvp1_plan_advance(fixtures[0], results[0])
+    if scenario_id == "MVP1-FOREGROUND-CHAT-001":
+        return _assert_mvp1_foreground_chat(fixtures[0], results[0])
+    if scenario_id == "MVP1-AMBIGUOUS-NO-PATCH-001":
+        return _assert_mvp1_ambiguous_no_patch(fixtures[0], results[0])
+    if scenario_id == "MVP1-WAITING-SLOT-001":
+        return _assert_mvp1_waiting_slot(fixtures[0], results[0])
+    if scenario_id == "MVP1-STALE-RESULT-001":
+        return _assert_mvp1_stale_result(fixtures[0], results[0])
+    if scenario_id == "MVP1-STALE-ADOPTED-001":
+        return _assert_mvp1_stale_adopted(fixtures[0], results[0])
+    if scenario_id == "MVP1-CANCEL-001":
+        return _assert_mvp1_cancel(fixtures[0], results[0])
+    if scenario_id == "MVP1-SWITCH-TASK-001":
+        return _assert_mvp1_switch_task(fixtures, results)
+    if scenario_id == "MVP1-FAILED-001":
+        return _assert_mvp1_failed(fixtures[0], results[0])
+    if scenario_id == "MVP1-SEMANTIC-COMMITMENT-001":
+        return _assert_mvp1_semantic_commitment(fixtures[0], results[0])
+    raise MVP1AcceptanceError(f"Unknown MVP-1 acceptance scenario: {scenario_id}")
+
+
+def _assert_mvp1_spawn_slowtask(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(
+        events,
+        [
+            "ROUTER_DECISION_EMITTED",
+            "SLOWTASK_CREATED",
+            "SLOWTASK_STATE_CHANGED",
+            "TASK_FOCUS_STATE_UPDATED",
+            "PLANNING_STARTED",
+            "EVIDENCE_REVIEWED",
+            "SEMANTIC_COMMITMENT_EMITTED",
+        ],
+    )
+    if len(events["SLOWTASK_CREATED"]) != 1:
+        raise MVP1AcceptanceError("spawn scenario must create exactly one SlowTask")
+    created = events["SLOWTASK_CREATED"][0]
+    task = result.slowtask_state.tasks[str(created["task_id"])]
+    if task.lifecycle_state != "COMPLETED" or result.task_focus_state.active_task_id is not None:
+        raise MVP1AcceptanceError("spawn scenario must complete and clear active focus")
+    if task.semantic_commitments[-1].plan_version != task.current_plan_version:
+        raise MVP1AcceptanceError("SemanticCommitment must use current plan")
+    _assert_event_order(fixture, ["SLOWTASK_CREATED", "TASK_FOCUS_STATE_UPDATED"])
+    return {
+        "task_id": task.task_id,
+        "terminal_state": task.lifecycle_state,
+        "current_plan_version": task.current_plan_version,
+        "semantic_commitment_count": len(task.semantic_commitments),
+        "active_task_id": result.task_focus_state.active_task_id,
+    }
+
+
+def _assert_mvp1_active_patch(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(events, ["ROUTER_DECISION_EMITTED", "TASK_FOCUS_STATE_UPDATED", "USER_PATCH_RECEIVED"])
+    if "USER_PATCH_INTERPRETED" in events or "PLAN_VERSION_ADVANCED" in events:
+        raise MVP1AcceptanceError("active patch receipt must not interpret or advance plan")
+    patch_event = events["USER_PATCH_RECEIVED"][0]
+    evidence_pack = patch_event.get("evidence_pack")
+    if not isinstance(evidence_pack, Mapping):
+        raise MVP1AcceptanceError("USER_PATCH_RECEIVED must carry evidence_pack metadata")
+    if "authoritative_evidence" not in evidence_pack or "non_authoritative_hypothesis" not in evidence_pack:
+        raise MVP1AcceptanceError("UserPatch evidence pack must preserve evidence and hypotheses")
+    task = result.slowtask_state.tasks[str(patch_event["task_id"])]
+    if task.current_plan_version != int(patch_event["plan_version"]):
+        raise MVP1AcceptanceError("UserPatch receipt must use pre-advance current plan")
+    return {
+        "task_id": task.task_id,
+        "active_task_id": result.task_focus_state.active_task_id,
+        "patch_count": len(task.user_patch_evidence),
+        "current_plan_version": task.current_plan_version,
+        "latest_patch_id": patch_event["patch_id"],
+    }
+
+
+def _assert_mvp1_plan_advance(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(
+        events,
+        ["USER_PATCH_RECEIVED", "USER_PATCH_INTERPRETED", "PLAN_VERSION_ADVANCED", "PLANNING_RESTARTED", "TASK_REPLANNED"],
+    )
+    _assert_event_order(
+        fixture,
+        ["USER_PATCH_RECEIVED", "USER_PATCH_INTERPRETED", "PLAN_VERSION_ADVANCED", "PLANNING_RESTARTED", "TASK_REPLANNED"],
+    )
+    patch = events["USER_PATCH_RECEIVED"][0]
+    interpreted = events["USER_PATCH_INTERPRETED"][0]
+    advance = events["PLAN_VERSION_ADVANCED"][0]
+    _assert_event_seq_before(patch, interpreted, "USER_PATCH_RECEIVED must precede USER_PATCH_INTERPRETED")
+    _assert_event_seq_before(interpreted, advance, "USER_PATCH_INTERPRETED must precede PLAN_VERSION_ADVANCED")
+    if interpreted.get("caused_by_event_id") != patch["event_id"] or interpreted.get("patch_id") != patch["patch_id"]:
+        raise MVP1AcceptanceError("material UserPatch interpretation must be tied to the received patch")
+    if interpreted.get("materially_changes_task") is not True:
+        raise MVP1AcceptanceError("MVP1-PLAN-ADVANCE-001 requires a material UserPatch interpretation")
+    planning_reason = str(advance.get("planning_reason", ""))
+    if not (planning_reason == "material_user_patch" or planning_reason.startswith("material_user_patch:")):
+        raise MVP1AcceptanceError("PLAN_VERSION_ADVANCED must cite a material UserPatch planning reason")
+    if advance.get("caused_by_user_patch_event_id") != patch["event_id"]:
+        raise MVP1AcceptanceError("PLAN_VERSION_ADVANCED must reference the material UserPatch event")
+    if advance.get("caused_by_event_id") != interpreted["event_id"]:
+        raise MVP1AcceptanceError("PLAN_VERSION_ADVANCED must be caused by the interpreted material UserPatch")
+    task = result.slowtask_state.tasks[str(advance["task_id"])]
+    if task.current_plan_version != int(advance["to_plan_version"]):
+        raise MVP1AcceptanceError("PLAN_VERSION_ADVANCED must be the current plan mutator")
+    if task.semantic_commitments:
+        raise MVP1AcceptanceError("plan advance fixture must not emit old-plan SemanticCommitment")
+    return {
+        "task_id": task.task_id,
+        "from_plan_version": advance["from_plan_version"],
+        "to_plan_version": advance["to_plan_version"],
+        "current_plan_version": task.current_plan_version,
+        "plan_advance_count": len(task.plan_advances),
+    }
+
+
+def _assert_mvp1_foreground_chat(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    router = _find_event(
+        fixture,
+        "ROUTER_DECISION_EMITTED",
+        router_decision="FAST_ONLY",
+        task_focus="FOREGROUND_CHAT",
+    )
+    focus = _find_event(fixture, "TASK_FOCUS_STATE_UPDATED", router_decision_event_id=str(router["event_id"]))
+    if _events_by_name_mvp1(fixture).get("USER_PATCH_RECEIVED"):
+        raise MVP1AcceptanceError("foreground chat must not create UserPatch")
+    return {
+        "router_event_id": router["event_id"],
+        "active_task_id": focus["active_task_id"],
+        "foreground_mode": focus["foreground_mode"],
+        "slowtask_state": result.slowtask_state.tasks[str(focus["active_task_id"])].lifecycle_state,
+    }
+
+
+def _assert_mvp1_ambiguous_no_patch(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    router = _find_event(
+        fixture,
+        "ROUTER_DECISION_EMITTED",
+        router_decision="FAST_ONLY",
+        task_focus="AMBIGUOUS",
+    )
+    focus = _find_event(fixture, "TASK_FOCUS_STATE_UPDATED", router_decision_event_id=str(router["event_id"]))
+    if _events_by_name_mvp1(fixture).get("USER_PATCH_RECEIVED"):
+        raise MVP1AcceptanceError("ambiguous input must not create UserPatch by default")
+    return {
+        "router_event_id": router["event_id"],
+        "active_task_id": focus["active_task_id"],
+        "last_focus_decision": focus["last_focus_decision"],
+        "last_focus_confidence": focus["last_focus_confidence"],
+        "current_plan_version": result.slowtask_state.tasks[str(focus["active_task_id"])].current_plan_version,
+    }
+
+
+def _assert_mvp1_waiting_slot(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(
+        events,
+        ["EVIDENCE_REVIEWED", "INSUFFICIENT_EVIDENCE_FOR_ACTION", "CLARIFICATION_REQUESTED", "WAITING_FOR_SLOT"],
+    )
+    forbidden = {"TOOL_CALL_STARTED", "TOOL_EXECUTION_STARTED", "SEMANTIC_COMMITMENT_EMITTED"} & set(events)
+    if forbidden:
+        raise MVP1AcceptanceError(f"waiting-slot scenario emitted forbidden events: {sorted(forbidden)}")
+    task_id = str(events["WAITING_FOR_SLOT"][0]["task_id"])
+    task = result.slowtask_state.tasks[task_id]
+    if task.lifecycle_state != "WAITING_FOR_SLOT":
+        raise MVP1AcceptanceError("waiting-slot scenario must replay to WAITING_FOR_SLOT")
+    return {
+        "task_id": task_id,
+        "lifecycle_state": task.lifecycle_state,
+        "missing_fields": list(events["WAITING_FOR_SLOT"][0]["missing_fields"]),
+    }
+
+
+def _assert_mvp1_stale_result(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(events, ["TOOL_RESULT_RECEIVED", "TOOL_RESULT_MARKED_STALE", "STALE_EVIDENCE_RECORDED"])
+    if "STALE_EVIDENCE_ADOPTED" in events or "SEMANTIC_COMMITMENT_EMITTED" in events:
+        raise MVP1AcceptanceError("stale-result scenario must not adopt or commit")
+    recorded = events["STALE_EVIDENCE_RECORDED"][0]
+    task = result.slowtask_state.tasks[str(recorded["task_id"])]
+    return {
+        "task_id": task.task_id,
+        "current_plan_version": task.current_plan_version,
+        "stale_evidence_count": len(task.stale_evidence_refs),
+        "adopted_evidence_count": len(task.adopted_evidence),
+        "semantic_commitment_count": len(task.semantic_commitments),
+    }
+
+
+def _assert_mvp1_stale_adopted(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(
+        events,
+        [
+            "STALE_EVIDENCE_ADOPTED",
+            "EVIDENCE_REVIEWED",
+            "ARGUMENTS_RESOLVED",
+            "FINALIZING",
+            "SEMANTIC_COMMITMENT_EMITTED",
+        ],
+    )
+    adoption = events["STALE_EVIDENCE_ADOPTED"][0]
+    reviewed = events["EVIDENCE_REVIEWED"][0]
+    finalizing = events["FINALIZING"][0]
+    commitment = events["SEMANTIC_COMMITMENT_EMITTED"][0]
+    _assert_event_seq_before(
+        adoption,
+        reviewed,
+        "STALE_EVIDENCE_ADOPTED must precede current-plan evidence review",
+    )
+    _assert_event_seq_before(
+        adoption,
+        events["ARGUMENTS_RESOLVED"][0],
+        "STALE_EVIDENCE_ADOPTED must precede current-plan argument resolution",
+    )
+    _assert_event_seq_before(
+        adoption,
+        finalizing,
+        "STALE_EVIDENCE_ADOPTED must precede current-plan finalizing",
+    )
+    _assert_event_seq_before(
+        adoption,
+        commitment,
+        "STALE_EVIDENCE_ADOPTED must precede current-plan SemanticCommitment",
+    )
+    if reviewed.get("caused_by_event_id") != adoption["event_id"]:
+        raise MVP1AcceptanceError("EVIDENCE_REVIEWED must be caused by STALE_EVIDENCE_ADOPTED")
+    if adoption["event_id"] not in finalizing.get("source_events", ()):
+        raise MVP1AcceptanceError("FINALIZING must cite STALE_EVIDENCE_ADOPTED before commitment")
+    if adoption["event_id"] not in commitment["source_events"]:
+        raise MVP1AcceptanceError("adopted stale evidence used by commitment must cite adoption event")
+    task = result.slowtask_state.tasks[str(adoption["task_id"])]
+    return {
+        "task_id": task.task_id,
+        "current_plan_version": task.current_plan_version,
+        "adopted_evidence_count": len(task.adopted_evidence),
+        "semantic_commitment_count": len(task.semantic_commitments),
+    }
+
+
+def _assert_mvp1_cancel(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(
+        events,
+        [
+            "USER_PATCH_RECEIVED",
+            "USER_PATCH_INTERPRETED",
+            "CONFIRMATION_REQUIRED",
+            "USER_CONFIRMATION_RECEIVED",
+            "CONFIRMATION_ACCEPTED",
+            "SLOWTASK_CANCEL_REQUESTED",
+            "SLOWTASK_CANCELLED",
+        ],
+    )
+    accepted = events["CONFIRMATION_ACCEPTED"][0]
+    requested = events["SLOWTASK_CANCEL_REQUESTED"][0]
+    cancelled = events["SLOWTASK_CANCELLED"][0]
+    if requested.get("caused_by_event_id") != accepted["event_id"]:
+        raise MVP1AcceptanceError("SLOWTASK_CANCEL_REQUESTED must be caused by accepted confirmation")
+    _assert_event_seq_before(
+        accepted,
+        requested,
+        "accepted confirmation must precede SLOWTASK_CANCEL_REQUESTED",
+    )
+    if cancelled.get("caused_by_event_id") != requested["event_id"]:
+        raise MVP1AcceptanceError("SLOWTASK_CANCELLED must be caused by SLOWTASK_CANCEL_REQUESTED")
+    _assert_event_seq_before(requested, cancelled, "SLOWTASK_CANCEL_REQUESTED must precede SLOWTASK_CANCELLED")
+    task = next(iter(result.slowtask_state.tasks.values()))
+    if task.lifecycle_state != "CANCELLED" or task.confirmation_state.accepted_scope != "TASK_CANCEL":
+        raise MVP1AcceptanceError("cancel scenario must replay SlowTask-owned accepted TASK_CANCEL")
+    if result.task_focus_state.active_task_id is not None:
+        raise MVP1AcceptanceError("cancel scenario must clear active focus through Router-owned update")
+    return {
+        "task_id": task.task_id,
+        "terminal_state": task.lifecycle_state,
+        "accepted_scope": task.confirmation_state.accepted_scope,
+        "late_event_count": len(task.late_events),
+        "active_task_id": result.task_focus_state.active_task_id,
+    }
+
+
+def _assert_mvp1_switch_task(
+    fixtures: tuple[Mapping[str, Any], ...],
+    results: tuple[ReplayResult, ...],
+) -> dict[str, Any]:
+    if len(fixtures) != 2 or len(results) != 2:
+        raise MVP1AcceptanceError("switch-task scenario must cover accepted and rejected fixtures")
+    accepted_fixture, _rejected_fixture = fixtures
+    accepted, rejected = results
+    accepted_tasks = accepted.slowtask_state.tasks
+    active = accepted_tasks["task_mvp1_slice9_switch_active"]
+    replacement = accepted_tasks["task_mvp1_slice9_switch_replacement"]
+    if active.lifecycle_state != "CANCELLED" or replacement.lifecycle_state != "CREATED":
+        raise MVP1AcceptanceError("accepted switch must cancel active task before replacement spawn")
+    accepted_cancelled = _find_event(
+        accepted_fixture,
+        "SLOWTASK_STATE_CHANGED",
+        task_id=active.task_id,
+        to_state="CANCELLED",
+    )
+    replacement_created = _find_event(
+        accepted_fixture,
+        "SLOWTASK_CREATED",
+        task_id=replacement.task_id,
+    )
+    try:
+        focus_cleared = _find_event(
+            accepted_fixture,
+            "TASK_FOCUS_STATE_UPDATED",
+            active_task_id=None,
+            foreground_mode="IDLE",
+        )
+    except MVP1AcceptanceError as exc:
+        raise MVP1AcceptanceError("accepted switch must clear active focus before replacement spawn") from exc
+    _assert_event_seq_before(
+        accepted_cancelled,
+        focus_cleared,
+        "accepted switch must clear active focus after active cancellation",
+    )
+    _assert_event_seq_before(
+        focus_cleared,
+        replacement_created,
+        "accepted switch must clear active focus before replacement spawn",
+    )
+    spawn_router = _find_event(
+        accepted_fixture,
+        "ROUTER_DECISION_EMITTED",
+        router_decision="SPAWN_SLOW_TASK",
+        task_focus="NEW_TASK_CANDIDATE",
+    )
+    if spawn_router.get("caused_by_event_id") != focus_cleared["event_id"]:
+        raise MVP1AcceptanceError("accepted switch respawn router decision must be caused by cleared active focus")
+    if (
+        active.confirmation_state.status != "accepted"
+        or active.confirmation_state.accepted_scope != "SWITCH_TASK"
+        or active.confirmation_state.authorization_ref is None
+    ):
+        raise MVP1AcceptanceError(
+            "accepted switch must replay accepted SWITCH_TASK confirmation before cancel-then-spawn"
+        )
+    rejected_task = rejected.slowtask_state.tasks["task_mvp1_slice9_switch_rejected"]
+    if rejected_task.lifecycle_state != "PLANNING" or rejected_task.current_plan_version != 1:
+        raise MVP1AcceptanceError("rejected switch must preserve active task and current plan")
+    if rejected_task.confirmation_state.status != "rejected":
+        raise MVP1AcceptanceError("rejected switch must replay rejected confirmation state")
+    if rejected.task_focus_state.active_task_id != rejected_task.task_id:
+        raise MVP1AcceptanceError("rejected switch must preserve active focus on the original task")
+    return {
+        "accepted_cancelled_task_id": active.task_id,
+        "replacement_task_id": replacement.task_id,
+        "rejected_task_id": rejected_task.task_id,
+        "rejected_current_plan_version": rejected_task.current_plan_version,
+        "rejected_active_task_id": rejected.task_focus_state.active_task_id,
+    }
+
+
+def _assert_mvp1_failed(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(events, ["SLOWTASK_FAILED", "SLOWTASK_STATE_CHANGED"])
+    task = next(iter(result.slowtask_state.tasks.values()))
+    if task.lifecycle_state != "FAILED" or task.terminal_outcome != "FAILED":
+        raise MVP1AcceptanceError("failed scenario must replay terminal FAILED state")
+    if task.semantic_commitments:
+        raise MVP1AcceptanceError("failed scenario must not emit SemanticCommitment")
+    return {
+        "task_id": task.task_id,
+        "terminal_state": task.lifecycle_state,
+        "failure_reason": task.failure_reason,
+        "late_event_count": len(task.late_events),
+    }
+
+
+def _assert_mvp1_semantic_commitment(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp1(fixture)
+    _require_mvp1_event_names(events, ["ARGUMENTS_RESOLVED", "FINALIZING", "SEMANTIC_COMMITMENT_EMITTED"])
+    forbidden = {
+        "SPOKEN_PLAN_EMITTED",
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+    } & set(events)
+    if forbidden:
+        raise MVP1AcceptanceError(f"SemanticCommitment scenario emitted MVP-2 events: {sorted(forbidden)}")
+    commitment = events["SEMANTIC_COMMITMENT_EMITTED"][0]
+    task = result.slowtask_state.tasks[str(commitment["task_id"])]
+    if int(commitment["plan_version"]) != task.current_plan_version:
+        raise MVP1AcceptanceError("SemanticCommitment must bind the current plan")
+    return {
+        "task_id": task.task_id,
+        "commitment_id": commitment["commitment_id"],
+        "current_plan_version": task.current_plan_version,
+        "terminal_state": task.lifecycle_state,
+    }
+
+
+def _validate_mvp1_synthetic_eval_table(index: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    rows = _required_sequence_mvp1(index, "synthetic_eval_table")
+    required_measurements = {
+        "patch_focus_correctness",
+        "ambiguity_no_patch_behavior",
+        "user_patch_interpretation_materiality",
+    }
+    normalized_rows: list[dict[str, Any]] = []
+    seen_measurements: set[str] = set()
+    fixture_check_names = set(_mvp1_fixture_check_names(index))
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise MVP1AcceptanceError("synthetic_eval_table rows must be objects")
+        measurement = _required_str_mvp1(row, "measurement")
+        fixture = _required_str_mvp1(row, "fixture")
+        output_mode = _required_str_mvp1(row, "output_mode")
+        result_status = _required_str_mvp1(row, "result_status")
+        if output_mode not in MVP1_OUTPUT_MODES:
+            raise MVP1AcceptanceError("MVP-1 synthetic eval output_mode must be mock/degraded/fallback, not real")
+        if result_status != "passed":
+            raise MVP1AcceptanceError("synthetic eval table rows must pass for closeout")
+        if fixture not in fixture_check_names:
+            raise MVP1AcceptanceError(f"synthetic eval fixture not listed in fixture_checks: {fixture}")
+        seen_measurements.add(measurement)
+        normalized_rows.append(
+            {
+                "measurement": measurement,
+                "fixture": fixture,
+                "output_mode": output_mode,
+                "result_status": result_status,
+            }
+        )
+    missing = sorted(required_measurements - seen_measurements)
+    if missing:
+        raise MVP1AcceptanceError(f"synthetic_eval_table missing measurements: {missing}")
+    return tuple(normalized_rows)
+
+
+def _assert_mvp1_mock_degraded_real_labels(fixture: Mapping[str, Any]) -> None:
+    for event in _required_sequence_mvp1(fixture, "events"):
+        if not isinstance(event, Mapping):
+            raise MVP1AcceptanceError("fixture events must be objects")
+        event_name = str(event.get("event_name", ""))
+        if event_name in {"MOCK_ASR_FRAME_EMITTED", "MOCK_THINKER_FRAME_EMITTED"}:
+            if event.get("output_mode") != "mock":
+                raise MVP1AcceptanceError(f"{event_name} must be labeled output_mode=mock")
+        if event_name == "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED":
+            output_modes = event.get("output_modes", ())
+            deployment_modes = event.get("deployment_modes", ())
+            if not isinstance(output_modes, Sequence) or isinstance(output_modes, (str, bytes)):
+                raise MVP1AcceptanceError("capability output_modes must be a list")
+            if not isinstance(deployment_modes, Sequence) or isinstance(deployment_modes, (str, bytes)):
+                raise MVP1AcceptanceError("capability deployment_modes must be a list")
+            if not set(output_modes) <= MVP1_OUTPUT_MODES or not set(deployment_modes) <= MVP1_OUTPUT_MODES:
+                raise MVP1AcceptanceError(
+                    "MVP-1 capability modes must be mock/degraded/fallback and must not be real"
+                )
+
+
+def _assert_mvp1_safe_string_fixture_value(value: str, key_path: str) -> None:
+    lower_value = value.lower()
+    if _contains_secret_like_value(value):
+        raise MVP1AcceptanceError(f"forbidden secret-like fixture value: {key_path}")
+    if any(lower_value.endswith(extension) for extension in RAW_AUDIO_EXTENSIONS):
+        raise MVP1AcceptanceError(f"forbidden raw audio ref: {key_path}")
+    forbidden_markers = (
+        "audio/raw/",
+        "traces/",
+        "diagnostics/",
+        "replays/local/",
+        "raw trace",
+        "real user",
+        "access_token",
+        "api_key",
+        "authorization header",
+        "cookie=",
+    )
+    if any(marker in lower_value for marker in forbidden_markers):
+        raise MVP1AcceptanceError(f"forbidden local, raw, or secret marker: {key_path}")
+
+
+def _contains_secret_like_value(value: str) -> bool:
+    for match in SECRET_VALUE_PATTERN.finditer(value):
+        if match.start() == 0 or not value[match.start() - 1].isalnum():
+            return True
+    return False
+
+
+def _events_by_name_mvp1(fixture: Mapping[str, Any]) -> dict[str, list[Mapping[str, Any]]]:
+    events_by_name: dict[str, list[Mapping[str, Any]]] = {}
+    for event in _required_sequence_mvp1(fixture, "events"):
+        if not isinstance(event, Mapping):
+            raise MVP1AcceptanceError("fixture events must be objects")
+        events_by_name.setdefault(str(event["event_name"]), []).append(event)
+    return events_by_name
+
+
+def _require_mvp1_event_names(
+    events_by_name: Mapping[str, Sequence[Mapping[str, Any]]],
+    event_names: Sequence[str],
+) -> None:
+    missing = [event_name for event_name in event_names if event_name not in events_by_name]
+    if missing:
+        raise MVP1AcceptanceError(f"Missing expected MVP-1 scenario events: {missing}")
+
+
+def _find_event(fixture: Mapping[str, Any], event_name: str, **matches: object) -> Mapping[str, Any]:
+    for event in _required_sequence_mvp1(fixture, "events"):
+        if not isinstance(event, Mapping) or event.get("event_name") != event_name:
+            continue
+        if all(event.get(field) == expected for field, expected in matches.items()):
+            return event
+    raise MVP1AcceptanceError(f"Missing {event_name} event matching {matches}")
+
+
+def _assert_event_order(fixture: Mapping[str, Any], event_names: Sequence[str]) -> None:
+    positions: list[int] = []
+    events = _required_sequence_mvp1(fixture, "events")
+    for event_name in event_names:
+        for index, event in enumerate(events):
+            if isinstance(event, Mapping) and event.get("event_name") == event_name:
+                positions.append(index)
+                break
+        else:
+            raise MVP1AcceptanceError(f"Missing event for order assertion: {event_name}")
+    if positions != sorted(positions):
+        raise MVP1AcceptanceError(f"Events are out of order: {list(event_names)}")
+
+
+def _assert_event_seq_before(
+    before_event: Mapping[str, Any],
+    after_event: Mapping[str, Any],
+    message: str,
+) -> None:
+    if int(before_event["event_seq"]) >= int(after_event["event_seq"]):
+        raise MVP1AcceptanceError(message)
+
+
+def _required_sequence_mvp1(mapping: Mapping[str, Any], field: str) -> Sequence[Any]:
+    value = mapping.get(field)
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise MVP1AcceptanceError(f"{field} must be a list")
+    return value
+
+
+def _required_str_mvp1(mapping: Mapping[str, Any], field: str) -> str:
+    value = mapping.get(field)
+    if not isinstance(value, str) or not value:
+        raise MVP1AcceptanceError(f"{field} must be a non-empty string")
+    return value
+
+
+def _string_tuple_mvp1(value: object, field: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise MVP1AcceptanceError(f"{field} must be a list of strings")
+    if not all(isinstance(item, str) and item for item in value):
+        raise MVP1AcceptanceError(f"{field} must be a list of non-empty strings")
+    return tuple(value)
 
 
 def _validate_manifest_index(index: Mapping[str, Any]) -> None:

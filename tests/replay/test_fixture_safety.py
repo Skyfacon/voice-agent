@@ -7,7 +7,7 @@ import pytest
 
 from conftest import MVP0_REPLAY_FIXTURE_DIR, MVP1_REPLAY_FIXTURE_DIR, REPO_ROOT, load_json_fixture
 from voice_agent.events.registry import MVP1_EVENT_NAMES
-from voice_agent.privacy.redaction import is_safe_authorization_ref
+from voice_agent.privacy.redaction import SECRET_VALUE_PATTERN, is_safe_authorization_ref
 from voice_agent.replay.runner import run_replay_fixture
 
 
@@ -170,7 +170,7 @@ def assert_fixture_is_github_safe(fixture: dict[str, Any]) -> None:
             continue
         if last_key in ALLOWED_SAFE_SECRET_METADATA_KEYS:
             assert isinstance(value, str), key_path
-            assert not value.lower().startswith(("sk-", "bearer ")), key_path
+            assert not _contains_secret_like_value(value), key_path
             continue
         if last_key in ALLOWED_SAFE_REF_KEYS:
             assert isinstance(value, str), key_path
@@ -189,7 +189,7 @@ def assert_fixture_is_github_safe(fixture: dict[str, Any]) -> None:
 
 def _assert_safe_string_fixture_value(value: str, key_path: str) -> None:
     lower_value = value.lower()
-    assert not lower_value.startswith(("sk-", "bearer ")), key_path
+    assert not _contains_secret_like_value(value), key_path
     assert not any(lower_value.endswith(extension) for extension in RAW_AUDIO_EXTENSIONS), key_path
     assert "audio/raw/" not in lower_value, key_path
     assert "traces/" not in lower_value, key_path
@@ -197,6 +197,13 @@ def _assert_safe_string_fixture_value(value: str, key_path: str) -> None:
     assert "replays/local/" not in lower_value, key_path
     assert "raw trace" not in lower_value, key_path
     assert "real user" not in lower_value, key_path
+
+
+def _contains_secret_like_value(value: str) -> bool:
+    for match in SECRET_VALUE_PATTERN.finditer(value):
+        if match.start() == 0 or not value[match.start() - 1].isalnum():
+            return True
+    return False
 
 
 def test_local_debug_artifacts_are_ignored_before_runtime_writes() -> None:
@@ -285,16 +292,26 @@ def test_empty_mvp1_fixture_replays_with_empty_task_and_slowtask_digest_fields()
     ]
 
 
-def test_mvp1_manifest_index_is_slice0_9_and_repo_safe() -> None:
+def test_mvp1_manifest_index_is_acceptance_closeout_and_repo_safe() -> None:
     manifest_index = load_json_fixture(MVP1_MANIFEST_INDEX)
 
     assert manifest_index["manifest_index_schema_version"] == "1.0"
-    assert manifest_index["suite_id"] == "MVP1-SLICE0-9"
+    assert manifest_index["suite_id"] == "MVP1-ACCEPTANCE"
     assert manifest_index["fixture_domain"] == "GITHUB_ALLOWED"
     assert manifest_index["replay_mode"] == "deterministic"
     assert manifest_index["required_scenarios"] == [
+        "MVP1-SPAWN-SLOWTASK-001",
+        "MVP1-ACTIVE-PATCH-001",
+        "MVP1-PLAN-ADVANCE-001",
+        "MVP1-FOREGROUND-CHAT-001",
+        "MVP1-AMBIGUOUS-NO-PATCH-001",
+        "MVP1-WAITING-SLOT-001",
+        "MVP1-STALE-RESULT-001",
+        "MVP1-STALE-ADOPTED-001",
         "MVP1-CANCEL-001",
         "MVP1-SWITCH-TASK-001",
+        "MVP1-FAILED-001",
+        "MVP1-SEMANTIC-COMMITMENT-001",
     ]
     assert manifest_index["fixture_checks"] == [
         {
@@ -352,6 +369,11 @@ def test_mvp1_manifest_index_is_slice0_9_and_repo_safe() -> None:
     ]
     assert MVP2_ONLY_EVENT_NAMES <= set(manifest_index["forbidden_event_names"])
     assert NON_CANONICAL_RELATIONSHIP_LABELS <= set(manifest_index["forbidden_event_names"])
+    assert [row["measurement"] for row in manifest_index["synthetic_eval_table"]] == [
+        "patch_focus_correctness",
+        "ambiguity_no_patch_behavior",
+        "user_patch_interpretation_materiality",
+    ]
 
 
 @pytest.mark.parametrize("fixture_path", sorted(MVP0_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))
@@ -397,6 +419,38 @@ def test_fixture_safety_gate_allows_blocked_secret_metadata_without_secret_value
     }
 
     assert_fixture_is_github_safe(fixture)
+
+
+def _synthetic_slack_token_like_value() -> str:
+    return "xo" + "xb-" + "1234567890-SlackTokenLikeValue"
+
+
+def _synthetic_aws_key_like_value() -> str:
+    return "AKIA" + "1234567890ABCDEF"
+
+
+@pytest.mark.parametrize(
+    "secret_kind",
+    [
+        f"blocked {_synthetic_slack_token_like_value()}",
+        f"blocked {_synthetic_aws_key_like_value()}",
+    ],
+)
+def test_fixture_safety_gate_rejects_secret_like_secret_kind_metadata(secret_kind: str) -> None:
+    fixture = {
+        "replay_manifest": github_allowed_manifest(),
+        "events": [
+            {
+                "event_name": "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+                "event_id": "evt_synthetic_blocked_secret",
+                "secret_kind": secret_kind,
+                "blocking_reason": "synthetic secret-like field blocked before append",
+            }
+        ],
+    }
+
+    with pytest.raises(AssertionError):
+        assert_fixture_is_github_safe(fixture)
 
 
 def test_fixture_safety_gate_allows_redacted_authorization_ref_without_secret_value() -> None:
@@ -462,6 +516,29 @@ def test_fixture_safety_gate_rejects_disallowed_payloads(payload: dict[str, Any]
             {
                 "event_id": "evt_synthetic_unsafe",
                 "payload": payload,
+            }
+        ],
+    }
+
+    with pytest.raises(AssertionError):
+        assert_fixture_is_github_safe(unsafe_fixture)
+
+
+@pytest.mark.parametrize(
+    "secret_value",
+    [
+        "copied sk-test-secret into a harmless note",
+        f"captured {_synthetic_slack_token_like_value()}",
+        f"copied {_synthetic_aws_key_like_value()} from a shell",
+    ],
+)
+def test_fixture_safety_gate_rejects_embedded_secret_like_values(secret_value: str) -> None:
+    unsafe_fixture = {
+        "replay_manifest": github_allowed_manifest(),
+        "events": [
+            {
+                "event_id": "evt_synthetic_embedded_secret",
+                "note": secret_value,
             }
         ],
     }
