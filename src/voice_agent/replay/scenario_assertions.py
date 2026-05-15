@@ -127,6 +127,90 @@ MVP1_FORBIDDEN_SOURCE_MODULES = frozenset(
         "external_tool_adapter",
     }
 )
+MVP1_TOOL_MARKER_EVENT_NAMES = frozenset({"TOOL_CALL_STARTED", "TOOL_RESULT_RECEIVED"})
+MVP1_REQUIRED_SOURCE_MODULES = {
+    "TASK_FOCUS_STATE_UPDATED": "router",
+    "SLOWTASK_CREATED": "slowtask_runtime",
+    "SLOWTASK_STATE_CHANGED": "slowtask_runtime",
+    "USER_PATCH_RECEIVED": "user_patch_pipeline",
+    "USER_PATCH_INTERPRETED": "slowtask_runtime",
+    "PLAN_VERSION_ADVANCED": "slowtask_runtime",
+    "TASK_REPLANNED": "slowtask_runtime",
+    "EVIDENCE_REVIEWED": "slowtask_runtime",
+    "AMBIGUITY_DETECTED": "slowtask_runtime",
+    "AMBIGUITY_RESOLVED": "slowtask_runtime",
+    "CLARIFICATION_REQUESTED": "slowtask_runtime",
+    "ARGUMENTS_RESOLVED": "slowtask_runtime",
+    "ARGUMENT_RESOLUTION_PROVENANCE": "slowtask_runtime",
+    "INSUFFICIENT_EVIDENCE_FOR_ACTION": "slowtask_runtime",
+    "PLANNING_STARTED": "slowtask_runtime",
+    "PLANNING_RESTARTED": "slowtask_runtime",
+    "WAITING_FOR_SLOT": "slowtask_runtime",
+    "WAITING_FOR_USER_CONFIRMATION": "slowtask_runtime",
+    "FINALIZING": "slowtask_runtime",
+    "SLOWTASK_DEGRADED": "slowtask_runtime",
+    "SLOWTASK_FAILED": "slowtask_runtime",
+    "CONFIRMATION_REQUIRED": "slowtask_runtime",
+    "USER_CONFIRMATION_RECEIVED": "slowtask_runtime",
+    "CONFIRMATION_ACCEPTED": "slowtask_runtime",
+    "CONFIRMATION_REJECTED": "slowtask_runtime",
+    "SLOWTASK_CANCEL_REQUESTED": "slowtask_runtime",
+    "SLOWTASK_CANCELLED": "slowtask_runtime",
+    "TOOL_CALL_STARTED": "mock_tool_event_emitter",
+    "TOOL_RESULT_RECEIVED": "mock_tool_event_emitter",
+    "TOOL_RESULT_MARKED_STALE": "slowtask_runtime",
+    "STALE_EVIDENCE_RECORDED": "slowtask_runtime",
+    "STALE_EVIDENCE_ADOPTED": "slowtask_runtime",
+    "SEMANTIC_COMMITMENT_EMITTED": "slowtask_runtime",
+}
+MVP1_NO_PATCH_MUTATION_EVENT_NAMES = frozenset(
+    {
+        "USER_PATCH_RECEIVED",
+        "USER_PATCH_INTERPRETED",
+        "SLOWTASK_CREATED",
+        "PLANNING_STARTED",
+        "EVIDENCE_REVIEWED",
+        "AMBIGUITY_DETECTED",
+        "AMBIGUITY_RESOLVED",
+        "CLARIFICATION_REQUESTED",
+        "INSUFFICIENT_EVIDENCE_FOR_ACTION",
+        "WAITING_FOR_SLOT",
+        "FINALIZING",
+        "SLOWTASK_DEGRADED",
+        "SLOWTASK_FAILED",
+        "PLAN_VERSION_ADVANCED",
+        "TASK_REPLANNED",
+        "PLANNING_RESTARTED",
+        "SLOWTASK_STATE_CHANGED",
+        "CONFIRMATION_REQUIRED",
+        "WAITING_FOR_USER_CONFIRMATION",
+        "USER_CONFIRMATION_RECEIVED",
+        "CONFIRMATION_ACCEPTED",
+        "CONFIRMATION_REJECTED",
+        "SLOWTASK_CANCEL_REQUESTED",
+        "SLOWTASK_CANCELLED",
+        "TOOL_CALL_STARTED",
+        "TOOL_RESULT_RECEIVED",
+        "TOOL_RESULT_MARKED_STALE",
+        "STALE_EVIDENCE_RECORDED",
+        "STALE_EVIDENCE_ADOPTED",
+        "ARGUMENTS_RESOLVED",
+        "ARGUMENT_RESOLUTION_PROVENANCE",
+        "SEMANTIC_COMMITMENT_EMITTED",
+    }
+)
+MVP1_REJECTED_SWITCH_MUTATION_EVENT_NAMES = frozenset(
+    {
+        "USER_PATCH_INTERPRETED",
+        "PLAN_VERSION_ADVANCED",
+        "TASK_REPLANNED",
+        "PLANNING_RESTARTED",
+        "EVIDENCE_REVIEWED",
+        "ARGUMENTS_RESOLVED",
+        "ARGUMENT_RESOLUTION_PROVENANCE",
+        "SEMANTIC_COMMITMENT_EMITTED",
+    }
+)
 FORBIDDEN_SCOPE_FIELDS = frozenset({"task_id", "plan_version", "task_event_seq"})
 ALLOWED_MANIFEST_SAFETY_FLAGS = frozenset(
     {
@@ -391,11 +475,7 @@ def assert_fixture_has_no_forbidden_mvp1_scope(
         if source_module in forbidden_source_modules:
             raise MVP1AcceptanceError(f"forbidden MVP-2 source_module in MVP-1 fixture: {source_module}")
 
-        if event_name in {"TOOL_CALL_STARTED", "TOOL_RESULT_RECEIVED"}:
-            if source_module != "mock_tool_event_emitter":
-                raise MVP1AcceptanceError(
-                    "MVP-1 tool markers must come from the synthetic Tool Executor mock emitter"
-                )
+        _assert_mvp1_event_source_module(event_name=event_name, source_module=source_module)
         if event_name == "TOOL_CALL_STARTED":
             tool_name = str(event.get("tool_name", ""))
             if not (tool_name.startswith("mock.") or "synthetic" in tool_name):
@@ -703,8 +783,17 @@ def _assert_mvp1_foreground_chat(fixture: Mapping[str, Any], result: ReplayResul
         task_focus="FOREGROUND_CHAT",
     )
     focus = _find_event(fixture, "TASK_FOCUS_STATE_UPDATED", router_decision_event_id=str(router["event_id"]))
-    if _events_by_name_mvp1(fixture).get("USER_PATCH_RECEIVED"):
-        raise MVP1AcceptanceError("foreground chat must not create UserPatch")
+    turn_committed = _find_event_by_id(fixture, str(router["turn_committed_event_id"]))
+    forbidden = _mvp1_forbidden_events_after_until_next_input(
+        fixture,
+        after_event=turn_committed,
+        forbidden_event_names=MVP1_NO_PATCH_MUTATION_EVENT_NAMES,
+    )
+    if forbidden:
+        raise MVP1AcceptanceError(
+            "foreground chat must not create UserPatch, advance plan, or mutate SlowTask state: "
+            f"{forbidden}"
+        )
     return {
         "router_event_id": router["event_id"],
         "active_task_id": focus["active_task_id"],
@@ -721,8 +810,17 @@ def _assert_mvp1_ambiguous_no_patch(fixture: Mapping[str, Any], result: ReplayRe
         task_focus="AMBIGUOUS",
     )
     focus = _find_event(fixture, "TASK_FOCUS_STATE_UPDATED", router_decision_event_id=str(router["event_id"]))
-    if _events_by_name_mvp1(fixture).get("USER_PATCH_RECEIVED"):
-        raise MVP1AcceptanceError("ambiguous input must not create UserPatch by default")
+    turn_committed = _find_event_by_id(fixture, str(router["turn_committed_event_id"]))
+    forbidden = _mvp1_forbidden_events_after_until_next_input(
+        fixture,
+        after_event=turn_committed,
+        forbidden_event_names=MVP1_NO_PATCH_MUTATION_EVENT_NAMES,
+    )
+    if forbidden:
+        raise MVP1AcceptanceError(
+            "ambiguous input must not create UserPatch, advance plan, or mutate SlowTask state: "
+            f"{forbidden}"
+        )
     return {
         "router_event_id": router["event_id"],
         "active_task_id": focus["active_task_id"],
@@ -926,6 +1024,22 @@ def _assert_mvp1_switch_task(
         raise MVP1AcceptanceError("rejected switch must replay rejected confirmation state")
     if rejected.task_focus_state.active_task_id != rejected_task.task_id:
         raise MVP1AcceptanceError("rejected switch must preserve active focus on the original task")
+    rejected_event = _find_event(
+        fixtures[1],
+        "CONFIRMATION_REJECTED",
+        task_id=rejected_task.task_id,
+    )
+    rejected_mutations = _mvp1_forbidden_events_after(
+        fixtures[1],
+        after_event=rejected_event,
+        forbidden_event_names=MVP1_REJECTED_SWITCH_MUTATION_EVENT_NAMES,
+        task_id=rejected_task.task_id,
+    )
+    if rejected_mutations:
+        raise MVP1AcceptanceError(
+            "rejected switch must not mutate goal, arguments, or current plan after rejection: "
+            f"{rejected_mutations}"
+        )
     return {
         "accepted_cancelled_task_id": active.task_id,
         "replacement_task_id": replacement.task_id,
@@ -1032,6 +1146,20 @@ def _assert_mvp1_mock_degraded_real_labels(fixture: Mapping[str, Any]) -> None:
                 )
 
 
+def _assert_mvp1_event_source_module(*, event_name: str, source_module: str) -> None:
+    expected_source_module = MVP1_REQUIRED_SOURCE_MODULES.get(event_name)
+    if expected_source_module is None:
+        return
+    if event_name in MVP1_TOOL_MARKER_EVENT_NAMES and source_module != expected_source_module:
+        raise MVP1AcceptanceError(
+            "MVP-1 Tool Executor markers must use source_module=mock_tool_event_emitter"
+        )
+    if source_module != expected_source_module:
+        raise MVP1AcceptanceError(
+            f"{event_name} source_module must be {expected_source_module}, got {source_module}"
+        )
+
+
 def _assert_mvp1_safe_string_fixture_value(value: str, key_path: str) -> None:
     lower_value = value.lower()
     if _contains_secret_like_value(value):
@@ -1088,6 +1216,13 @@ def _find_event(fixture: Mapping[str, Any], event_name: str, **matches: object) 
     raise MVP1AcceptanceError(f"Missing {event_name} event matching {matches}")
 
 
+def _find_event_by_id(fixture: Mapping[str, Any], event_id: str) -> Mapping[str, Any]:
+    for event in _required_sequence_mvp1(fixture, "events"):
+        if isinstance(event, Mapping) and event.get("event_id") == event_id:
+            return event
+    raise MVP1AcceptanceError(f"Missing event_id: {event_id}")
+
+
 def _assert_event_order(fixture: Mapping[str, Any], event_names: Sequence[str]) -> None:
     positions: list[int] = []
     events = _required_sequence_mvp1(fixture, "events")
@@ -1109,6 +1244,49 @@ def _assert_event_seq_before(
 ) -> None:
     if int(before_event["event_seq"]) >= int(after_event["event_seq"]):
         raise MVP1AcceptanceError(message)
+
+
+def _mvp1_forbidden_events_after_until_next_input(
+    fixture: Mapping[str, Any],
+    *,
+    after_event: Mapping[str, Any],
+    forbidden_event_names: frozenset[str],
+) -> list[str]:
+    return _mvp1_forbidden_events_after(
+        fixture,
+        after_event=after_event,
+        forbidden_event_names=forbidden_event_names,
+        stop_at_next_input=True,
+    )
+
+
+def _mvp1_forbidden_events_after(
+    fixture: Mapping[str, Any],
+    *,
+    after_event: Mapping[str, Any],
+    forbidden_event_names: frozenset[str],
+    task_id: str | None = None,
+    stop_at_next_input: bool = False,
+) -> list[str]:
+    after_event_seq = int(after_event["event_seq"])
+    forbidden: list[str] = []
+    events = sorted(
+        (
+            event
+            for event in _required_sequence_mvp1(fixture, "events")
+            if isinstance(event, Mapping) and int(event["event_seq"]) > after_event_seq
+        ),
+        key=lambda event: int(event["event_seq"]),
+    )
+    for event in events:
+        event_name = str(event["event_name"])
+        if stop_at_next_input and event_name in {"TEXT_INPUT_RECEIVED", "AUDIO_SPAN_STARTED"}:
+            break
+        if task_id is not None and event.get("task_id") != task_id:
+            continue
+        if event_name in forbidden_event_names:
+            forbidden.append(f"{event_name}:{event['event_id']}")
+    return forbidden
 
 
 def _required_sequence_mvp1(mapping: Mapping[str, Any], field: str) -> Sequence[Any]:

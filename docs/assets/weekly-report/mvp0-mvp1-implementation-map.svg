@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#061015"/>
+      <stop offset="55%" stop-color="#0b1219"/>
+      <stop offset="100%" stop-color="#111922"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14232b"/>
+      <stop offset="100%" stop-color="#0c151c"/>
+    </linearGradient>
+    <linearGradient id="card2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#172832"/>
+      <stop offset="100%" stop-color="#101821"/>
+    </linearGradient>
+    <linearGradient id="future" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#151b23"/>
+      <stop offset="100%" stop-color="#0b1118"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#22313a" stroke-width="1" opacity="0.22"/>
+    </pattern>
+    <marker id="arrowTeal" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#42d6c9"/>
+    </marker>
+    <marker id="arrowAmber" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#f2b84b"/>
+    </marker>
+    <marker id="arrowMuted" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7d919b"/>
+    </marker>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#grid)" opacity="0.55"/>
+  <circle cx="1560" cy="-140" r="560" fill="#1e766e" opacity="0.12"/>
+  <circle cx="-140" cy="960" r="480" fill="#f2b84b" opacity="0.07"/>
+  <text x="72" y="82" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="40" font-weight="750" fill="#f4f7f8">MVP-0 / MVP-1 Current Implementation Map</text>
+  <text x="72" y="122" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" fill="#9eb5bc">Calibrated against current source, tests, and replay fixture manifests</text>
+  <g>
+    <rect x="70" y="170" width="530" height="650" rx="24" fill="#0a1218" stroke="#42d6c9" stroke-width="2" opacity="0.98"/>
+    <rect x="70" y="170" width="530" height="54" rx="24" fill="#42d6c9" opacity="0.18"/>
+    <text x="98" y="206" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="760" fill="#f4f7f8">MVP-0 implemented</text>
+    <g>
+    <rect x="458" y="770" width="110" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="513" y="789" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">implemented</text>
+  </g><g>
+    <circle cx="106" cy="256" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="262" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Event Journal and envelope validation</text>
+  </g>
+<g>
+    <circle cx="106" cy="290" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="296" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Text/audio ingress through controller</text>
+  </g>
+<g>
+    <circle cx="106" cy="324" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="330" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Mock Duplex and barge-in candidates</text>
+  </g>
+<g>
+    <circle cx="106" cy="358" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="364" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Interaction Controller commit path</text>
+  </g>
+<g>
+    <circle cx="106" cy="392" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="398" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Mock ASR / Thinker after commit</text>
+  </g>
+<g>
+    <circle cx="106" cy="426" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="432" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Router FAST_ONLY / IGNORE skeleton</text>
+  </g>
+<g>
+    <circle cx="106" cy="460" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="466" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Mock playback, progress, truncate</text>
+  </g>
+<g>
+    <circle cx="106" cy="494" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="124" y="500" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Deterministic replay + fixtures</text>
+  </g>
+  </g><g>
+    <rect x="695" y="170" width="570" height="650" rx="24" fill="#0a1218" stroke="#62e0d4" stroke-width="2" opacity="0.98"/>
+    <rect x="695" y="170" width="570" height="54" rx="24" fill="#62e0d4" opacity="0.18"/>
+    <text x="723" y="206" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="760" fill="#f4f7f8">MVP-1 observed in current checkout</text>
+    <g>
+    <rect x="1123" y="770" width="110" height="28" rx="14" fill="#62e0d4" opacity="0.17" stroke="#62e0d4" stroke-width="1.4"/>
+    <text x="1178" y="789" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#62e0d4">mock/replay</text>
+  </g><g>
+    <circle cx="731" cy="256" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="262" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">MVP1Router + TaskFocusState</text>
+  </g>
+<g>
+    <circle cx="731" cy="290" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="296" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">UserPatchEvidencePackRuntime</text>
+  </g>
+<g>
+    <circle cx="731" cy="324" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="330" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">MockSlowTaskRuntime</text>
+  </g>
+<g>
+    <circle cx="731" cy="358" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="364" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">SlowTaskState reducer</text>
+  </g>
+<g>
+    <circle cx="731" cy="392" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="398" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">plan_version advance and replanning</text>
+  </g>
+<g>
+    <circle cx="731" cy="426" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="432" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">stale evidence with / without adoption</text>
+  </g>
+<g>
+    <circle cx="731" cy="460" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="466" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">confirmation, cancel, switch fixtures</text>
+  </g>
+<g>
+    <circle cx="731" cy="494" r="5" fill="#62e0d4" opacity="0.9"/>
+    <text x="749" y="500" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">MVP-1 acceptance runner</text>
+  </g>
+  </g><g>
+    <rect x="1360" y="170" width="490" height="650" rx="24" fill="#0a1218" stroke="#f2b84b" stroke-width="2" opacity="0.98"/>
+    <rect x="1360" y="170" width="490" height="54" rx="24" fill="#f2b84b" opacity="0.18"/>
+    <text x="1388" y="206" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="760" fill="#f4f7f8">Future not runtime yet</text>
+    <g>
+    <rect x="1708" y="770" width="86" height="28" rx="14" fill="#f2b84b" opacity="0.17" stroke="#f2b84b" stroke-width="1.4"/>
+    <text x="1751" y="789" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#f2b84b">target</text>
+  </g><g>
+    <circle cx="1396" cy="256" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="262" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">MVP-2 demo Tool Executor</text>
+  </g>
+<g>
+    <circle cx="1396" cy="290" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="296" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">TOOL_UI_STATE_PATCHED replay</text>
+  </g>
+<g>
+    <circle cx="1396" cy="324" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="330" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Thinker-as-Composer</text>
+  </g>
+<g>
+    <circle cx="1396" cy="358" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="364" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Coverage / truthfulness checks</text>
+  </g>
+<g>
+    <circle cx="1396" cy="392" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="398" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Demo sandbox tools only</text>
+  </g>
+<g>
+    <circle cx="1396" cy="426" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="432" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">MVP-3 real adapters</text>
+  </g>
+<g>
+    <circle cx="1396" cy="460" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="466" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">No new architecture capability</text>
+  </g>
+<g>
+    <circle cx="1396" cy="494" r="5" fill="#f2b84b" opacity="0.9"/>
+    <text x="1414" y="500" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#dbe8e9">Post-MVP requires ADR</text>
+  </g>
+  </g><g filter="url(#shadow)">
+    <rect x="300" y="895" width="1320" height="88" rx="24" fill="#120f10" stroke="#f2b84b" stroke-width="2"/>
+    <text x="960" y="933" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="760" fill="#ffe0a1">Not a product demo</text>
+    <text x="960" y="963" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" fill="#d6c8a5">Current value is architecture baseline + Python control-plane + synthetic replay / acceptance spine</text>
+  </g>
+</svg>

@@ -12,6 +12,9 @@ audio/raw/
 __pycache__/
 *.py[cod]
 
+# OS-local metadata
+.DS_Store
+
 # Local worktrees and spike experiment artifacts
 .worktrees/
 experiments/**/local/
