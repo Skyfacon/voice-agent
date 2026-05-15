@@ -4,16 +4,16 @@
 
 ## 1. 当前结论
 
-`voice-agent` 目前是一个 **live 态语音 Agent 的架构基线 + MVP-0 本地 walking skeleton 仓库**。它已经有一条用 faithful mocks 打通的 Python control-plane 骨架，并通过本地测试；但它还不是一个可运行的产品服务或前端 demo。
+`voice-agent` 目前是一个 **live 态语音 Agent 的架构基线 + Python control-plane + MVP-0/MVP-1 mock/replay spine 仓库**。它已经用 faithful mocks 打通 MVP-0 live-loop 骨架和 MVP-1 SlowTask/UserPatch 一致性骨架，并通过本地测试；但它还不是一个可运行的产品服务或前端 demo。
 
 仓库当前包含：
 
 - 16 个 accepted ADR，覆盖 Duplex、Interaction Controller、Event Journal、Replay、SlowTask、Tool Executor、Composer、Adapter、webSearch evidence boundary 等核心边界。
 - 一份 implementation-facing 的 `docs/architecture-book.md`。
-- 事件注册表、状态 reducer、replay、adapter capability、MVP-0 验收场景等规格文档。
-- MVP-0 implementation backlog 和 walking skeleton plan；这些计划中的 Slice 0-9 当前已在 `src/voice_agent/...`、`tests/...` 和 `tests/fixtures/replay/mvp0/...` 落地。
-- Python package implementation，覆盖 event journal、runtime startup、mock adapters、text/audio ingress、mock Duplex、Interaction Controller、Router、mock Talker、state reducers、deterministic replay 和 MVP-0 acceptance runner。
-- 124 个本地测试，当前通过 `./scripts/test -q`。
+- 事件注册表、状态 reducer、replay、adapter capability、MVP-0 / MVP-1 验收场景等规格文档。
+- MVP-0 implementation backlog、MVP-1 implementation backlog 和 walking skeleton plan；MVP-0 Slice 0-9 与 MVP-1 closeout fixtures 当前已在 `src/voice_agent/...`、`tests/...`、`tests/fixtures/replay/mvp0/...` 和 `tests/fixtures/replay/mvp1/...` 落地。
+- Python package implementation，覆盖 event journal、runtime startup、mock adapters、text/audio ingress、mock Duplex、Interaction Controller、Router、mock Talker、state reducers、deterministic replay、MVP-0 acceptance runner，以及 MVP-1 `MVP1Router`、`TaskFocusState`、`SlowTaskState`、`MockSlowTaskRuntime`、`UserPatchEvidencePackRuntime`、plan version / stale evidence policy、confirmation/cancel/switch-task replay 和 MVP-1 acceptance runner。
+- 本地 test suite 当前通过统一入口 `./scripts/test -q`。
 - `.gitignore` 已覆盖 local debug / trace / replay / raw audio / env secret 目录。
 
 仓库当前不包含：
@@ -22,14 +22,16 @@
 - 前端 demo。
 - 真实模型 adapter。
 - demo tool backend。
-- MVP-1 SlowTask / UserPatch / `plan_version` / stale result runtime。
-- MVP-2 Tool Executor / Thinker-as-Composer / coverage 或 truthfulness checks。
+- MVP-2 Tool Executor / progressive tool invocation / `TOOL_UI_STATE_PATCHED` 前端状态 patch。
+- Thinker-as-Composer runtime、CommitmentCoverageCheck 或 ProgressTruthfulnessCheck。
+- 真实 ASR / Thinker / Slow LLM / TTS adapter integration。
+- 多 active SlowTask、pause/resume、真实外部副作用工具或生产隐私策略。
 
-备注：当前 checkout 是一个 Git working tree，最新 main 已合入 MVP-0 Slice 9 acceptance runner。
+备注：当前 checkout 是一个 Git working tree，并且可能包含尚未提交的实现或 fixture 修改；本文只描述当前可观察的仓库状态，不替代 git history 或 ADR。
 
 因此，本项目现在最准确的阶段描述是：
 
-> Stage B ADR baseline frozen / MVP-0 local walking skeleton implemented and passing tests / MVP-1 not started.
+> Stage B ADR baseline frozen / MVP-0 local walking skeleton completed / MVP-1 mock SlowTask + UserPatch + replay acceptance completed / MVP-2 not started as runtime.
 
 ## 2. 项目要解决的问题
 
@@ -90,8 +92,11 @@ Access Layer
 | `docs/specs/replay-spec.md` | deterministic / degraded / re-eval replay 规范。 |
 | `docs/specs/model-adapter-capabilities.md` | Adapter capability matrix、degradation 和 output mode 规范。 |
 | `docs/specs/mvp0-acceptance-scenarios.md` | MVP-0 必须通过的验收场景。 |
+| `docs/specs/mvp1-acceptance-scenarios.md` | MVP-1 必须通过的 SlowTask/UserPatch/plan_version/stale/confirmation 验收场景。 |
 | `docs/implementation/mvp0-backlog.md` | MVP-0 从 repo safety 到 acceptance runner 的分片实施 backlog；当前 Slice 0-9 已完成。 |
-| `docs/planning/execution-roadmap.md` | System Spine + Model Spikes 的阶段路线；当前 System Spine 的 MVP-0 阶段已落地。 |
+| `docs/implementation/mvp1-backlog.md` | MVP-1 SlowTask mock 与 UserPatch consistency 的分片实施 backlog；当前作为 MVP-1 closeout 记录。 |
+| `docs/architecture-diagrams.md` | diagram-as-code 架构图示，汇总当前 MVP-0/MVP-1 状态和 MVP-2/MVP-3 方向。 |
+| `docs/planning/execution-roadmap.md` | System Spine + Model Spikes 的阶段路线；当前 System Spine 的 MVP-0 / MVP-1 阶段已落地。 |
 | `docs/planning/mvp0-walking-skeleton-plan.md` | MVP-0 walking skeleton 的原实施计划；当前可作为实现追踪和历史计划参考。 |
 | `voice_agent_planning_prompt_final.md` | 最初的 planning-only 任务说明和产品/架构背景。 |
 
@@ -159,7 +164,7 @@ sequenceDiagram
     Talker->>Journal: TTS_TRUNCATED
 ```
 
-说明：上图描述的是目标架构主链路。当前 MVP-0 实现只覆盖 Access Layer、mock Duplex、Interaction Controller、mock ASR/Thinker、Router、mock Talker/Playback 和 deterministic replay；SlowTask、Composer、coverage/truthfulness checks 和 tools 仍是后续 MVP 范围。
+说明：上图描述的是目标架构主链路。当前实现覆盖 Access Layer、mock Duplex、Interaction Controller、mock ASR/Thinker、Router、mock Talker/Playback、deterministic replay，以及 MVP-1 SlowTask/UserPatch/plan_version/stale evidence/confirmation mock spine；Composer、coverage/truthfulness checks、demo Tool Executor、frontend UI patching 和 real adapters 仍是后续 MVP 范围。
 
 ## 7. Event Journal 和 Replay 是系统地基
 
@@ -204,7 +209,7 @@ MVP-0 主要 reducer 目标：
 - `TracePrivacyState`
 - 最小/inert `TaskFocusState`
 
-MVP-1/MVP-2 会加入 SlowTask、ToolExecutionState、coverage/truthfulness 等更复杂 replay。
+MVP-1 当前已经加入 `TaskFocusState` 与 `SlowTaskState` replay。MVP-2 会继续加入 `ToolExecutionState`、coverage/truthfulness 等更复杂 replay。
 
 ## 8. MVP 分层路线
 
@@ -243,6 +248,16 @@ MVP-1/MVP-2 会加入 SlowTask、ToolExecutionState、coverage/truthfulness 等�
 - SlowTask lifecycle。
 - SemanticCommitment mock。
 - ASR/Thinker evidence fusion mock。
+
+当前状态：**已实现并通过本地测试**。当前代码和 fixtures 覆盖 `MVP1Router`、`TaskFocusState`、`SlowTaskState`、`MockSlowTaskRuntime`、`UserPatchEvidencePackRuntime`、material patch plan advance、stale result with/without adoption、waiting slot、cancel/switch confirmation、failed terminal stickiness、current-plan SemanticCommitment 和 MVP-1 acceptance runner。
+
+明确不做：
+
+- 真实 Slow LLM reasoning。
+- 真实 Tool Executor 或 progressive tool execution。
+- demo tools、frontend UI patching、Thinker-as-Composer、coverage/truthfulness checks。
+- 多 active SlowTask 或 pause/resume。
+- 真实 ASR / Thinker / TTS adapter integration。
 
 ### MVP-2: demo tools and Composer coverage
 
@@ -292,7 +307,24 @@ MVP-1/MVP-2 会加入 SlowTask、ToolExecutionState、coverage/truthfulness 等�
 
 当前 replay fixture 包括 `000-empty-session` 到 `009-local-trace-safety` 以及 `manifest.index.json`。
 
-## 10. 必须守住的工程红线
+## 10. MVP-1 当前落地状态
+
+`docs/implementation/mvp1-backlog.md` 把 MVP-1 切成 fixture/replay safety、event validation、Router focus、SlowTask reducer/runtime、UserPatch、plan advance、evidence review、stale policy、confirmation/cancel/switch 和 acceptance closeout。当前逐项核实结果如下：
+
+| Area | 当前状态 |
+| --- | --- |
+| Fixture/replay safety | 已实现；`tests/fixtures/replay/mvp1/manifest.index.json` 声明 `MVP1-ACCEPTANCE`、deterministic replay、GitHub-allowed synthetic fixtures 和 MVP-2 forbidden gates。 |
+| Event registry validation | 已实现；MVP-1 canonical events 在 registry/tests 中校验，非 canonical labels 不作为 journal event names。 |
+| Router / TaskFocus | 已实现；`MVP1Router` 覆盖 `FAST_ONLY`、`SPAWN_SLOW_TASK`、`PATCH_ACTIVE_SLOW_TASK`、`IGNORE` 和 ADR-006 TaskFocus values。 |
+| SlowTask reducer/runtime | 已实现 mock；`SlowTaskState` 与 `MockSlowTaskRuntime` 覆盖 lifecycle、terminal stickiness、planning/completed/failed/cancelled paths。 |
+| UserPatch evidence | 已实现；`USER_PATCH_RECEIVED` 是 evidence pack，不直接 mutation。 |
+| Plan version / stale policy | 已实现；material patch advances `plan_version`，old-plan `TOOL_RESULT_RECEIVED` 默认进入 stale evidence，adoption path 显式记录。 |
+| Confirmation / switch-task | 已实现；cancel 和 switch-task 通过 UserPatch interpretation 与 SlowTask-owned confirmation path。 |
+| Acceptance closeout | 已实现；MVP-1 required scenarios 覆盖 spawn、active patch、plan advance、foreground chat、ambiguous no patch、waiting slot、stale result、adoption、cancel、switch、failed、SemanticCommitment。 |
+
+当前 MVP-1 replay fixture 包括 `000-empty-mvp1-session`、`002-task-focus-router`、`003-slowtask-*`、`004-spawn-planning-completed`、`005-active-patch-evidence`、`006-plan-advance-replanning`、`007-evidence-review-waiting-slot`、`008-stale-result-*`、`009-cancel/switch-*` 和 `manifest.index.json`。
+
+## 11. 必须守住的工程红线
 
 以下规则来自 `AGENTS.md` 和 accepted ADR，是后续实现时的 P0/P1 级约束：
 
@@ -309,24 +341,23 @@ MVP-1/MVP-2 会加入 SlowTask、ToolExecutionState、coverage/truthfulness 等�
 - 每个 MVP slice 完成前必须有 replay scenario 或 eval case。
 - 不得静默扩大 MVP scope，尤其 MVP-3 只允许替换 adapter。
 
-## 11. 当前值得注意的问题
+## 12. 当前值得注意的问题
 
 1. **当前已有 Git repository metadata。** 可以使用 `git status`、diff、commit 等工作流；早期规划包中“没有 git metadata”的判断已不适用。
 
-2. **MVP-0 已有实现代码，但不是产品服务。** 当前代码主要验证 control-plane、event journal、mock adapter、replay 和 acceptance gates；没有 HTTP/WebSocket service、frontend demo 或真实模型接入。
+2. **MVP-0 / MVP-1 已有实现代码，但不是产品服务。** 当前代码主要验证 control-plane、event journal、mock adapter、replay、SlowTask/UserPatch consistency 和 acceptance gates；没有 HTTP/WebSocket service、frontend demo、demo Tool Executor 或真实模型接入。
 
 3. **open questions 还没有全部产品化。** 例如 playback progress 频率、semantic_close/assistant_directedness 从 mock/rule 到 real adapter 的迁移策略、MVP-2 工具集合、webSearch mock 还是真 API、CoverageCheck 实现方式等。
 
-4. **MVP-1 是下一条主线。** SlowTask、UserPatch、`plan_version`、`task_event_seq`、stale result policy 和 mock SemanticCommitment 仍未实现；实现前必须重新查 ADR-004 / ADR-006 / ADR-007 / ADR-008 / ADR-016。
+4. **MVP-2 是下一条 runtime 主线候选。** MVP-1 已完成 mock/replay closeout；后续如果进入 demo tools / Composer / UI patch，必须重新查 ADR-005 / ADR-009 / ADR-013 / ADR-014 / ADR-016，并继续守住 ADR-004 stale policy。
 
-## 12. 推荐下一步
+## 13. 推荐下一步
 
-如果继续推进，建议进入 MVP-1，而不是重做 MVP-0：
+如果继续推进，建议不要重做 MVP-0/MVP-1，而是在以下方向中选一条清晰主线：
 
-1. 更新并确认 MVP-1 implementation backlog，明确 SlowTask/UserPatch/plan_version 的 slice 边界。
-2. 先补 MVP-1 replay fixture 和 reducer expectations，避免状态机先行漂移。
-3. 实现 single active SlowTask、UserPatch evidence pack、`plan_version` advance 和 stale ToolResult policy。
-4. 保持 Router 只做 post-commit focus gate，不直接解释最终任务事实。
-5. 每个 MVP-1 slice 都同步添加 synthetic replay fixture 或 eval case。
+1. 进入 MVP-2：demo Tool Executor、sandbox tools、`TOOL_UI_STATE_PATCHED`、Thinker-as-Composer、coverage/truthfulness checks。
+2. 做 model capability spikes：ASR、Thinker、Slow LLM、TTS、Duplex/VAD、Embedding/RAG 的能力证据和风险报告。
+3. 做 adapter contract hardening：把 MVP-0/MVP-1 已验证的 replay/state/event 需求收敛到 adapter capability profiles。
+4. 继续维护 MVP-1：只补测试、fixtures 或文档观察，不静默扩大到 MVP-2 behavior。
 
 优先级上，不建议先接真实 Qwen3-Omni / GLM / TTS endpoint。这个项目的设计纪律是先用 mock skeleton 验证 live-loop 边界，再在 MVP-3 替换真实 adapters。

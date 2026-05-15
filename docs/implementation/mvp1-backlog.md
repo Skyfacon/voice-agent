@@ -2,7 +2,7 @@
 
 本文档只覆盖 MVP-1：SlowTask mock、single active SlowTask、TaskFocusState、UserPatch evidence pack、`plan_version`、`task_event_seq`、stale ToolResult policy mock、SemanticCommitment mock、ASR/Thinker evidence fusion mock、SlowTask replay。
 
-本文档是设计和实施 backlog，不是 runtime 代码实现。本次落地不得修改 runtime、tests 或 fixtures。
+本文档最初是设计和实施 backlog；当前也作为 MVP-1 closeout 记录。它记录 MVP-1 已落地的 mock/replay scope、slice 边界、验证证据和仍禁止误读为 MVP-2/MVP-3 的范围。
 
 ## Source Contracts
 
@@ -28,16 +28,42 @@
 
 ## Current Starting Point
 
-Verified on 2026-05-11:
+Verified on 2026-05-14:
 
 - MVP-0 Slice 0-9 are implemented and closeout hardening found no blocking readiness issue.
-- `src/voice_agent/state/task_focus_state.py` exists as a minimal/inert MVP-0 reducer that only consumes `ROUTER_DECISION_EMITTED`.
-- `src/voice_agent/router/router.py` is explicitly MVP-0 scoped and rejects `SPAWN_SLOW_TASK` / `PATCH_ACTIVE_SLOW_TASK`.
-- No SlowTask runtime, UserPatch runtime, SlowTaskState reducer, stale result policy runtime, SemanticCommitment runtime, Tool Executor, Composer, or frontend UI patching exists.
-- MVP-0 replay fixtures explicitly forbid MVP-1 and later events to keep MVP-0 closed.
-- Worktree was clean before this design-doc change.
+- MVP-1 mock/replay spine is implemented in the current checkout.
+- `src/voice_agent/router/router.py` includes `MVP1Router`, ADR-006 TaskFocus values, and MVP-1 RouterDecision handling.
+- `src/voice_agent/state/task_focus_state.py` and `src/voice_agent/state/slowtask_state.py` replay TaskFocus and SlowTask state.
+- `src/voice_agent/slowtask/mock_runtime.py` and `src/voice_agent/user_patch/evidence_pack.py` implement the MVP-1 mock runtime and UserPatch evidence pack flow.
+- `tests/fixtures/replay/mvp1/manifest.index.json` declares `MVP1-ACCEPTANCE` over deterministic, synthetic, GitHub-allowed fixtures.
+- `tests/acceptance/test_mvp1_acceptance_scenarios.py` covers the required MVP-1 scenarios and rejects hidden MVP-2 behavior.
+- MVP-2 Tool Executor, Composer, frontend UI patching, demo tools, real Slow LLM, real model adapters, multi active SlowTask, and pause/resume remain out of runtime scope.
 
-This backlog therefore starts with design for MVP-1 docs and future implementation slices. It must not be read as evidence that MVP-1 runtime exists.
+This backlog should now be read as the MVP-1 implementation record and closeout checklist, not as evidence that MVP-1 is still unstarted.
+
+## MVP-1 Closeout Status
+
+Current closeout summary:
+
+| Slice | Area | Current status | Evidence |
+| --- | --- | --- | --- |
+| 0 | Fixture/replay safety skeleton | Complete | `tests/fixtures/replay/mvp1/000-empty-mvp1-session.fixture.json`, `manifest.index.json`, fixture safety tests |
+| 1 | Event registry validation | Complete | `tests/events/test_mvp1_event_registry.py`, canonical registry validation |
+| 2 | TaskFocusState and Router MVP-1 decisions | Complete | `MVP1Router`, `TaskFocusState`, `tests/router/test_router_task_focus_mvp1.py`, `tests/replay/test_task_focus_state_mvp1.py` |
+| 3 | SlowTaskState reducer and replay skeleton | Complete | `src/voice_agent/state/slowtask_state.py`, `tests/state/test_slowtask_state.py`, `tests/replay/test_slowtask_replay_mvp1.py` |
+| 4 | SlowTask create/planning/completed happy path | Complete | `src/voice_agent/slowtask/mock_runtime.py`, `tests/slowtask/test_slowtask_lifecycle_mvp1.py`, `004-spawn-planning-completed.fixture.json` |
+| 5 | UserPatch evidence pack construction | Complete | `src/voice_agent/user_patch/evidence_pack.py`, `tests/user_patch/test_user_patch_evidence_pack.py`, `005-active-patch-evidence.fixture.json` |
+| 6 | UserPatch interpretation and plan advance | Complete | `tests/slowtask/test_user_patch_interpretation.py`, `tests/slowtask/test_plan_version_advance.py`, `006-plan-advance-replanning.fixture.json` |
+| 7 | Evidence review, ambiguity, waiting slot | Complete | `tests/slowtask/test_evidence_review_mvp1.py`, `tests/slowtask/test_waiting_slot_mvp1.py`, `007-evidence-review-waiting-slot.fixture.json` |
+| 8 | Stale ToolResult with/without adoption | Complete | `tests/slowtask/test_stale_tool_result_policy.py`, `tests/replay/test_stale_tool_result_replay.py`, `008-stale-result-*.fixture.json` |
+| 9 | Cancel / switch-task confirmation | Complete | `tests/slowtask/test_confirmation_cancel_switch_mvp1.py`, `tests/replay/test_cancel_switch_confirmation_replay.py`, `009-cancel/switch-*.fixture.json` |
+| 10 | MVP-1 acceptance runner and closeout | Complete | `tests/acceptance/test_mvp1_acceptance_scenarios.py`, `MVP1-ACCEPTANCE` manifest |
+
+Closeout interpretation:
+
+- MVP-1 completion means the mock/replay control-plane behavior is implemented and replay-validated.
+- It does not mean a product service, frontend demo, real Tool Executor, real Slow LLM, real adapters, or MVP-2 Composer/checker path exists.
+- Slice sections below are kept as implementation record. Their non-goals and acceptance criteria remain useful scope guards; file lists have been updated from original planning intent to current observed paths where applicable.
 
 ## MVP-1 Scope
 
@@ -232,19 +258,19 @@ MVP-1 behavior:
 
 **Goal**
 
-Define the future MVP-1 fixture directory, manifest shape, safety checks, and replay boundaries before adding any SlowTask runtime behavior.
+Define the MVP-1 fixture directory, manifest shape, safety checks, and replay boundaries before adding any SlowTask runtime behavior.
 
 **Non-goals**
 
-No SlowTask runtime, Router behavior change, UserPatch interpretation, tool execution, or new event names.
+At this slice boundary: no SlowTask runtime, Router behavior change, UserPatch interpretation, tool execution, or new event names.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future create: `tests/fixtures/replay/mvp1/README.md`
-- Future create: `tests/fixtures/replay/mvp1/000-empty-mvp1-session.fixture.json`
-- Future create: `tests/fixtures/replay/mvp1/manifest.index.json`
-- Future modify: `tests/replay/test_fixture_safety.py` or a dedicated MVP-1 fixture safety test
-- Future modify: replay manifest validation only if the current schema cannot express MVP-1 expected states
+- Existing: `tests/fixtures/replay/mvp1/README.md`
+- Existing: `tests/fixtures/replay/mvp1/000-empty-mvp1-session.fixture.json`
+- Existing: `tests/fixtures/replay/mvp1/manifest.index.json`
+- Existing: `tests/replay/test_fixture_safety.py`
+- Existing: replay manifest validation supports MVP-1 expected states
 
 **Events touched**
 
@@ -283,7 +309,7 @@ No SlowTask runtime, Router behavior change, UserPatch interpretation, tool exec
 
 **Done when**
 
-- Future fixture safety tests pass.
+- Fixture safety tests pass.
 - Empty MVP-1 fixture replays.
 - Review confirms this slice does not implement SlowTask behavior.
 
@@ -297,11 +323,11 @@ Reconcile ADR-002 / ADR-004 / ADR-016 binding requirements with `docs/specs/even
 
 No new event names, ADR changes, state reducer logic, runtime state machine, or tool execution.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future modify: `src/voice_agent/events/registry.py`
-- Future modify: `tests/events/test_event_envelope.py`
-- Future create: `tests/events/test_mvp1_event_registry.py`
+- Existing: `src/voice_agent/events/registry.py`
+- Existing: `tests/events/test_event_envelope.py`
+- Existing: `tests/events/test_mvp1_event_registry.py`
 
 **Events touched**
 
@@ -380,15 +406,15 @@ Define a `RouterContext` / `TaskFocusSnapshot` contract at the same time. Router
 
 No UserPatch interpretation, no SlowTask cancellation, no plan advance, no ASR/Thinker conflict arbitration, no multi active SlowTask.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future modify: `src/voice_agent/router/router.py` or create a clearly named MVP-1 router module
-- Future modify: `src/voice_agent/state/task_focus_state.py`
-- Future create or modify: Router context / task focus snapshot definitions near the Router or state boundary
-- Future modify: `src/voice_agent/replay/runner.py`
-- Future modify: `src/voice_agent/replay/state_digest.py`
-- Future create: `tests/router/test_router_task_focus_mvp1.py`
-- Future create: `tests/replay/test_task_focus_state_mvp1.py`
+- Existing: `src/voice_agent/router/router.py`
+- Existing: `src/voice_agent/state/task_focus_state.py`
+- Existing: Router context / task focus snapshot definitions near the Router boundary
+- Existing: `src/voice_agent/replay/runner.py`
+- Existing: `src/voice_agent/replay/state_digest.py`
+- Existing: `tests/router/test_router_task_focus_mvp1.py`
+- Existing: `tests/replay/test_task_focus_state_mvp1.py`
 
 **Events touched**
 
@@ -442,13 +468,13 @@ Add deterministic replay support for SlowTaskState before adding live runtime be
 
 No live SlowTask runtime, no UserPatch construction, no mock tool generation, no Composer or spoken output.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future create: `src/voice_agent/state/slowtask_state.py`
-- Future modify: `src/voice_agent/replay/runner.py`
-- Future modify: `src/voice_agent/replay/state_digest.py`
-- Future create: `tests/state/test_slowtask_state.py`
-- Future create: `tests/replay/test_slowtask_replay_mvp1.py`
+- Existing: `src/voice_agent/state/slowtask_state.py`
+- Existing: `src/voice_agent/replay/runner.py`
+- Existing: `src/voice_agent/replay/state_digest.py`
+- Existing: `tests/state/test_slowtask_state.py`
+- Existing: `tests/replay/test_slowtask_replay_mvp1.py`
 
 **Events touched**
 
@@ -502,12 +528,12 @@ Implement the minimal mock SlowTask happy path from Router spawn to current-plan
 
 No real Slow LLM, no real Tool Executor, no progressive tool events, no Composer, no coverage/truthfulness checks.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future create: `src/voice_agent/slowtask/`
-- Future modify: `src/voice_agent/runtime/session.py` only if orchestration wiring is needed
-- Future create: `tests/slowtask/test_slowtask_lifecycle_mvp1.py`
-- Future create: `tests/replay/test_slowtask_happy_path_replay.py`
+- Existing: `src/voice_agent/slowtask/`
+- Existing: `src/voice_agent/runtime/slowtask_orchestrator.py`
+- Existing: `tests/slowtask/test_slowtask_lifecycle_mvp1.py`
+- Existing: `tests/replay/test_slowtask_happy_path_replay.py`
 
 **Events touched**
 
@@ -565,12 +591,12 @@ Construct UserPatch evidence packs for active-task patch decisions without inter
 
 No SlowTask interpretation, no plan advance, no direct slot/constraint/goal mutation, no confirmation acceptance.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future create: `src/voice_agent/user_patch/`
-- Future modify: Router orchestration where patch decisions hand off evidence refs
-- Future create: `tests/user_patch/test_user_patch_evidence_pack.py`
-- Future create: `tests/replay/test_user_patch_received_replay.py`
+- Existing: `src/voice_agent/user_patch/`
+- Existing: Router/UserPatch handoff where patch decisions hand off evidence refs
+- Existing: `tests/user_patch/test_user_patch_evidence_pack.py`
+- Existing: `tests/replay/test_user_patch_received_replay.py`
 
 **Events touched**
 
@@ -625,12 +651,12 @@ Let SlowTask interpret UserPatch evidence against the observed plan and advance 
 
 No Router semantic interpretation, no direct UserPatch mutation, no stale result adoption, no real Slow LLM.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future modify: `src/voice_agent/slowtask/`
-- Future create: `tests/slowtask/test_user_patch_interpretation.py`
-- Future create: `tests/slowtask/test_plan_version_advance.py`
-- Future create: `tests/replay/test_plan_version_replay.py`
+- Existing: `src/voice_agent/slowtask/`
+- Existing: `tests/slowtask/test_user_patch_interpretation.py`
+- Existing: `tests/slowtask/test_plan_version_advance.py`
+- Existing: `tests/replay/test_plan_version_replay.py`
 
 **Events touched**
 
@@ -685,12 +711,12 @@ Model SlowTask-led ASR/Thinker evidence review, ambiguity handling, waiting-slot
 
 No real Slow LLM reasoning, no tool execution, no Router conflict verdict, no automatic ASR/Thinker winner selection.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future modify: `src/voice_agent/slowtask/`
-- Future create: `tests/slowtask/test_evidence_review_mvp1.py`
-- Future create: `tests/slowtask/test_waiting_slot_mvp1.py`
-- Future create: `tests/replay/test_evidence_review_replay.py`
+- Existing: `src/voice_agent/slowtask/`
+- Existing: `tests/slowtask/test_evidence_review_mvp1.py`
+- Existing: `tests/slowtask/test_waiting_slot_mvp1.py`
+- Existing: `tests/replay/test_evidence_review_replay.py`
 
 **Events touched**
 
@@ -749,11 +775,11 @@ Validate old-plan ToolResult handling with default stale recording and explicit 
 
 No real Tool Executor, no partial Tool Executor, no manifest loading, no authorization gate, no adapter invocation, no progressive tool execution, no `TOOL_EXECUTION_STARTED`, no UI patch, no demo tools, no external side effects.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future modify: `src/voice_agent/slowtask/`
-- Future create: `tests/slowtask/test_stale_tool_result_policy.py`
-- Future create: `tests/replay/test_stale_tool_result_replay.py`
+- Existing: `src/voice_agent/slowtask/`
+- Existing: `tests/slowtask/test_stale_tool_result_policy.py`
+- Existing: `tests/replay/test_stale_tool_result_replay.py`
 
 **Events touched**
 
@@ -817,12 +843,12 @@ Implement minimal SlowTask-owned confirmation paths for cancel and switch-task c
 
 No pause/resume, no multiple active SlowTasks, no real external action, no direct raw-text confirmation shortcut.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future modify: `src/voice_agent/slowtask/`
-- Future modify: `src/voice_agent/user_patch/`
-- Future create: `tests/slowtask/test_confirmation_cancel_switch_mvp1.py`
-- Future create: `tests/replay/test_cancel_switch_confirmation_replay.py`
+- Existing: `src/voice_agent/slowtask/`
+- Existing: `src/voice_agent/user_patch/`
+- Existing: `tests/slowtask/test_confirmation_cancel_switch_mvp1.py`
+- Existing: `tests/replay/test_cancel_switch_confirmation_replay.py`
 
 **Events touched**
 
@@ -873,7 +899,7 @@ No pause/resume, no multiple active SlowTasks, no real external action, no direc
 - Router never cancels or authorizes directly.
 - Confirmation state is SlowTask-owned and replayable.
 - Terminal cancellation is sticky.
-- Switch-task confirmation is mandatory MVP-1 coverage, not an optional future fixture.
+- Switch-task confirmation is mandatory MVP-1 coverage, not optional follow-up coverage.
 
 **Done when**
 
@@ -890,12 +916,12 @@ Create a single MVP-1 acceptance runner over the required synthetic scenarios an
 
 No product service startup, no browser/frontend, no real models, no real tools, no MVP-2 demo tool path.
 
-**Expected files or file areas**
+**Implemented files or file areas**
 
-- Future use: `docs/specs/mvp1-acceptance-scenarios.md`
-- Future create: `tests/acceptance/test_mvp1_acceptance_scenarios.py`
-- Future modify: `src/voice_agent/replay/scenario_assertions.py`
-- Future modify: `tests/fixtures/replay/mvp1/manifest.index.json`
+- Existing: `docs/specs/mvp1-acceptance-scenarios.md`
+- Existing: `tests/acceptance/test_mvp1_acceptance_scenarios.py`
+- Existing: `src/voice_agent/replay/scenario_assertions.py`
+- Existing: `tests/fixtures/replay/mvp1/manifest.index.json`
 
 **Events touched**
 
@@ -958,7 +984,7 @@ Required scenario coverage:
 
 ## MVP-1 Exit Criteria
 
-MVP-1 is complete only when:
+MVP-1 closeout is complete when:
 
 - Single active SlowTask can be spawned, patched, replanned, finalized, completed, cancelled, and replayed.
 - Failed SlowTask terminal replay is covered.

@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#061015"/>
+      <stop offset="55%" stop-color="#0b1219"/>
+      <stop offset="100%" stop-color="#111922"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14232b"/>
+      <stop offset="100%" stop-color="#0c151c"/>
+    </linearGradient>
+    <linearGradient id="card2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#172832"/>
+      <stop offset="100%" stop-color="#101821"/>
+    </linearGradient>
+    <linearGradient id="future" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#151b23"/>
+      <stop offset="100%" stop-color="#0b1118"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#22313a" stroke-width="1" opacity="0.22"/>
+    </pattern>
+    <marker id="arrowTeal" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#42d6c9"/>
+    </marker>
+    <marker id="arrowAmber" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#f2b84b"/>
+    </marker>
+    <marker id="arrowMuted" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7d919b"/>
+    </marker>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#grid)" opacity="0.55"/>
+  <circle cx="1560" cy="-140" r="560" fill="#1e766e" opacity="0.12"/>
+  <circle cx="-140" cy="960" r="480" fill="#f2b84b" opacity="0.07"/>
+  <text x="72" y="82" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="40" font-weight="750" fill="#f4f7f8">Replay &amp; Evidence Spine</text>
+  <text x="72" y="122" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" fill="#9eb5bc">How fixtures become deterministic state and acceptance evidence</text>
+  <g filter="url(#shadow)">
+    <rect x="90" y="190" width="310" height="150" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="112" y1="248" x2="378" y2="248" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="114" y="228" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">MVP-0 fixtures</text>
+    <g>
+    <rect x="290" y="296" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="333" y="315" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">input</text>
+  </g>
+    <text x="114" y="268" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">GitHub-allowed</text>
+<text x="114" y="292" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">deterministic</text>
+<text x="114" y="316" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">mock output labels</text>
+  </g><g filter="url(#shadow)">
+    <rect x="90" y="400" width="310" height="170" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="112" y1="458" x2="378" y2="458" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="114" y="438" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">MVP-1 fixtures</text>
+    <g>
+    <rect x="290" y="526" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="333" y="545" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">input</text>
+  </g>
+    <text x="114" y="478" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">SlowTask, UserPatch</text>
+<text x="114" y="502" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">plan_version, stale</text>
+<text x="114" y="526" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">evidence</text>
+<text x="114" y="550" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">confirmation paths</text>
+  </g><g filter="url(#shadow)">
+    <rect x="500" y="275" width="285" height="190" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="522" y1="333" x2="763" y2="333" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="524" y="313" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">ReplayManifest</text>
+    <g>
+    <rect x="675" y="421" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="718" y="440" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">metadata</text>
+  </g>
+    <text x="524" y="353" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">fixture_domain</text>
+<text x="524" y="377" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">replay_mode</text>
+<text x="524" y="401" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">safety flags</text>
+  </g><g filter="url(#shadow)">
+    <rect x="850" y="245" width="315" height="250" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="872" y1="303" x2="1143" y2="303" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="874" y="283" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Ordered events</text>
+    <g>
+    <rect x="1055" y="451" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="1098" y="470" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">journal</text>
+  </g>
+    <text x="874" y="323" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">sorted by event_seq</text>
+<text x="874" y="347" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">canonical registry</text>
+<text x="874" y="371" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">causal links validated</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1245" y="165" width="360" height="520" rx="24" fill="url(#card2)" stroke="#42d6c9" stroke-width="2"/>
+    <text x="1275" y="210" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="760" fill="#ffffff">Reducers</text>
+    <g>
+    <circle cx="1284" cy="264" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="1302" y="270" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#cfe2e3">InteractionState</text>
+  </g>
+<g>
+    <circle cx="1284" cy="319" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="1302" y="325" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#cfe2e3">TaskFocusState</text>
+  </g>
+<g>
+    <circle cx="1284" cy="374" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="1302" y="380" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#cfe2e3">SlowTaskState</text>
+  </g>
+<g>
+    <circle cx="1284" cy="429" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="1302" y="435" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#cfe2e3">PlaybackState</text>
+  </g>
+<g>
+    <circle cx="1284" cy="484" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="1302" y="490" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#cfe2e3">AdapterHealthState</text>
+  </g>
+<g>
+    <circle cx="1284" cy="539" r="5" fill="#42d6c9" opacity="0.9"/>
+    <text x="1302" y="545" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#cfe2e3">TracePrivacyState</text>
+  </g>
+  </g><g filter="url(#shadow)">
+    <rect x="1670" y="260" width="180" height="190" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="1692" y1="318" x2="1828" y2="318" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="1694" y="298" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">State digest</text>
+    <g>
+    <rect x="1740" y="406" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="1783" y="425" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">output</text>
+  </g>
+    <text x="1694" y="338" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="430" fill="#bdd0d4">stable hashes</text>
+<text x="1694" y="362" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="430" fill="#bdd0d4">no raw</text>
+<text x="1694" y="386" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="430" fill="#bdd0d4">audio/text/secrets</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1385" y="765" width="390" height="150" rx="18" fill="url(#card)" stroke="#f2b84b" stroke-width="2" />
+    <line x1="1407" y1="823" x2="1753" y2="823" stroke="#f2b84b" stroke-width="1" opacity="0.35"/>
+    <text x="1409" y="803" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Acceptance result</text>
+    <g>
+    <rect x="1665" y="871" width="86" height="28" rx="14" fill="#f2b84b" opacity="0.17" stroke="#f2b84b" stroke-width="1.4"/>
+    <text x="1708" y="890" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#f2b84b">verified</text>
+  </g>
+    <text x="1409" y="843" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">REPLAY_STARTED</text>
+<text x="1409" y="867" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">REPLAY_COMPLETED</text>
+<text x="1409" y="891" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">pass / fail / degraded</text>
+  </g><path d="M400,265 L500,340" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M400,485 L500,390" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M785,370 L850,370" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1165,370 L1245,370" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1605,370 L1670,355" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1760,450 C1800,590 1680,720 1580,765" fill="none" stroke="#f2b84b" stroke-width="3"  marker-end="url(#arrowAmber)" opacity="0.92"/><g><circle cx="900" cy="565" r="5" fill="#f2b84b" opacity="0.92"/>
+<circle cx="918" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="936" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="954" cy="565" r="5" fill="#f2b84b" opacity="0.92"/>
+<circle cx="972" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="990" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="1008" cy="565" r="5" fill="#f2b84b" opacity="0.92"/>
+<circle cx="1026" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="1044" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="1062" cy="565" r="5" fill="#f2b84b" opacity="0.92"/>
+<circle cx="1080" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="1098" cy="565" r="5" fill="#42d6c9" opacity="0.92"/>
+<circle cx="1116" cy="565" r="5" fill="#f2b84b" opacity="0.92"/><text x="900" y="608" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" fill="#9eb5bc">ordered event stream</text></g><g filter="url(#shadow)">
+    <rect x="260" y="875" width="900" height="88" rx="24" fill="#101316" stroke="#7d919b" stroke-width="1.8"/>
+    <text x="710" y="913" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="760" fill="#f4f7f8">Deterministic replay guardrail</text>
+    <text x="710" y="945" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" fill="#c8d7d9">does not rerun models, tools, network, clock, or random</text>
+  </g>
+</svg>

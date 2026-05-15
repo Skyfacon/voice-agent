@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#061015"/>
+      <stop offset="55%" stop-color="#0b1219"/>
+      <stop offset="100%" stop-color="#111922"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14232b"/>
+      <stop offset="100%" stop-color="#0c151c"/>
+    </linearGradient>
+    <linearGradient id="card2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#172832"/>
+      <stop offset="100%" stop-color="#101821"/>
+    </linearGradient>
+    <linearGradient id="future" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#151b23"/>
+      <stop offset="100%" stop-color="#0b1118"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#22313a" stroke-width="1" opacity="0.22"/>
+    </pattern>
+    <marker id="arrowTeal" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#42d6c9"/>
+    </marker>
+    <marker id="arrowAmber" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#f2b84b"/>
+    </marker>
+    <marker id="arrowMuted" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7d919b"/>
+    </marker>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#grid)" opacity="0.55"/>
+  <circle cx="1560" cy="-140" r="560" fill="#1e766e" opacity="0.12"/>
+  <circle cx="-140" cy="960" r="480" fill="#f2b84b" opacity="0.07"/>
+  <text x="72" y="82" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="40" font-weight="750" fill="#f4f7f8">Module Ownership &amp; Forbidden Responsibilities</text>
+  <text x="72" y="122" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" fill="#9eb5bc">Boundary-first implementation guide for developers and coding agents</text>
+  <g filter="url(#shadow)">
+    <rect x="70" y="175" width="410" height="175" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="92" y1="233" x2="458" y2="233" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="94" y="213" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Interaction Controller</text>
+    <g>
+    <rect x="370" y="306" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="413" y="325" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">owner</text>
+  </g>
+    <text x="94" y="253" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: turn ingress commit</text>
+<text x="94" y="278" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: semantic reasoning, SlowTask</text>
+<text x="94" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">cancel, tool auth</text>
+  </g><g filter="url(#shadow)">
+    <rect x="520" y="175" width="410" height="175" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="542" y1="233" x2="908" y2="233" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="544" y="213" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Router</text>
+    <g>
+    <rect x="820" y="306" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="863" y="325" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">gate</text>
+  </g>
+    <text x="544" y="253" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: post-commit gate + TaskFocusState</text>
+<text x="544" y="278" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: final UserPatch semantics,</text>
+<text x="544" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">plan_version, cancel</text>
+  </g><g filter="url(#shadow)">
+    <rect x="970" y="175" width="410" height="175" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="992" y1="233" x2="1358" y2="233" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="994" y="213" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">SlowTask Runtime</text>
+    <g>
+    <rect x="1270" y="306" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1313" y="325" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">facts</text>
+  </g>
+    <text x="994" y="253" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: facts, plan_version, confirmation,</text>
+<text x="994" y="278" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">stale evidence, SemanticCommitment</text>
+<text x="994" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: turn ingress, Router focus,</text>
+<text x="994" y="328" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">direct tool execution</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1420" y="175" width="410" height="175" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="1442" y1="233" x2="1808" y2="233" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="1444" y="213" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">UserPatch Pipeline</text>
+    <g>
+    <rect x="1720" y="306" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1763" y="325" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">evidence</text>
+  </g>
+    <text x="1444" y="253" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: evidence pack</text>
+<text x="1444" y="278" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: goal / slot / constraint</text>
+<text x="1444" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">mutation</text>
+  </g><g filter="url(#shadow)">
+    <rect x="70" y="415" width="410" height="175" rx="18" fill="url(#future)" stroke="#f2b84b" stroke-width="2" stroke-dasharray="10 8"/>
+    <line x1="92" y1="473" x2="458" y2="473" stroke="#f2b84b" stroke-width="1" opacity="0.35"/>
+    <text x="94" y="453" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Tool Executor</text>
+    <g>
+    <rect x="344" y="546" width="118" height="28" rx="14" fill="#f2b84b" opacity="0.17" stroke="#f2b84b" stroke-width="1.4"/>
+    <text x="403" y="565" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#f2b84b">MVP-2 target</text>
+  </g>
+    <text x="94" y="493" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: tool execution, idempotency,</text>
+<text x="94" y="518" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">sandbox, UI patches</text>
+<text x="94" y="543" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: direct SlowTask mutation or</text>
+<text x="94" y="568" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">real side effects in MVP</text>
+  </g><g filter="url(#shadow)">
+    <rect x="520" y="415" width="410" height="175" rx="18" fill="url(#future)" stroke="#f2b84b" stroke-width="2" stroke-dasharray="10 8"/>
+    <line x1="542" y1="473" x2="908" y2="473" stroke="#f2b84b" stroke-width="1" opacity="0.35"/>
+    <text x="544" y="453" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Composer</text>
+    <g>
+    <rect x="794" y="546" width="118" height="28" rx="14" fill="#f2b84b" opacity="0.17" stroke="#f2b84b" stroke-width="1.4"/>
+    <text x="853" y="565" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#f2b84b">MVP-2 target</text>
+  </g>
+    <text x="544" y="493" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: SpokenPlan drafts</text>
+<text x="544" y="518" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: rewrite facts, resolved args,</text>
+<text x="544" y="543" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">tool status, risk warnings</text>
+  </g><g filter="url(#shadow)">
+    <rect x="970" y="415" width="410" height="175" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="992" y1="473" x2="1358" y2="473" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="994" y="453" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Talker / Playback</text>
+    <g>
+    <rect x="1270" y="546" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1313" y="565" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">mock</text>
+  </g>
+    <text x="994" y="493" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: PlaybackState and truncate execution</text>
+<text x="994" y="518" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: semantic acknowledgement or</text>
+<text x="994" y="543" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">task facts</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1420" y="415" width="410" height="175" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="1442" y1="473" x2="1808" y2="473" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="1444" y="453" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Replay Runtime</text>
+    <g>
+    <rect x="1720" y="546" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1763" y="565" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">replayed</text>
+  </g>
+    <text x="1444" y="493" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">owns: deterministic replay and state</text>
+<text x="1444" y="518" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">digest</text>
+<text x="1444" y="543" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">forbidden: rerun models, tools, network,</text>
+<text x="1444" y="568" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="430" fill="#bdd0d4">clock, random</text>
+  </g><g filter="url(#shadow)">
+    <rect x="195" y="750" width="1530" height="150" rx="28" fill="#101316" stroke="#f2b84b" stroke-width="2.4"/>
+    <text x="960" y="804" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="780" fill="#ffe0a1">Event Journal is the source of truth</text>
+    <text x="960" y="844" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="21" fill="#d6c8a5">Critical state transitions are journaled before they count as MVP behavior</text>
+    <text x="960" y="878" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" fill="#9eb5bc">Reducers rebuild state from events; modules do not borrow responsibilities across boundaries</text>
+  </g><path d="M275,590 L275,750" fill="none" stroke="#f2b84b" stroke-width="3" stroke-dasharray="9 8" marker-end="url(#arrowAmber)" opacity="0.55"/><path d="M725,590 L725,750" fill="none" stroke="#f2b84b" stroke-width="3" stroke-dasharray="9 8" marker-end="url(#arrowAmber)" opacity="0.55"/><path d="M1175,590 L1175,750" fill="none" stroke="#f2b84b" stroke-width="3" stroke-dasharray="9 8" marker-end="url(#arrowAmber)" opacity="0.55"/><path d="M1625,590 L1625,750" fill="none" stroke="#f2b84b" stroke-width="3" stroke-dasharray="9 8" marker-end="url(#arrowAmber)" opacity="0.55"/>
+</svg>
