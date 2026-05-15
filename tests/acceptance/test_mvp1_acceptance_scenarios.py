@@ -166,6 +166,27 @@ def test_mvp1_acceptance_rejects_mvp2_only_behavior() -> None:
 
 
 @pytest.mark.parametrize("event_name", ["TOOL_CALL_STARTED", "TOOL_RESULT_RECEIVED"])
+def test_mvp1_acceptance_allows_mock_emitter_owned_synthetic_tool_markers(event_name: str) -> None:
+    fixture = load_json_fixture(MVP1_REPLAY_FIXTURE_DIR / "008-stale-result-no-adoption.fixture.json")
+    events = deepcopy(fixture["events"])
+    tool_event = next(event for event in events if event["event_name"] == event_name)
+    tool_event["source_module"] = "mock_tool_event_emitter"
+
+    assert_fixture_has_no_forbidden_mvp1_scope(events)
+
+
+@pytest.mark.parametrize("event_name", ["TOOL_CALL_STARTED", "TOOL_RESULT_RECEIVED"])
+def test_mvp1_acceptance_rejects_tool_executor_owned_tool_markers(event_name: str) -> None:
+    fixture = load_json_fixture(MVP1_REPLAY_FIXTURE_DIR / "008-stale-result-no-adoption.fixture.json")
+    events = deepcopy(fixture["events"])
+    tool_event = next(event for event in events if event["event_name"] == event_name)
+    tool_event["source_module"] = "tool_executor"
+
+    with pytest.raises(MVP1AcceptanceError, match="forbidden MVP-2 source_module"):
+        assert_fixture_has_no_forbidden_mvp1_scope(events)
+
+
+@pytest.mark.parametrize("event_name", ["TOOL_CALL_STARTED", "TOOL_RESULT_RECEIVED"])
 def test_mvp1_acceptance_rejects_slowtask_owned_tool_markers(event_name: str) -> None:
     fixture = load_json_fixture(MVP1_REPLAY_FIXTURE_DIR / "008-stale-result-no-adoption.fixture.json")
     events = deepcopy(fixture["events"])
@@ -173,6 +194,15 @@ def test_mvp1_acceptance_rejects_slowtask_owned_tool_markers(event_name: str) ->
     tool_event["source_module"] = "slowtask_runtime"
 
     with pytest.raises(MVP1AcceptanceError, match="Tool Executor"):
+        assert_fixture_has_no_forbidden_mvp1_scope(events)
+
+
+def test_mvp1_acceptance_rejects_tool_executor_owned_baseline_event() -> None:
+    fixture = load_json_fixture(MVP1_REPLAY_FIXTURE_DIR / "004-spawn-planning-completed.fixture.json")
+    events = deepcopy(fixture["events"])
+    events[0]["source_module"] = "tool_executor"
+
+    with pytest.raises(MVP1AcceptanceError, match="forbidden MVP-2 source_module"):
         assert_fixture_has_no_forbidden_mvp1_scope(events)
 
 
@@ -272,6 +302,129 @@ def test_mvp1_acceptance_rejects_cancel_requested_before_confirmation_acceptance
     fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(MVP1AcceptanceError, match="confirmation"):
+        run_mvp1_acceptance_manifest(
+            manifest,
+            fixture_dir=tmp_path,
+        )
+
+
+def test_mvp1_acceptance_rejects_router_owned_slowtask_confirmation(tmp_path: Path) -> None:
+    manifest = load_json_fixture(MANIFEST_INDEX)
+    _copy_mvp1_fixtures(tmp_path)
+    fixture_path = tmp_path / "009-cancel-confirmation.fixture.json"
+    fixture = load_json_fixture(fixture_path)
+    confirmation = _event_by_id(fixture["events"], "evt_mvp1_slice9_cancel_confirmation_required")
+    confirmation["source_module"] = "router"
+    fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(MVP1AcceptanceError, match="source_module"):
+        run_mvp1_acceptance_manifest(
+            manifest,
+            fixture_dir=tmp_path,
+        )
+
+
+def test_mvp1_acceptance_rejects_foreground_chat_slowtask_mutation(tmp_path: Path) -> None:
+    manifest = load_json_fixture(MANIFEST_INDEX)
+    _copy_mvp1_fixtures(tmp_path)
+    fixture_path = tmp_path / "002-task-focus-router.fixture.json"
+    fixture = load_json_fixture(fixture_path)
+    _insert_event_and_shift_following(
+        fixture["events"],
+        after_event_id="evt_mvp1_slice2_turn_chat_committed",
+        new_event={
+            "event_name": "SLOWTASK_STATE_CHANGED",
+            "event_id": "evt_mvp1_slice2_invalid_foreground_state_change",
+            "event_schema_version": "1.0",
+            "session_id": "sess_mvp1_slice2_task_focus",
+            "conversation_id": "conv_mvp1_slice2_task_focus",
+            "source_module": "slowtask_runtime",
+            "created_monotonic_ms": 166,
+            "created_wall_clock_ms": 1700000000166,
+            "caused_by_event_id": "evt_mvp1_slice2_turn_chat_committed",
+            "trace_redaction_level": "metadata_only",
+            "task_id": "task_mvp1_slice2_focus_001",
+            "plan_version": 1,
+            "task_event_seq": 5,
+            "from_state": "PLANNING",
+            "to_state": "PLANNING",
+            "reason": "invalid_foreground_mutation",
+        },
+    )
+    fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(MVP1AcceptanceError, match="foreground chat"):
+        run_mvp1_acceptance_manifest(
+            manifest,
+            fixture_dir=tmp_path,
+        )
+
+
+def test_mvp1_acceptance_rejects_foreground_chat_slowtask_reasoning(tmp_path: Path) -> None:
+    manifest = load_json_fixture(MANIFEST_INDEX)
+    _copy_mvp1_fixtures(tmp_path)
+    fixture_path = tmp_path / "002-task-focus-router.fixture.json"
+    fixture = load_json_fixture(fixture_path)
+    _insert_event_and_shift_following(
+        fixture["events"],
+        after_event_id="evt_mvp1_slice2_focus_chat",
+        new_event={
+            "event_name": "EVIDENCE_REVIEWED",
+            "event_id": "evt_mvp1_slice2_invalid_foreground_evidence_reviewed",
+            "event_schema_version": "1.0",
+            "session_id": "sess_mvp1_slice2_task_focus",
+            "conversation_id": "conv_mvp1_slice2_task_focus",
+            "source_module": "slowtask_runtime",
+            "created_monotonic_ms": 166,
+            "created_wall_clock_ms": 1700000000166,
+            "caused_by_event_id": "evt_mvp1_slice2_focus_chat",
+            "trace_redaction_level": "metadata_only",
+            "task_id": "task_mvp1_slice2_focus_001",
+            "plan_version": 1,
+            "task_event_seq": 5,
+            "evidence_refs": ["evidence://synthetic/mvp1/slice2/invalid-foreground-review"],
+            "review_result": "invalid_foreground_reasoning",
+        },
+    )
+    fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(MVP1AcceptanceError, match="foreground chat"):
+        run_mvp1_acceptance_manifest(
+            manifest,
+            fixture_dir=tmp_path,
+        )
+
+
+def test_mvp1_acceptance_rejects_ambiguous_input_slowtask_mutation(tmp_path: Path) -> None:
+    manifest = load_json_fixture(MANIFEST_INDEX)
+    _copy_mvp1_fixtures(tmp_path)
+    fixture_path = tmp_path / "002-task-focus-router.fixture.json"
+    fixture = load_json_fixture(fixture_path)
+    max_event_seq = max(int(event["event_seq"]) for event in fixture["events"])
+    fixture["events"].append(
+        {
+            "event_name": "SLOWTASK_STATE_CHANGED",
+            "event_id": "evt_mvp1_slice2_invalid_ambiguous_state_change",
+            "event_seq": max_event_seq + 1,
+            "event_schema_version": "1.0",
+            "session_id": "sess_mvp1_slice2_task_focus",
+            "conversation_id": "conv_mvp1_slice2_task_focus",
+            "source_module": "slowtask_runtime",
+            "created_monotonic_ms": 246,
+            "created_wall_clock_ms": 1700000000246,
+            "caused_by_event_id": "evt_mvp1_slice2_focus_ambiguous",
+            "trace_redaction_level": "metadata_only",
+            "task_id": "task_mvp1_slice2_focus_001",
+            "plan_version": 1,
+            "task_event_seq": 5,
+            "from_state": "PLANNING",
+            "to_state": "PLANNING",
+            "reason": "invalid_ambiguous_mutation",
+        }
+    )
+    fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(MVP1AcceptanceError, match="ambiguous input"):
         run_mvp1_acceptance_manifest(
             manifest,
             fixture_dir=tmp_path,
@@ -383,6 +536,41 @@ def test_mvp1_acceptance_rejects_switch_task_respawn_without_focus_cleanup(tmp_p
         )
 
 
+def test_mvp1_acceptance_rejects_rejected_switch_task_argument_mutation(tmp_path: Path) -> None:
+    manifest = load_json_fixture(MANIFEST_INDEX)
+    _copy_mvp1_fixtures(tmp_path)
+    rejected_fixture_path = tmp_path / "009-switch-task-confirmation-rejected.fixture.json"
+    fixture = load_json_fixture(rejected_fixture_path)
+    max_event_seq = max(int(event["event_seq"]) for event in fixture["events"])
+    fixture["events"].append(
+        {
+            "event_name": "ARGUMENTS_RESOLVED",
+            "event_id": "evt_mvp1_slice9_switch_rejected_invalid_arguments",
+            "event_seq": max_event_seq + 1,
+            "event_schema_version": "1.0",
+            "session_id": "sess_mvp1_slice9_switch_rejected",
+            "conversation_id": "conv_mvp1_slice9_switch_rejected",
+            "source_module": "slowtask_runtime",
+            "created_monotonic_ms": 66,
+            "created_wall_clock_ms": 1700000009266,
+            "caused_by_event_id": "evt_mvp1_slice9_switch_rejected_state_planning",
+            "trace_redaction_level": "metadata_only",
+            "task_id": "task_mvp1_slice9_switch_rejected",
+            "plan_version": 1,
+            "task_event_seq": 15,
+            "resolved_arguments_ref": "args://synthetic/mvp1/slice9/switch-rejected-invalid",
+            "provenance_ref": "provenance://synthetic/mvp1/slice9/switch-rejected-invalid",
+        }
+    )
+    rejected_fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(MVP1AcceptanceError, match="rejected switch"):
+        run_mvp1_acceptance_manifest(
+            manifest,
+            fixture_dir=tmp_path,
+        )
+
+
 def _copy_mvp1_fixtures(target_dir: Path) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
     for fixture_path in MVP1_REPLAY_FIXTURE_DIR.glob("*.fixture.json"):
@@ -395,6 +583,20 @@ def _copy_mvp1_fixtures(target_dir: Path) -> None:
 
 def _event_by_id(events: list[dict[str, object]], event_id: str) -> dict[str, object]:
     return next(event for event in events if event["event_id"] == event_id)
+
+
+def _insert_event_and_shift_following(
+    events: list[dict[str, object]],
+    *,
+    after_event_id: str,
+    new_event: dict[str, object],
+) -> None:
+    insert_index = next(index + 1 for index, event in enumerate(events) if event["event_id"] == after_event_id)
+    inserted_event_seq = int(events[insert_index - 1]["event_seq"]) + 1
+    for event in events[insert_index:]:
+        event["event_seq"] = int(event["event_seq"]) + 1
+    new_event["event_seq"] = inserted_event_seq
+    events.insert(insert_index, new_event)
 
 
 def _remove_switch_task_confirmation_gate(events: list[dict[str, object]]) -> list[dict[str, object]]:
