@@ -75,6 +75,8 @@ ALLOWED_MANIFEST_SAFETY_FLAGS = {
     "contains_large_raw_web_content",
 }
 ALLOWED_SAFE_SECRET_METADATA_KEYS = {
+    "authorization_basis",
+    "authorization_event_id",
     "secret_kind",
 }
 ALLOWED_SAFE_REF_KEYS = {
@@ -101,7 +103,16 @@ MVP2_ONLY_EVENT_NAMES = frozenset(
         "TOOL_PROGRESS_UPDATED",
         "TOOL_UI_STATE_PATCHED",
         "TOOL_MANIFEST_LOADED",
+        "TOOL_ARGUMENTS_PARTIAL",
+        "TOOL_ARGUMENTS_READY",
+        "TOOL_PREVIEW_AVAILABLE",
         "TOOL_EXECUTION_AUTHORIZED",
+        "WAITING_FOR_TOOL",
+        "TOOL_EXECUTION_FAILED",
+        "TOOL_CALL_RETRYING",
+        "TOOL_EXECUTION_CANCEL_REQUESTED",
+        "TOOL_EXECUTION_CANCELLED",
+        "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
         "SPOKEN_PLAN_EMITTED",
         "COMMITMENT_COVERAGE_CHECK_PASSED",
         "COMMITMENT_COVERAGE_CHECK_FAILED",
@@ -451,6 +462,14 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
         {
             "fixture": "000-empty-mvp2-session.fixture.json",
             "purpose": "empty MVP-2 replay safety skeleton",
+        },
+        {
+            "fixture": "001-tool-execution-state.fixture.json",
+            "purpose": (
+                "ToolExecutionState deterministic reducer replay for manifest metadata, argument readiness, "
+                "blocked execution, authorization, progress, UI patch refs, result refs, failure, retry, "
+                "and cancellation metadata"
+            ),
         }
     ]
     assert manifest_index["fixture_safety_flags"] == {

@@ -82,6 +82,10 @@
     {
       "fixture": "000-empty-mvp2-session.fixture.json",
       "purpose": "empty MVP-2 replay safety skeleton"
+    },
+    {
+      "fixture": "001-tool-execution-state.fixture.json",
+      "purpose": "ToolExecutionState deterministic reducer replay for manifest metadata, argument readiness, blocked execution, authorization, progress, UI patch refs, result refs, failure, retry, and cancellation metadata"
     }
   ],
   "planned_fixture_checks": [

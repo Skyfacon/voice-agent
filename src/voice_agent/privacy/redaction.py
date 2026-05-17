@@ -18,7 +18,7 @@ SECRET_FIELD_PATTERN = re.compile(
     r"(^|[_-])(api[_-]?key|authorization|credential|cookie|password|secret|session[_-]?secret|token)([_-]|$)",
     re.IGNORECASE,
 )
-ALLOWED_SECRET_METADATA_FIELDS = {"secret_kind"}
+ALLOWED_SECRET_METADATA_FIELDS = {"authorization_basis", "authorization_event_id", "secret_kind"}
 BLOCKED_RAW_FIELD_PATTERN = re.compile(
     r"(^|[_-])(raw[_-]?audio|raw[_-]?trace|raw[_-]?transcript|raw[_-]?user[_-]?text|raw[_-]?text|user[_-]?text|user[_-]?utterance|unredacted[_-]?user)([_-]|$)",
     re.IGNORECASE,
