@@ -197,8 +197,20 @@ NON_CANONICAL_EVENT_NAMES = (
     "SPOKEN_PLAN_CREATED",
 )
 MVP2_ONLY_EVENT_NAMES = (
+    "TOOL_MANIFEST_LOADED",
+    "TOOL_ARGUMENTS_PARTIAL",
+    "TOOL_ARGUMENTS_READY",
+    "TOOL_PREVIEW_AVAILABLE",
+    "TOOL_EXECUTION_AUTHORIZED",
     "TOOL_EXECUTION_STARTED",
+    "WAITING_FOR_TOOL",
+    "TOOL_PROGRESS_UPDATED",
     "TOOL_UI_STATE_PATCHED",
+    "TOOL_EXECUTION_FAILED",
+    "TOOL_CALL_RETRYING",
+    "TOOL_EXECUTION_CANCEL_REQUESTED",
+    "TOOL_EXECUTION_CANCELLED",
+    "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
     "SPOKEN_PLAN_EMITTED",
     "COMMITMENT_COVERAGE_CHECK_PASSED",
     "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
@@ -373,5 +385,4 @@ def test_non_canonical_relationship_labels_are_rejected_as_journal_event_names(e
 
 @pytest.mark.parametrize("event_name", MVP2_ONLY_EVENT_NAMES)
 def test_mvp2_only_events_are_not_required_or_accepted_by_mvp1_registry(event_name: str) -> None:
-    with pytest.raises(EventValidationError, match="Unknown event_name"):
-        validate_event_envelope(mvp1_event(event_name))
+    assert event_name not in MVP1_EVENT_NAMES

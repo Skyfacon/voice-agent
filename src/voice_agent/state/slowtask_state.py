@@ -26,6 +26,7 @@ SLOWTASK_EVENT_NAMES = frozenset(
         "PLANNING_STARTED",
         "PLANNING_RESTARTED",
         "WAITING_FOR_SLOT",
+        "WAITING_FOR_TOOL",
         "WAITING_FOR_USER_CONFIRMATION",
         "FINALIZING",
         "SLOWTASK_DEGRADED",
@@ -37,6 +38,7 @@ SLOWTASK_EVENT_NAMES = frozenset(
         "SLOWTASK_CANCEL_REQUESTED",
         "SLOWTASK_CANCELLED",
         "TOOL_CALL_STARTED",
+        "TOOL_EXECUTION_STARTED",
         "TOOL_RESULT_RECEIVED",
         "TOOL_RESULT_MARKED_STALE",
         "STALE_EVIDENCE_RECORDED",
@@ -177,10 +179,11 @@ class RefEvent:
 @dataclass(frozen=True)
 class ToolCallMetadata:
     event_id: str
+    source_event_name: str
     tool_call_id: str
     plan_version: int
     task_event_seq: int
-    tool_name: str
+    tool_name: str | None
     idempotency_key: str
 
 
@@ -342,6 +345,7 @@ class SlowTaskState:
             "PLANNING_STARTED",
             "PLANNING_RESTARTED",
             "WAITING_FOR_SLOT",
+            "WAITING_FOR_TOOL",
             "WAITING_FOR_USER_CONFIRMATION",
             "FINALIZING",
         }:
@@ -371,6 +375,8 @@ class SlowTaskState:
             self._handle_cancel_event(event, task)
         elif event_name == "TOOL_CALL_STARTED":
             self._handle_tool_call_started(event, task)
+        elif event_name == "TOOL_EXECUTION_STARTED":
+            self._handle_tool_execution_started(event, task)
         elif event_name == "TOOL_RESULT_RECEIVED":
             self._handle_tool_result_received(event, task)
         elif event_name == "TOOL_RESULT_MARKED_STALE":
@@ -590,6 +596,15 @@ class SlowTaskState:
             refs = _optional_ref_tuple(event.get("superseded_plan_version"))
         elif event_name == "WAITING_FOR_SLOT":
             refs = _string_tuple(event.get("missing_fields", ()))
+        elif event_name == "WAITING_FOR_TOOL":
+            tool_call_id = str(event["tool_call_id"])
+            if not _has_matching_tool_execution_start(
+                task,
+                tool_call_id=tool_call_id,
+                plan_version=_int_field(event, "plan_version"),
+            ):
+                raise SlowTaskStateError("WAITING_FOR_TOOL requires prior matching TOOL_EXECUTION_STARTED")
+            refs = (tool_call_id,)
         elif event_name == "WAITING_FOR_USER_CONFIRMATION":
             confirmation_id = str(event["confirmation_id"])
             if task.confirmation_state.pending_confirmation_id != confirmation_id:
@@ -764,6 +779,7 @@ class SlowTaskState:
             *task.tool_calls,
             ToolCallMetadata(
                 event_id=str(event["event_id"]),
+                source_event_name=str(event["event_name"]),
                 tool_call_id=str(event["tool_call_id"]),
                 plan_version=_int_field(event, "plan_version"),
                 task_event_seq=_int_field(event, "task_event_seq"),
@@ -773,6 +789,25 @@ class SlowTaskState:
         )
         self._advance_task_event_seq(task, event)
 
+    def _handle_tool_execution_started(self, event: Mapping[str, Any], task: SlowTaskRecord) -> None:
+        self._require_current_plan(event, task)
+        tool_call_id = str(event["tool_call_id"])
+        plan_version = _int_field(event, "plan_version")
+        if not _has_matching_tool_execution_start(task, tool_call_id=tool_call_id, plan_version=plan_version):
+            task.tool_calls = (
+                *task.tool_calls,
+                ToolCallMetadata(
+                    event_id=str(event["event_id"]),
+                    source_event_name=str(event["event_name"]),
+                    tool_call_id=tool_call_id,
+                    plan_version=plan_version,
+                    task_event_seq=_int_field(event, "task_event_seq"),
+                    tool_name=_optional_str(event.get("tool_name")),
+                    idempotency_key=str(event["idempotency_key"]),
+                ),
+            )
+        self._advance_task_event_seq(task, event)
+
     def _handle_tool_result_received(self, event: Mapping[str, Any], task: SlowTaskRecord) -> None:
         event_plan_version = _int_field(event, "plan_version")
         if event_plan_version > task.current_plan_version:
@@ -780,7 +815,7 @@ class SlowTaskState:
         tool_call_id = str(event["tool_call_id"])
         if not _has_matching_tool_call(task, tool_call_id=tool_call_id, plan_version=event_plan_version):
             raise SlowTaskStateError(
-                "TOOL_RESULT_RECEIVED requires prior matching TOOL_CALL_STARTED"
+                "TOOL_RESULT_RECEIVED requires prior matching TOOL_CALL_STARTED or TOOL_EXECUTION_STARTED"
             )
         task.tool_results = (
             *task.tool_results,
@@ -1036,6 +1071,20 @@ def _is_material_user_patch_planning_reason(planning_reason: str) -> bool:
 def _has_matching_tool_call(task: SlowTaskRecord, *, tool_call_id: str, plan_version: int) -> bool:
     return any(
         tool_call.tool_call_id == tool_call_id
+        and tool_call.plan_version == plan_version
+        for tool_call in task.tool_calls
+    )
+
+
+def _has_matching_tool_execution_start(
+    task: SlowTaskRecord,
+    *,
+    tool_call_id: str,
+    plan_version: int,
+) -> bool:
+    return any(
+        tool_call.source_event_name == "TOOL_EXECUTION_STARTED"
+        and tool_call.tool_call_id == tool_call_id
         and tool_call.plan_version == plan_version
         for tool_call in task.tool_calls
     )

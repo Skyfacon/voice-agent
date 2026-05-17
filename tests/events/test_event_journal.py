@@ -234,6 +234,51 @@ def test_journal_preserves_safe_authorization_ref_without_redaction_audit() -> N
     ]
 
 
+def test_journal_preserves_safe_tool_authorization_metadata_without_redaction_audit() -> None:
+    journal = make_journal()
+    root_event = append_session_started(journal)
+
+    authorized = journal.append(
+        event_name="TOOL_EXECUTION_AUTHORIZED",
+        event_id="evt_mvp2_tool_execution_authorized_001",
+        source_module="tool_executor",
+        caused_by_event_id=str(root_event["event_id"]),
+        created_monotonic_ms=40,
+        created_wall_clock_ms=1700000000040,
+        trace_redaction_level="metadata_only",
+        tool_call_id="tool_call_mvp2_synthetic_001",
+        task_id="task_mvp2_synthetic_001",
+        plan_version=1,
+        task_event_seq=5,
+        authorization_basis="current_plan_policy_allow",
+    )
+    started = journal.append(
+        event_name="TOOL_EXECUTION_STARTED",
+        event_id="evt_mvp2_tool_execution_started_001",
+        source_module="tool_executor",
+        caused_by_event_id=str(authorized["event_id"]),
+        created_monotonic_ms=41,
+        created_wall_clock_ms=1700000000041,
+        trace_redaction_level="metadata_only",
+        tool_call_id="tool_call_mvp2_synthetic_001",
+        task_id="task_mvp2_synthetic_001",
+        plan_version=1,
+        task_event_seq=6,
+        idempotency_key="idem://synthetic/mvp2/tool-execution",
+        authorization_event_id=str(authorized["event_id"]),
+    )
+
+    assert authorized["authorization_basis"] == "current_plan_policy_allow"
+    assert started["authorization_event_id"] == "evt_mvp2_tool_execution_authorized_001"
+    assert "redaction_metadata" not in authorized
+    assert "redaction_metadata" not in started
+    assert [event["event_name"] for event in journal.events()] == [
+        "SESSION_STARTED",
+        "TOOL_EXECUTION_AUTHORIZED",
+        "TOOL_EXECUTION_STARTED",
+    ]
+
+
 @pytest.mark.parametrize(
     "authorization_ref",
     [

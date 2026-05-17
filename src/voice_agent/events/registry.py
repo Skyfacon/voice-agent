@@ -479,9 +479,154 @@ MVP1_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
 }
 
 MVP1_EVENT_NAMES = frozenset(MVP1_EVENT_DEFINITIONS)
+MVP2_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
+    "TOOL_MANIFEST_LOADED": _definition(
+        "TOOL_MANIFEST_LOADED",
+        required_fields=("tool_name", "tool_adapter_id", "tool_manifest_version", "side_effect_class"),
+    ),
+    "TOOL_ARGUMENTS_PARTIAL": _definition(
+        "TOOL_ARGUMENTS_PARTIAL",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "partial_arguments_ref",
+            "missing_fields",
+        ),
+    ),
+    "TOOL_ARGUMENTS_READY": _definition(
+        "TOOL_ARGUMENTS_READY",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "resolved_arguments_ref",
+            "provenance_ref",
+        ),
+    ),
+    "TOOL_PREVIEW_AVAILABLE": _definition(
+        "TOOL_PREVIEW_AVAILABLE",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "preview_ref",
+            "requires_confirmation",
+        ),
+    ),
+    "TOOL_EXECUTION_AUTHORIZED": _definition(
+        "TOOL_EXECUTION_AUTHORIZED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "authorization_basis",
+        ),
+    ),
+    "TOOL_EXECUTION_STARTED": _definition(
+        "TOOL_EXECUTION_STARTED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "idempotency_key",
+        ),
+    ),
+    "WAITING_FOR_TOOL": _definition(
+        "WAITING_FOR_TOOL",
+        required_fields=("task_id", "plan_version", "task_event_seq", "tool_call_id"),
+    ),
+    "TOOL_PROGRESS_UPDATED": _definition(
+        "TOOL_PROGRESS_UPDATED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "progress_type",
+            "progress_ref",
+        ),
+    ),
+    "TOOL_UI_STATE_PATCHED": _definition(
+        "TOOL_UI_STATE_PATCHED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "ui_patch_id",
+            "idempotency_key",
+            "patch_ref",
+        ),
+    ),
+    "TOOL_EXECUTION_FAILED": _definition(
+        "TOOL_EXECUTION_FAILED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "failure_reason",
+            "retryable",
+        ),
+    ),
+    "TOOL_CALL_RETRYING": _definition(
+        "TOOL_CALL_RETRYING",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "retry_count",
+            "retry_reason",
+        ),
+    ),
+    "TOOL_EXECUTION_CANCEL_REQUESTED": _definition(
+        "TOOL_EXECUTION_CANCEL_REQUESTED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "cancel_reason",
+        ),
+    ),
+    "TOOL_EXECUTION_CANCELLED": _definition(
+        "TOOL_EXECUTION_CANCELLED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "cancel_request_event_id",
+            "cancel_status",
+        ),
+    ),
+    "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS": _definition(
+        "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "blocking_fields",
+            "source_event_id",
+        ),
+    ),
+}
+MVP2_EVENT_NAMES = frozenset(MVP2_EVENT_DEFINITIONS) | {
+    "TOOL_CALL_STARTED",
+    "TOOL_RESULT_RECEIVED",
+}
 EVENT_DEFINITIONS: dict[str, EventDefinition] = {
     **MVP0_EVENT_DEFINITIONS,
     **MVP1_EVENT_DEFINITIONS,
+    **MVP2_EVENT_DEFINITIONS,
 }
 
 

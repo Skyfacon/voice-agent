@@ -277,6 +277,69 @@ def test_user_patch_interpreted_requires_prior_user_patch_evidence() -> None:
     )
 
 
+def test_tool_result_can_follow_progressive_execution_start_without_call_marker() -> None:
+    state = create_planning_state()
+
+    state.reduce_event(
+        slowtask_event(
+            "TOOL_EXECUTION_STARTED",
+            event_id="evt_slice3_progressive_tool_execution_started",
+            task_event_seq=3,
+            tool_call_id="tool_call_slice3_progressive",
+            idempotency_key="idem://synthetic/mvp2/progressive-tool",
+        )
+    )
+    state.reduce_event(
+        slowtask_event(
+            "WAITING_FOR_TOOL",
+            event_id="evt_slice3_progressive_waiting_for_tool",
+            task_event_seq=4,
+            tool_call_id="tool_call_slice3_progressive",
+        )
+    )
+    state.reduce_event(
+        slowtask_event(
+            "TOOL_RESULT_RECEIVED",
+            event_id="evt_slice3_progressive_tool_result_received",
+            task_event_seq=5,
+            tool_call_id="tool_call_slice3_progressive",
+            result_status="SUCCEEDED",
+            result_ref="result://synthetic/mvp2/progressive-tool",
+        )
+    )
+
+    task = state.tasks["task_slice3_001"]
+    assert task.tool_calls[-1].event_id == "evt_slice3_progressive_tool_execution_started"
+    assert task.tool_results[-1].event_id == "evt_slice3_progressive_tool_result_received"
+    assert task.progress_events[-1].event_name == "WAITING_FOR_TOOL"
+    assert task.progress_events[-1].refs == ("tool_call_slice3_progressive",)
+
+
+def test_waiting_for_tool_requires_prior_progressive_execution_start() -> None:
+    state = create_planning_state()
+
+    state.reduce_event(
+        slowtask_event(
+            "TOOL_CALL_STARTED",
+            event_id="evt_slice3_tool_call_started_marker",
+            task_event_seq=3,
+            tool_call_id="tool_call_slice3_marker_only",
+            tool_name="mock.synthetic.lookup",
+            idempotency_key="idem://synthetic/mvp1/marker-only",
+        )
+    )
+
+    with pytest.raises(SlowTaskStateError, match="TOOL_EXECUTION_STARTED"):
+        state.reduce_event(
+            slowtask_event(
+                "WAITING_FOR_TOOL",
+                event_id="evt_slice3_illegal_waiting_for_marker_only_tool",
+                task_event_seq=4,
+                tool_call_id="tool_call_slice3_marker_only",
+            )
+        )
+
+
 def test_confirmation_acceptance_requires_matching_pending_confirmation_and_user_signal() -> None:
     state = create_planning_state()
 

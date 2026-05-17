@@ -46,6 +46,25 @@ def test_state_digest_excludes_raw_sensitive_and_tool_credential_payloads() -> N
     assert "tool_credentials" not in canonical
 
 
+def test_state_digest_preserves_safe_authorization_metadata() -> None:
+    policy_authorized = {
+        "authorization_basis": "current_plan_policy_allow",
+        "authorization_event_id": "evt_tool_execution_authorized_policy",
+        "authorization_header": "Bearer secret-one",
+    }
+    confirmation_authorized = {
+        "authorization_basis": "current_plan_confirmation_acceptance",
+        "authorization_event_id": "evt_tool_execution_authorized_confirmation",
+        "authorization_header": "Bearer secret-two",
+    }
+
+    assert stable_hash(policy_authorized) != stable_hash(confirmation_authorized)
+    canonical = canonical_digest_payload(policy_authorized)
+    assert canonical["authorization_basis"] == "current_plan_policy_allow"
+    assert canonical["authorization_event_id"] == "evt_tool_execution_authorized_policy"
+    assert "authorization_header" not in canonical
+
+
 def test_state_digest_shape_includes_required_component_hashes_without_raw_payloads() -> None:
     digest = state_digest(
         source_session_id="sess_mvp0_synthetic",
@@ -65,6 +84,7 @@ def test_state_digest_shape_includes_required_component_hashes_without_raw_paylo
         "interaction_state_hash",
         "task_focus_state_hash",
         "slowtask_state_hash",
+        "tool_execution_state_hash",
         "playback_state_hash",
         "adapter_health_state_hash",
         "trace_privacy_state_hash",
