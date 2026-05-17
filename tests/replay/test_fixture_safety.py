@@ -5,7 +5,13 @@ from typing import Any
 
 import pytest
 
-from conftest import MVP0_REPLAY_FIXTURE_DIR, MVP1_REPLAY_FIXTURE_DIR, REPO_ROOT, load_json_fixture
+from conftest import (
+    MVP0_REPLAY_FIXTURE_DIR,
+    MVP1_REPLAY_FIXTURE_DIR,
+    MVP2_REPLAY_FIXTURE_DIR,
+    REPO_ROOT,
+    load_json_fixture,
+)
 from voice_agent.events.registry import MVP1_EVENT_NAMES
 from voice_agent.privacy.redaction import SECRET_VALUE_PATTERN, is_safe_authorization_ref
 from voice_agent.replay.runner import run_replay_fixture
@@ -14,6 +20,8 @@ from voice_agent.replay.runner import run_replay_fixture
 GITHUB_ALLOWED_FIXTURE = MVP0_REPLAY_FIXTURE_DIR / "000-empty-session.fixture.json"
 MVP1_EMPTY_FIXTURE = MVP1_REPLAY_FIXTURE_DIR / "000-empty-mvp1-session.fixture.json"
 MVP1_MANIFEST_INDEX = MVP1_REPLAY_FIXTURE_DIR / "manifest.index.json"
+MVP2_EMPTY_FIXTURE = MVP2_REPLAY_FIXTURE_DIR / "000-empty-mvp2-session.fixture.json"
+MVP2_MANIFEST_INDEX = MVP2_REPLAY_FIXTURE_DIR / "manifest.index.json"
 
 REQUIRED_GITIGNORE_LINES = {
     "diagnostics/",
@@ -292,6 +300,40 @@ def test_empty_mvp1_fixture_replays_with_empty_task_and_slowtask_digest_fields()
     ]
 
 
+def test_empty_mvp2_fixture_lives_in_github_allowed_fixture_dir() -> None:
+    assert MVP2_EMPTY_FIXTURE.parent == MVP2_REPLAY_FIXTURE_DIR
+    assert "replays/local" not in MVP2_EMPTY_FIXTURE.as_posix()
+    assert MVP2_EMPTY_FIXTURE.is_file()
+
+
+def test_empty_mvp2_fixture_is_synthetic_minimal_and_github_safe() -> None:
+    fixture = load_json_fixture(MVP2_EMPTY_FIXTURE)
+
+    assert_fixture_is_github_safe(fixture)
+    assert fixture["replay_manifest"]["replay_id"] == "replay_mvp2_empty_session_000"
+    assert fixture["replay_manifest"]["source_trace_ref"] == "fixture://mvp2/000-empty-mvp2-session"
+    assert fixture["replay_manifest"]["replay_mode"] == "deterministic"
+    assert fixture["replay_manifest"]["fixture_domain"] == "GITHUB_ALLOWED"
+    assert fixture["replay_manifest"]["generated_from"] == "hand_written_minimal"
+    assert fixture["events"] == []
+
+
+def test_empty_mvp2_fixture_replays_deterministically_without_runtime_execution() -> None:
+    result = run_replay_fixture(load_json_fixture(MVP2_EMPTY_FIXTURE))
+
+    assert result.replay_mode == "deterministic"
+    assert result.fixture_domain == "GITHUB_ALLOWED"
+    assert result.ordered_events == ()
+    assert result.diagnostics["ignored_events"] == []
+    assert result.diagnostics["data_plane_refs"] == []
+    assert result.state_digest["source_session_id"] is None
+    assert result.state_digest["last_event_seq"] == 0
+    assert [event["event_name"] for event in result.replay_events] == [
+        "REPLAY_STARTED",
+        "REPLAY_COMPLETED",
+    ]
+
+
 def test_mvp1_manifest_index_is_acceptance_closeout_and_repo_safe() -> None:
     manifest_index = load_json_fixture(MVP1_MANIFEST_INDEX)
 
@@ -376,6 +418,104 @@ def test_mvp1_manifest_index_is_acceptance_closeout_and_repo_safe() -> None:
     ]
 
 
+def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
+    manifest_index = load_json_fixture(MVP2_MANIFEST_INDEX)
+
+    assert manifest_index["manifest_index_schema_version"] == "1.0"
+    assert manifest_index["suite_id"] == "MVP2-ACCEPTANCE"
+    assert manifest_index["fixture_domain"] == "GITHUB_ALLOWED"
+    assert manifest_index["replay_mode"] == "deterministic"
+    assert manifest_index["generated_fixtures_must_be"] == [
+        "synthetic",
+        "redacted",
+        "minimal",
+    ]
+    assert manifest_index["required_scenarios"] == [
+        "MVP2-TOOL-MANIFEST-001",
+        "MVP2-TOOL-ARGS-PARTIAL-001",
+        "MVP2-TOOL-BLOCKED-INSUFFICIENT-ARGS-001",
+        "MVP2-MEMO-SANDBOX-WRITE-001",
+        "MVP2-ALARM-SANDBOX-SCHEDULE-001",
+        "MVP2-FLASHLIGHT-DEMO-DEVICE-ACTION-001",
+        "MVP2-WEATHER-READ-ONLY-001",
+        "MVP2-WEBSEARCH-UNTRUSTED-EVIDENCE-001",
+        "MVP2-UI-STATE-PATCHED-001",
+        "MVP2-DEMO-DESTRUCTIVE-CONFIRMATION-001",
+        "MVP2-STALE-TOOL-RESULT-PROGRESSIVE-001",
+        "MVP2-COMPOSER-SPOKEN-PLAN-001",
+        "MVP2-COMMITMENT-COVERAGE-001",
+        "MVP2-PROGRESS-TRUTHFULNESS-001",
+        "MVP2-ACCEPTANCE-SCOPE-SAFETY-001",
+    ]
+    assert manifest_index["fixture_checks"] == [
+        {
+            "fixture": "000-empty-mvp2-session.fixture.json",
+            "purpose": "empty MVP-2 replay safety skeleton",
+        }
+    ]
+    assert manifest_index["fixture_safety_flags"] == {
+        "contains_raw_audio": False,
+        "contains_raw_trace": False,
+        "contains_real_user_input": False,
+        "contains_secrets": False,
+        "contains_unredacted_tool_result": False,
+        "contains_large_raw_web_content": False,
+    }
+
+
+def test_mvp2_manifest_scope_forbids_runtime_side_effects_and_unsafe_sources() -> None:
+    manifest_index = load_json_fixture(MVP2_MANIFEST_INDEX)
+
+    assert {
+        "real_external_write",
+        "real_external_communication",
+        "booking_or_payment",
+        "real_deletion",
+        "real_device_control",
+        "account_or_identity_mutation",
+        "credential_mutation",
+        "direct_frontend_mutation_by_model_text",
+        "websearch_as_instruction",
+        "websearch_direct_backend_action",
+        "composer_fact_rewrite",
+        "tool_executor_direct_slowtask_mutation",
+        "raw_text_confirmation_shortcut",
+        "fake_tool_cancellation_success",
+        "real_model_adapter_runtime_integration",
+    } <= set(manifest_index["forbidden_behaviors"])
+    assert {
+        "direct_frontend_mutator",
+        "model_text_ui_driver",
+        "real_external_tool_adapter",
+        "external_write_adapter",
+        "external_communication_adapter",
+        "booking_or_payment_adapter",
+        "real_device_adapter",
+        "real_model_adapter",
+        "web_search_instruction_adapter",
+    } <= set(manifest_index["forbidden_source_modules"])
+    assert {
+        "deterministic_replay_does_not_rerun_models_tools_network_clock_or_random",
+        "tool_ui_state_reconstructed_from_tool_ui_state_patched_events",
+        "websearch_content_replayed_as_untrusted_evidence_only",
+        "demo_destructive_action_requires_current_plan_confirmation",
+        "composer_output_requires_coverage_or_truthfulness_check_before_playback",
+        "old_plan_tool_result_requires_stale_evidence_chain_before_current_plan_use",
+    } <= set(manifest_index["required_replay_properties"])
+
+
+def test_mvp2_manifest_websearch_scope_is_untrusted_evidence_only() -> None:
+    manifest_index = load_json_fixture(MVP2_MANIFEST_INDEX)
+
+    tools_by_name = {tool["tool_name"]: tool for tool in manifest_index["initial_tool_scope"]}
+    websearch = tools_by_name["webSearch"]
+    assert websearch["tool_category"] == "EXTERNAL_READ_UNTRUSTED"
+    assert websearch["allowed_side_effect_classes"] == ["READ_ONLY"]
+    assert websearch["result_trust_level"] == "UNTRUSTED_WEB_EVIDENCE"
+    assert websearch["first_pass_mode"] == "mock_or_synthetic_only"
+    assert websearch["ui_patch_capable"] is False
+
+
 @pytest.mark.parametrize("fixture_path", sorted(MVP0_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))
 def test_all_mvp0_replay_fixtures_are_github_safe(fixture_path) -> None:
     assert fixture_path.parent == MVP0_REPLAY_FIXTURE_DIR
@@ -387,6 +527,14 @@ def test_all_mvp0_replay_fixtures_are_github_safe(fixture_path) -> None:
 @pytest.mark.parametrize("fixture_path", sorted(MVP1_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))
 def test_all_mvp1_replay_fixtures_are_github_safe(fixture_path) -> None:
     assert fixture_path.parent == MVP1_REPLAY_FIXTURE_DIR
+    assert "replays/local" not in fixture_path.as_posix()
+
+    assert_fixture_is_github_safe(load_json_fixture(fixture_path))
+
+
+@pytest.mark.parametrize("fixture_path", sorted(MVP2_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))
+def test_all_mvp2_replay_fixtures_are_github_safe(fixture_path) -> None:
+    assert fixture_path.parent == MVP2_REPLAY_FIXTURE_DIR
     assert "replays/local" not in fixture_path.as_posix()
 
     assert_fixture_is_github_safe(load_json_fixture(fixture_path))

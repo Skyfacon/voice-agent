@@ -78,7 +78,12 @@
       "first_pass_mode": "mock_or_synthetic_only"
     }
   ],
-  "fixture_checks": [],
+  "fixture_checks": [
+    {
+      "fixture": "000-empty-mvp2-session.fixture.json",
+      "purpose": "empty MVP-2 replay safety skeleton"
+    }
+  ],
   "planned_fixture_checks": [
     {
       "fixture": "000-empty-mvp2-session.fixture.json",
