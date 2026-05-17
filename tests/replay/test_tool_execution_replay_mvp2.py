@@ -9,6 +9,7 @@ from voice_agent.replay.runner import ReplayValidationError, run_replay_fixture
 
 
 TOOL_EXECUTION_FIXTURE = MVP2_REPLAY_FIXTURE_DIR / "001-tool-execution-state.fixture.json"
+TOOL_EXECUTOR_FIXTURE = MVP2_REPLAY_FIXTURE_DIR / "002-tool-executor-skeleton.fixture.json"
 
 
 def test_mvp2_tool_execution_fixture_reconstructs_recorded_tool_state_without_runtime() -> None:
@@ -55,6 +56,51 @@ def test_mvp2_tool_execution_digest_uses_metadata_refs_not_raw_payloads() -> Non
     assert "credential" not in digest_repr.lower()
     assert "token" not in digest_repr.lower()
     assert "tool_execution_state_hash" in result.state_digest
+
+
+def test_mvp2_tool_executor_skeleton_fixture_replays_success_and_blocked_paths() -> None:
+    result = run_replay_fixture(load_json_fixture(TOOL_EXECUTOR_FIXTURE))
+
+    assert result.result_status == "passed"
+    assert result.diagnostics["ignored_events"] == []
+
+    tool_state = result.tool_execution_state
+    assert sorted(tool_state.tool_manifests) == ["weather"]
+
+    success_call = tool_state.tool_calls["tool_call_mvp2_slice2_weather"]
+    assert success_call.lifecycle_status == "RESULT_RECEIVED"
+    assert [event.event_name for event in success_call.events] == [
+        "TOOL_ARGUMENTS_READY",
+        "TOOL_PREVIEW_AVAILABLE",
+        "TOOL_EXECUTION_AUTHORIZED",
+        "TOOL_EXECUTION_STARTED",
+        "TOOL_PROGRESS_UPDATED",
+        "TOOL_RESULT_RECEIVED",
+    ]
+    assert success_call.execution_started[-1].authorization_event_id == (
+        "evt_mvp2_slice2_weather_execution_authorized"
+    )
+    assert success_call.progress_updates[-1].progress_ref == (
+        "progress://synthetic/demo_backend/weather/weather_lookup_000001/lookup"
+    )
+    assert success_call.ui_patches == ()
+    assert success_call.results[-1].result_ref == (
+        "result://synthetic/demo_backend/weather/weather_lookup_000001"
+    )
+    assert success_call.results[-1].trust_level == "EXTERNAL_READ_PROVIDER_RESULT"
+    assert success_call.results[-1].source_type == "READ_ONLY_EXTERNAL"
+
+    blocked_call = tool_state.tool_calls["tool_call_mvp2_slice2_blocked"]
+    assert blocked_call.lifecycle_status == "BLOCKED_INSUFFICIENT_ARGUMENTS"
+    assert blocked_call.partial_arguments[-1].missing_fields == ("provenance.date",)
+    assert blocked_call.blocked_events[-1].blocking_fields == ("provenance.date",)
+    assert blocked_call.execution_started == ()
+    assert blocked_call.results == ()
+
+    task = result.slowtask_state.tasks["task_mvp2_slice2"]
+    assert [tool_result.event_id for tool_result in task.tool_results] == [
+        "evt_mvp2_slice2_weather_result_received"
+    ]
 
 
 def test_waiting_for_tool_replays_as_slowtask_progress_after_execution_start() -> None:
