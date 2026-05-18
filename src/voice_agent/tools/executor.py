@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+import hashlib
+import json
 from typing import Any
 
 from voice_agent.demo_backend.in_memory import DemoBackendExecutionError, InMemoryDemoBackend
@@ -88,7 +90,6 @@ class DemoToolExecutor:
         manifest = self._registry.get(request.tool_name)
         _require_current_plan(request, self._journal.events())
         require_mvp_side_effect_class(manifest.side_effect_class)
-        _reject_unimplemented_destructive_runtime(manifest.side_effect_class)
         _require_unused_idempotency_key(request, manifest, self._journal.events())
 
         context = _EmissionContext(
@@ -215,6 +216,7 @@ class DemoToolExecutor:
             event_id=f"{context.request.event_id_prefix}_arguments_ready",
             resolved_arguments_ref=context.request.resolved_arguments_ref,
             provenance_ref=context.request.provenance_ref,
+            argument_fingerprint=_argument_fingerprint(context.request.arguments),
             tool_name=context.request.tool_name,
         )
         context.caused_by_event_id = str(event["event_id"])
@@ -226,6 +228,7 @@ class DemoToolExecutor:
             event_id=f"{context.request.event_id_prefix}_preview_available",
             preview_ref=context.request.preview_ref or f"preview://synthetic/{context.request.event_id_prefix}",
             requires_confirmation=requires_confirmation,
+            argument_fingerprint=_argument_fingerprint(context.request.arguments),
             tool_name=context.request.tool_name,
         )
         context.caused_by_event_id = str(event["event_id"])
@@ -281,17 +284,41 @@ class DemoToolExecutor:
         received = events_by_id.get(str(accepted.get("caused_by_event_id")))
         interpreted = events_by_id.get(str(received.get("caused_by_event_id"))) if received else None
         patch_received = events_by_id.get(str(interpreted.get("caused_by_event_id"))) if interpreted else None
+        requires_destructive_chain = manifest.side_effect_class == "DEMO_DESTRUCTIVE_ACTION"
+        waiting_for_confirmation = _matching_waiting_for_user_confirmation(
+            journal_events,
+            request=request,
+            required=required,
+            before_event=patch_received,
+        ) if requires_destructive_chain else None
+        if not requires_destructive_chain and patch_received is not None:
+            waiting_for_confirmation = events_by_id.get(str(patch_received.get("caused_by_event_id")))
+            if (
+                waiting_for_confirmation is not None
+                and waiting_for_confirmation.get("event_name") != "WAITING_FOR_USER_CONFIRMATION"
+            ):
+                waiting_for_confirmation = None
         if not _matches_confirmation_chain(
             required=required,
+            waiting_for_confirmation=waiting_for_confirmation,
             patch_received=patch_received,
             interpreted=interpreted,
             received=received,
             accepted=accepted,
             request=request,
             confirmation_scope=expected_scope,
+            require_waiting_for_confirmation=requires_destructive_chain,
+            events_by_id=events_by_id,
         ):
             raise ToolExecutionPolicyError(
                 f"{manifest.tool_name} requires current-plan CONFIRMATION_ACCEPTED before tool authorization"
+            )
+        if requires_destructive_chain:
+            _require_confirmation_binds_pending_tool_request(
+                required,
+                request=request,
+                manifest=manifest,
+                events_by_id=events_by_id,
             )
 
     def _append_execution_authorized(
@@ -508,13 +535,6 @@ def _require_unused_idempotency_key(
             )
 
 
-def _reject_unimplemented_destructive_runtime(side_effect_class: str) -> None:
-    if side_effect_class == "DEMO_DESTRUCTIVE_ACTION":
-        raise ToolExecutionPolicyError(
-            "DEMO_DESTRUCTIVE_ACTION confirmation runtime is not implemented in this slice"
-        )
-
-
 def _requires_current_plan_confirmation(manifest: ToolManifest) -> bool:
     return manifest.confirmation_required or manifest.side_effect_class == "DEMO_DESTRUCTIVE_ACTION"
 
@@ -583,19 +603,116 @@ def _matching_confirmation_required(
     return matching_required
 
 
+def _matching_waiting_for_user_confirmation(
+    journal_events: Sequence[Mapping[str, Any]],
+    *,
+    request: ToolExecutionRequest,
+    required: Mapping[str, Any],
+    before_event: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if before_event is None:
+        return None
+    before_event_seq = _int_value(before_event.get("event_seq"))
+    matching_waiting: Mapping[str, Any] | None = None
+    for event in journal_events:
+        if (
+            _matches_waiting_for_user_confirmation(
+                event,
+                request=request,
+                confirmation_id=required.get("confirmation_id"),
+            )
+            and event.get("caused_by_event_id") == required.get("event_id")
+            and _strict_event_seq_order(required, event)
+            and _event_seq_before(event, before_event_seq)
+        ):
+            matching_waiting = event
+    return matching_waiting
+
+
+def _require_confirmation_binds_pending_tool_request(
+    required: Mapping[str, Any],
+    *,
+    request: ToolExecutionRequest,
+    manifest: ToolManifest,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    required_for_event_id = required.get("required_for_event_id")
+    required_for_event = (
+        events_by_id.get(str(required_for_event_id))
+        if required_for_event_id not in (None, "")
+        else None
+    )
+    if (
+        required_for_event is None
+        or required_for_event.get("event_name") != "TOOL_PREVIEW_AVAILABLE"
+        or required_for_event.get("task_id") != request.task_id
+        or required_for_event.get("plan_version") != request.plan_version
+        or required_for_event.get("tool_call_id") != request.tool_call_id
+        or required_for_event.get("tool_name") != manifest.tool_name
+    ):
+        raise ToolExecutionPolicyError(
+            f"{manifest.tool_name} confirmation must bind the pending tool request"
+        )
+    preview_arguments = events_by_id.get(str(required_for_event.get("caused_by_event_id")))
+    if (
+        preview_arguments is None
+        or preview_arguments.get("event_name") != "TOOL_ARGUMENTS_READY"
+        or preview_arguments.get("task_id") != request.task_id
+        or preview_arguments.get("plan_version") != request.plan_version
+        or preview_arguments.get("tool_call_id") != request.tool_call_id
+        or preview_arguments.get("tool_name") != manifest.tool_name
+        or preview_arguments.get("resolved_arguments_ref") != request.resolved_arguments_ref
+        or preview_arguments.get("provenance_ref") != request.provenance_ref
+        or preview_arguments.get("argument_fingerprint") != _argument_fingerprint(request.arguments)
+    ):
+        raise ToolExecutionPolicyError(
+            f"{manifest.tool_name} confirmation must bind the previewed arguments"
+        )
+
+
 def _matches_confirmation_chain(
     *,
     required: Mapping[str, Any],
+    waiting_for_confirmation: Mapping[str, Any] | None,
     patch_received: Mapping[str, Any] | None,
     interpreted: Mapping[str, Any] | None,
     received: Mapping[str, Any] | None,
     accepted: Mapping[str, Any],
     request: ToolExecutionRequest,
     confirmation_scope: str,
+    require_waiting_for_confirmation: bool,
+    events_by_id: Mapping[str, Mapping[str, Any]],
 ) -> bool:
     patch_id = received.get("patch_id") if received is not None else None
+    confirmation_events = (
+        (required, waiting_for_confirmation, patch_received, interpreted, received, accepted)
+        if require_waiting_for_confirmation
+        else (required, patch_received, interpreted, received, accepted)
+    )
+    causal_chain_matches = (
+        (
+            _caused_by_chain_matches(required, waiting_for_confirmation)
+            and _patch_received_is_caused_by_confirmation_path(
+                patch_received,
+                waiting_for_confirmation=waiting_for_confirmation,
+                request=request,
+                events_by_id=events_by_id,
+            )
+            and _caused_by_chain_matches(patch_received, interpreted, received, accepted)
+        )
+        if require_waiting_for_confirmation
+        else _caused_by_chain_matches(required, patch_received, interpreted, received, accepted)
+    )
     return bool(
-        _matches_user_patch_received(patch_received, request=request, patch_id=patch_id)
+        (
+            not require_waiting_for_confirmation
+            or _matches_waiting_for_user_confirmation(
+                waiting_for_confirmation,
+                request=request,
+                confirmation_id=required.get("confirmation_id"),
+            )
+        )
+        and _matches_user_patch_received(patch_received, request=request, patch_id=patch_id)
         and _matches_user_patch_interpreted(interpreted, request=request, patch_id=patch_id)
         and _matches_user_confirmation_received(
             received,
@@ -607,8 +724,106 @@ def _matches_confirmation_chain(
             request=request,
             confirmation_scope=confirmation_scope,
         )
-        and _caused_by_chain_matches(required, patch_received, interpreted, received, accepted)
-        and _strict_event_seq_order(required, patch_received, interpreted, received, accepted)
+        and causal_chain_matches
+        and _strict_event_seq_order(*confirmation_events)
+    )
+
+
+def _patch_received_is_caused_by_confirmation_path(
+    patch_received: Mapping[str, Any] | None,
+    *,
+    waiting_for_confirmation: Mapping[str, Any] | None,
+    request: ToolExecutionRequest,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if patch_received is None or waiting_for_confirmation is None:
+        return False
+    caused_by_event_id = patch_received.get("caused_by_event_id")
+    router_event = events_by_id.get(str(caused_by_event_id))
+    return bool(
+        _matches_confirmation_router_event(router_event, request=request)
+        and _confirmation_router_has_turn_evidence(
+            router_event,
+            waiting_for_confirmation=waiting_for_confirmation,
+            events_by_id=events_by_id,
+        )
+        and _strict_event_seq_order(waiting_for_confirmation, router_event, patch_received)
+    )
+
+
+def _matches_confirmation_router_event(
+    event: Mapping[str, Any] | None,
+    *,
+    request: ToolExecutionRequest,
+) -> bool:
+    return bool(
+        event is not None
+        and event.get("event_name") == "ROUTER_DECISION_EMITTED"
+        and event.get("router_decision") == "PATCH_ACTIVE_SLOW_TASK"
+        and event.get("task_focus") == "ACTIVE_TASK_PATCH"
+        and event.get("active_task_id") == request.task_id
+    )
+
+
+def _confirmation_router_has_turn_evidence(
+    router_event: Mapping[str, Any] | None,
+    *,
+    waiting_for_confirmation: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if router_event is None:
+        return False
+    turn_event = events_by_id.get(str(router_event.get("turn_committed_event_id")))
+    thinker_event = events_by_id.get(str(router_event.get("thinker_frame_event_id")))
+    return bool(
+        _matches_router_turn_event(turn_event, router_event=router_event)
+        and _matches_router_thinker_event(thinker_event, router_event=router_event)
+        and turn_event.get("caused_by_event_id") == waiting_for_confirmation.get("event_id")
+        and thinker_event.get("caused_by_event_id") == turn_event.get("event_id")
+        and router_event.get("caused_by_event_id") == thinker_event.get("event_id")
+        and _strict_event_seq_order(waiting_for_confirmation, turn_event, thinker_event, router_event)
+    )
+
+
+def _matches_router_turn_event(
+    event: Mapping[str, Any] | None,
+    *,
+    router_event: Mapping[str, Any],
+) -> bool:
+    return bool(
+        event is not None
+        and event.get("event_name") == "TURN_INGRESS_COMMITTED"
+        and event.get("turn_id") == router_event.get("turn_id")
+        and event.get("utterance_id") == router_event.get("utterance_id")
+    )
+
+
+def _matches_router_thinker_event(
+    event: Mapping[str, Any] | None,
+    *,
+    router_event: Mapping[str, Any],
+) -> bool:
+    return bool(
+        event is not None
+        and event.get("event_name") == "MOCK_THINKER_FRAME_EMITTED"
+        and event.get("turn_id") == router_event.get("turn_id")
+        and event.get("utterance_id") == router_event.get("utterance_id")
+    )
+
+
+def _matches_waiting_for_user_confirmation(
+    event: Mapping[str, Any] | None,
+    *,
+    request: ToolExecutionRequest,
+    confirmation_id: object,
+) -> bool:
+    return bool(
+        event is not None
+        and confirmation_id not in (None, "")
+        and event.get("event_name") == "WAITING_FOR_USER_CONFIRMATION"
+        and event.get("task_id") == request.task_id
+        and event.get("plan_version") == request.plan_version
+        and event.get("confirmation_id") == confirmation_id
     )
 
 
@@ -802,3 +1017,15 @@ def _int_value(value: object) -> int | None:
 
 def _has_value(value: object) -> bool:
     return value is not None and value != ""
+
+
+def _argument_fingerprint(arguments: Mapping[str, Any]) -> str:
+    canonical_arguments = json.dumps(
+        arguments,
+        default=str,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(canonical_arguments.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"

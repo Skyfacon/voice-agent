@@ -241,7 +241,10 @@ def test_replay_accepts_destructive_tool_start_after_current_plan_confirmation()
     manifest_loaded = _event_by_id(fixture["events"], "evt_mvp2_slice1_memo_manifest_loaded")
     manifest_loaded["side_effect_class"] = "DEMO_DESTRUCTIVE_ACTION"
 
+    arguments_ready = _event_by_id(fixture["events"], "evt_mvp2_slice1_memo_arguments_ready")
     preview = _event_by_id(fixture["events"], "evt_mvp2_slice1_memo_preview_available")
+    arguments_ready["argument_fingerprint"] = "sha256:synthetic-slice1-memo-delete"
+    preview["argument_fingerprint"] = "sha256:synthetic-slice1-memo-delete"
     confirmation_id = "confirmation_mvp2_slice1_memo_delete"
     patch_id = "patch_mvp2_slice1_memo_delete_confirm"
     confirmation_required = _task_event_after(
@@ -261,6 +264,67 @@ def test_replay_accepts_destructive_tool_start_after_current_plan_confirmation()
         source_module="slowtask_runtime",
         confirmation_id=confirmation_id,
     )
+    confirmation_turn = {
+        "event_name": "TURN_INGRESS_COMMITTED",
+        "event_id": "evt_mvp2_slice1_memo_confirmation_turn_committed",
+        "event_seq": int(waiting_for_confirmation["event_seq"]) + 1,
+        "event_schema_version": "1.0",
+        "session_id": waiting_for_confirmation["session_id"],
+        "conversation_id": waiting_for_confirmation["conversation_id"],
+        "source_module": "interaction_controller",
+        "created_monotonic_ms": int(waiting_for_confirmation["created_monotonic_ms"]) + 1,
+        "created_wall_clock_ms": int(waiting_for_confirmation["created_wall_clock_ms"]) + 1,
+        "caused_by_event_id": waiting_for_confirmation["event_id"],
+        "trace_redaction_level": "metadata_only",
+        "turn_id": "turn_mvp2_slice1_memo_confirm",
+        "utterance_id": "utt_mvp2_slice1_memo_confirm",
+        "input_modality": "text",
+        "input_span_id": "input_mvp2_slice1_memo_confirm",
+        "text_span_id": "text_mvp2_slice1_memo_confirm",
+        "directedness": "ASSUMED_DIRECTED",
+        "semantic_close": "ASSUMED_CLOSED",
+        "ingress_outcome": "COMMITTED",
+    }
+    confirmation_thinker = {
+        "event_name": "MOCK_THINKER_FRAME_EMITTED",
+        "event_id": "evt_mvp2_slice1_memo_confirmation_thinker",
+        "event_seq": int(confirmation_turn["event_seq"]) + 1,
+        "event_schema_version": "1.0",
+        "session_id": waiting_for_confirmation["session_id"],
+        "conversation_id": waiting_for_confirmation["conversation_id"],
+        "source_module": "thinker_adapter",
+        "created_monotonic_ms": int(confirmation_turn["created_monotonic_ms"]) + 1,
+        "created_wall_clock_ms": int(confirmation_turn["created_wall_clock_ms"]) + 1,
+        "caused_by_event_id": confirmation_turn["event_id"],
+        "trace_redaction_level": "metadata_only",
+        "turn_id": confirmation_turn["turn_id"],
+        "utterance_id": confirmation_turn["utterance_id"],
+        "input_modality": "text",
+        "semantic_frame_ref": "semantic-frame://synthetic/mvp2/slice1/memo-confirmation",
+        "output_mode": "mock",
+    }
+    confirmation_router = {
+        "event_name": "ROUTER_DECISION_EMITTED",
+        "event_id": "evt_mvp2_slice1_memo_confirmation_router",
+        "event_seq": int(confirmation_thinker["event_seq"]) + 1,
+        "event_schema_version": "1.0",
+        "session_id": waiting_for_confirmation["session_id"],
+        "conversation_id": waiting_for_confirmation["conversation_id"],
+        "source_module": "router",
+        "created_monotonic_ms": int(confirmation_thinker["created_monotonic_ms"]) + 1,
+        "created_wall_clock_ms": int(confirmation_thinker["created_wall_clock_ms"]) + 1,
+        "caused_by_event_id": confirmation_thinker["event_id"],
+        "trace_redaction_level": "metadata_only",
+        "turn_id": confirmation_turn["turn_id"],
+        "utterance_id": confirmation_turn["utterance_id"],
+        "router_decision": "PATCH_ACTIVE_SLOW_TASK",
+        "task_focus": "ACTIVE_TASK_PATCH",
+        "active_task_id": waiting_for_confirmation["task_id"],
+        "confidence": 0.91,
+        "evidence_uncertainty": "low",
+        "turn_committed_event_id": confirmation_turn["event_id"],
+        "thinker_frame_event_id": confirmation_thinker["event_id"],
+    }
     patch_received = _task_event_after(
         waiting_for_confirmation,
         event_name="USER_PATCH_RECEIVED",
@@ -270,6 +334,10 @@ def test_replay_accepts_destructive_tool_start_after_current_plan_confirmation()
         observed_plan_version=1,
         evidence_ref="evidence://synthetic/mvp2/slice1/memo/delete-confirmation",
     )
+    patch_received["event_seq"] = int(confirmation_router["event_seq"]) + 1
+    patch_received["created_monotonic_ms"] = int(confirmation_router["created_monotonic_ms"]) + 1
+    patch_received["created_wall_clock_ms"] = int(confirmation_router["created_wall_clock_ms"]) + 1
+    patch_received["caused_by_event_id"] = confirmation_router["event_id"]
     patch_interpreted = _task_event_after(
         patch_received,
         event_name="USER_PATCH_INTERPRETED",
@@ -303,12 +371,18 @@ def test_replay_accepts_destructive_tool_start_after_current_plan_confirmation()
     for inserted_event in (
         confirmation_required,
         waiting_for_confirmation,
+        confirmation_turn,
+        confirmation_thinker,
+        confirmation_router,
         patch_received,
         patch_interpreted,
         confirmation_received,
         confirmation_accepted,
     ):
-        _insert_event_after(fixture["events"], prior_event_id, inserted_event)
+        if "task_event_seq" in inserted_event:
+            _insert_event_after(fixture["events"], prior_event_id, inserted_event)
+        else:
+            _insert_non_task_event_after(fixture["events"], prior_event_id, inserted_event)
         prior_event_id = inserted_event["event_id"]
 
     authorized = _event_by_id(fixture["events"], "evt_mvp2_slice1_memo_execution_authorized")

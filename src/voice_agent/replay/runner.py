@@ -592,6 +592,7 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
                 authorization_event=authorization_event,
                 manifest=manifest,
                 accepted_confirmations_by_id=accepted_destructive_confirmations_by_id,
+                events_by_id=events_by_id,
             )
             tool_call_plan_key = _tool_call_plan_key(event)
             started_tool_calls_by_task[_tool_call_task_key(event)] = event
@@ -740,6 +741,7 @@ def _validate_destructive_tool_confirmation_gate(
     authorization_event: Mapping[str, Any],
     manifest: Mapping[str, Any],
     accepted_confirmations_by_id: Mapping[str, Mapping[str, Any]],
+    events_by_id: Mapping[str, Mapping[str, Any]],
 ) -> None:
     if manifest.get("side_effect_class") != "DEMO_DESTRUCTIVE_ACTION":
         return
@@ -756,6 +758,349 @@ def _validate_destructive_tool_confirmation_gate(
         raise ReplayValidationError(
             "DEMO_DESTRUCTIVE_ACTION requires current-plan CONFIRMATION_ACCEPTED before TOOL_EXECUTION_STARTED"
         )
+    received = events_by_id.get(str(confirmation_event.get("caused_by_event_id")))
+    interpreted = events_by_id.get(str(received.get("caused_by_event_id"))) if received else None
+    patch_received = events_by_id.get(str(interpreted.get("caused_by_event_id"))) if interpreted else None
+    required = _matching_destructive_confirmation_required(
+        events_by_id.values(),
+        accepted=confirmation_event,
+        start=start_event,
+    )
+    waiting = _matching_destructive_waiting_for_confirmation(
+        events_by_id.values(),
+        required=required,
+        start=start_event,
+        before_event=patch_received,
+    )
+    if not _matches_destructive_confirmation_chain(
+        required=required,
+        waiting=waiting,
+        patch_received=patch_received,
+        interpreted=interpreted,
+        received=received,
+        accepted=confirmation_event,
+        authorization=authorization_event,
+        start=start_event,
+        events_by_id=events_by_id,
+    ):
+        raise ReplayValidationError("DEMO_DESTRUCTIVE_ACTION confirmation causal chain is broken")
+    _validate_destructive_confirmation_required_for_event(
+        required=required,
+        start_event=start_event,
+        events_by_id=events_by_id,
+    )
+
+
+def _matching_destructive_confirmation_required(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    accepted: Mapping[str, Any],
+    start: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    matching_required: Mapping[str, Any] | None = None
+    for event in events:
+        if (
+            _event_matches(
+                event,
+                event_name="CONFIRMATION_REQUIRED",
+                task_id=start.get("task_id"),
+                plan_version=start.get("plan_version"),
+                confirmation_id=accepted.get("confirmation_id"),
+                confirmation_scope="DEMO_DESTRUCTIVE_ACTION",
+            )
+            and _event_seq_before(event, accepted)
+        ):
+            matching_required = event
+    return matching_required
+
+
+def _matching_destructive_waiting_for_confirmation(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    required: Mapping[str, Any] | None,
+    start: Mapping[str, Any],
+    before_event: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if required is None or before_event is None:
+        return None
+    matching_waiting: Mapping[str, Any] | None = None
+    for event in events:
+        if (
+            _event_matches(
+                event,
+                event_name="WAITING_FOR_USER_CONFIRMATION",
+                task_id=start.get("task_id"),
+                plan_version=start.get("plan_version"),
+                confirmation_id=required.get("confirmation_id"),
+            )
+            and event.get("caused_by_event_id") == required.get("event_id")
+            and _event_seq_strictly_increases(required, event)
+            and _event_seq_before(event, before_event)
+        ):
+            matching_waiting = event
+    return matching_waiting
+
+
+def _matches_destructive_confirmation_chain(
+    *,
+    required: Mapping[str, Any] | None,
+    waiting: Mapping[str, Any] | None,
+    patch_received: Mapping[str, Any] | None,
+    interpreted: Mapping[str, Any] | None,
+    received: Mapping[str, Any] | None,
+    accepted: Mapping[str, Any],
+    authorization: Mapping[str, Any],
+    start: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    patch_id = received.get("patch_id") if received is not None else None
+    confirmation_id = accepted.get("confirmation_id")
+    chain = (required, waiting, patch_received, interpreted, received, accepted, authorization, start)
+    return bool(
+        _event_matches(
+            required,
+            event_name="CONFIRMATION_REQUIRED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+            confirmation_scope="DEMO_DESTRUCTIVE_ACTION",
+        )
+        and _event_matches(
+            waiting,
+            event_name="WAITING_FOR_USER_CONFIRMATION",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+        )
+        and _event_matches(
+            patch_received,
+            event_name="USER_PATCH_RECEIVED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            patch_id=patch_id,
+            observed_plan_version=start.get("plan_version"),
+        )
+        and _event_matches(
+            interpreted,
+            event_name="USER_PATCH_INTERPRETED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            patch_id=patch_id,
+            observed_plan_version=start.get("plan_version"),
+            interpreted_against_plan_version=start.get("plan_version"),
+            interpretation_type="confirmation",
+        )
+        and _event_matches(
+            received,
+            event_name="USER_CONFIRMATION_RECEIVED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+            patch_id=patch_id,
+            confirmation_signal="accepted",
+        )
+        and _event_matches(
+            accepted,
+            event_name="CONFIRMATION_ACCEPTED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+            accepted_scope="DEMO_DESTRUCTIVE_ACTION",
+        )
+        and _causal_chain_matches(required, waiting)
+        and _patch_received_is_caused_by_confirmation_path(
+            patch_received,
+            waiting=waiting,
+            start=start,
+            events_by_id=events_by_id,
+        )
+        and _causal_chain_matches(patch_received, interpreted, received, accepted, authorization, start)
+        and _event_seq_strictly_increases(*chain)
+    )
+
+
+def _patch_received_is_caused_by_confirmation_path(
+    patch_received: Mapping[str, Any] | None,
+    *,
+    waiting: Mapping[str, Any] | None,
+    start: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if patch_received is None or waiting is None:
+        return False
+    caused_by_event_id = patch_received.get("caused_by_event_id")
+    router_event = events_by_id.get(str(caused_by_event_id))
+    return bool(
+        _event_matches(
+            router_event,
+            event_name="ROUTER_DECISION_EMITTED",
+            router_decision="PATCH_ACTIVE_SLOW_TASK",
+            task_focus="ACTIVE_TASK_PATCH",
+            active_task_id=start.get("task_id"),
+        )
+        and _confirmation_router_has_turn_evidence(
+            router_event,
+            waiting=waiting,
+            events_by_id=events_by_id,
+        )
+        and _event_seq_strictly_increases(waiting, router_event, patch_received)
+    )
+
+
+def _validate_destructive_confirmation_required_for_event(
+    *,
+    required: Mapping[str, Any] | None,
+    start_event: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if required is None:
+        raise ReplayValidationError("DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id is missing")
+    required_for_event_id = required.get("required_for_event_id")
+    if required_for_event_id in (None, "") or required.get("caused_by_event_id") != required_for_event_id:
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must match caused_by_event_id"
+        )
+    required_for_event = events_by_id.get(str(required_for_event_id))
+    if (
+        required_for_event is None
+        or required_for_event.get("event_name") != "TOOL_PREVIEW_AVAILABLE"
+        or required_for_event.get("task_id") != start_event.get("task_id")
+        or required_for_event.get("plan_version") != start_event.get("plan_version")
+        or required_for_event.get("tool_call_id") != start_event.get("tool_call_id")
+        or required_for_event.get("tool_name") != start_event.get("tool_name")
+    ):
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the pending tool request"
+        )
+    preview_arguments = events_by_id.get(str(required_for_event.get("caused_by_event_id")))
+    if not _matches_tool_arguments_ready(
+        preview_arguments,
+        required_for_event=required_for_event,
+    ):
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the previewed arguments"
+        )
+    preview_fingerprint = preview_arguments.get("argument_fingerprint")
+    if (
+        preview_fingerprint in (None, "")
+        or required_for_event.get("argument_fingerprint") != preview_fingerprint
+    ):
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the previewed arguments"
+        )
+    for event in events_by_id.values():
+        if (
+            event.get("event_name") == "TOOL_ARGUMENTS_READY"
+            and event.get("task_id") == start_event.get("task_id")
+            and event.get("plan_version") == start_event.get("plan_version")
+            and event.get("tool_call_id") == start_event.get("tool_call_id")
+            and event.get("tool_name") == start_event.get("tool_name")
+            and _event_seq_before(required_for_event, event)
+            and _event_seq_before(event, start_event)
+            and (
+                event.get("resolved_arguments_ref") != preview_arguments.get("resolved_arguments_ref")
+                or event.get("provenance_ref") != preview_arguments.get("provenance_ref")
+                or event.get("argument_fingerprint") != preview_fingerprint
+            )
+        ):
+            raise ReplayValidationError(
+                "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the previewed arguments"
+    )
+
+
+def _confirmation_router_has_turn_evidence(
+    router_event: Mapping[str, Any] | None,
+    *,
+    waiting: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if router_event is None:
+        return False
+    turn_event = events_by_id.get(str(router_event.get("turn_committed_event_id")))
+    thinker_event = events_by_id.get(str(router_event.get("thinker_frame_event_id")))
+    return bool(
+        _event_matches(
+            turn_event,
+            event_name="TURN_INGRESS_COMMITTED",
+            turn_id=router_event.get("turn_id"),
+            utterance_id=router_event.get("utterance_id"),
+        )
+        and _event_matches(
+            thinker_event,
+            event_name="MOCK_THINKER_FRAME_EMITTED",
+            turn_id=router_event.get("turn_id"),
+            utterance_id=router_event.get("utterance_id"),
+        )
+        and turn_event.get("caused_by_event_id") == waiting.get("event_id")
+        and thinker_event.get("caused_by_event_id") == turn_event.get("event_id")
+        and router_event.get("caused_by_event_id") == thinker_event.get("event_id")
+        and _event_seq_strictly_increases(waiting, turn_event, thinker_event, router_event)
+    )
+
+
+def _matches_tool_arguments_ready(
+    event: Mapping[str, Any] | None,
+    *,
+    required_for_event: Mapping[str, Any],
+) -> bool:
+    return bool(
+        event is not None
+        and event.get("event_name") == "TOOL_ARGUMENTS_READY"
+        and event.get("task_id") == required_for_event.get("task_id")
+        and event.get("plan_version") == required_for_event.get("plan_version")
+        and event.get("tool_call_id") == required_for_event.get("tool_call_id")
+        and event.get("tool_name") == required_for_event.get("tool_name")
+        and event.get("resolved_arguments_ref") not in (None, "")
+        and event.get("provenance_ref") not in (None, "")
+        and event.get("argument_fingerprint") not in (None, "")
+    )
+
+
+def _event_seq_before(event: Mapping[str, Any] | None, before_event: Mapping[str, Any] | None) -> bool:
+    if event is None or before_event is None:
+        return False
+    event_seq = event.get("event_seq")
+    before_event_seq = before_event.get("event_seq")
+    return (
+        isinstance(event_seq, int)
+        and not isinstance(event_seq, bool)
+        and isinstance(before_event_seq, int)
+        and not isinstance(before_event_seq, bool)
+        and event_seq < before_event_seq
+    )
+
+
+def _event_matches(event: Mapping[str, Any] | None, /, **expected_fields: object) -> bool:
+    if event is None:
+        return False
+    return all(event.get(field_name) == expected_value for field_name, expected_value in expected_fields.items())
+
+
+def _causal_chain_matches(*events: Mapping[str, Any] | None) -> bool:
+    previous_event_id: object | None = None
+    for event in events:
+        if event is None:
+            return False
+        if previous_event_id is not None and event.get("caused_by_event_id") != previous_event_id:
+            return False
+        previous_event_id = event.get("event_id")
+        if previous_event_id in (None, ""):
+            return False
+    return True
+
+
+def _event_seq_strictly_increases(*events: Mapping[str, Any] | None) -> bool:
+    previous_event_seq: int | None = None
+    for event in events:
+        if event is None:
+            return False
+        event_seq = event.get("event_seq")
+        if not isinstance(event_seq, int) or isinstance(event_seq, bool):
+            return False
+        if previous_event_seq is not None and event_seq <= previous_event_seq:
+            return False
+        previous_event_seq = event_seq
+    return True
 
 
 def _tool_name_for_event(event: Mapping[str, Any], tool_names_by_call: Mapping[str, str]) -> str | None:

@@ -42,8 +42,10 @@ class InMemoryDemoBackend:
         self._next_result_index = 1
         self._next_memo_index = 1
         self._next_memo_list_index = 1
+        self._next_memo_delete_index = 1
         self._next_alarm_index = 1
         self._next_alarm_list_index = 1
+        self._next_alarm_cancel_index = 1
         self._next_flashlight_index = 1
         self._next_web_search_index = 1
         self._memo_items: list[dict[str, str]] = []
@@ -77,6 +79,13 @@ class InMemoryDemoBackend:
             )
         if tool_adapter_id == "demo.memo.list":
             return self._execute_memo_list(tool_name=tool_name, arguments=arguments)
+        if tool_adapter_id == "demo.memo.delete":
+            return self._execute_memo_delete(
+                tool_name=tool_name,
+                arguments=arguments,
+                idempotency_key=idempotency_key,
+                expected_state_namespace=expected_state_namespace,
+            )
         if tool_adapter_id == "demo.alarm.create":
             return self._execute_alarm_create(
                 tool_name=tool_name,
@@ -86,6 +95,13 @@ class InMemoryDemoBackend:
             )
         if tool_adapter_id == "demo.alarm.list":
             return self._execute_alarm_list(tool_name=tool_name, arguments=arguments)
+        if tool_adapter_id == "demo.alarm.cancel":
+            return self._execute_alarm_cancel(
+                tool_name=tool_name,
+                arguments=arguments,
+                idempotency_key=idempotency_key,
+                expected_state_namespace=expected_state_namespace,
+            )
         if tool_adapter_id == "demo.flashlight.set":
             return self._execute_flashlight_set(
                 tool_name=tool_name,
@@ -172,6 +188,58 @@ class InMemoryDemoBackend:
             },
         )
 
+    def _execute_memo_delete(
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        idempotency_key: str | None,
+        expected_state_namespace: str | None,
+    ) -> DemoBackendResult:
+        if idempotency_key in (None, ""):
+            raise DemoBackendExecutionError("memo_delete_requires_idempotency_key")
+        if expected_state_namespace not in (None, "", "memo"):
+            raise DemoBackendExecutionError("demo_backend_ui_patch_namespace_mismatch")
+
+        memo_item_id = str(arguments["memo_item_id"])
+        matching_index = next(
+            (
+                index
+                for index, item in enumerate(self._memo_items)
+                if item.get("memo_item_id") == memo_item_id
+            ),
+            None,
+        )
+        if matching_index is None:
+            raise DemoBackendExecutionError("memo_delete_target_not_found")
+
+        normalized_arguments = {key: arguments[key] for key in sorted(arguments)}
+        self._executed_calls.append((tool_name, dict(normalized_arguments)))
+        del self._memo_items[matching_index]
+
+        opaque_result_id = f"memo_delete_{self._next_memo_delete_index:06d}"
+        self._next_memo_delete_index += 1
+        ui_patch = _ui_patch_metadata(
+            state_namespace="memo",
+            operation="delete",
+            idempotency_key=str(idempotency_key),
+        )
+        self._record_ui_patch(ui_patch)
+        return DemoBackendResult(
+            result_status="SUCCEEDED",
+            result_ref=f"result://synthetic/demo_backend/memo/{opaque_result_id}",
+            progress_type="sandbox_destructive_action_completed",
+            progress_ref=f"progress://synthetic/demo_backend/memo/{opaque_result_id}/delete",
+            payload={
+                "state_namespace": "memo",
+                "operation": "delete",
+                "memo_item_id": memo_item_id,
+                "source": "in_memory_demo_backend",
+                "sandbox_only": True,
+            },
+            ui_patch=ui_patch,
+        )
+
     def _execute_alarm_create(
         self,
         *,
@@ -236,6 +304,58 @@ class InMemoryDemoBackend:
                 "items_ref": f"items://synthetic/demo_backend/alarm/{opaque_result_id}",
                 "source": "in_memory_demo_backend",
             },
+        )
+
+    def _execute_alarm_cancel(
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        idempotency_key: str | None,
+        expected_state_namespace: str | None,
+    ) -> DemoBackendResult:
+        if idempotency_key in (None, ""):
+            raise DemoBackendExecutionError("alarm_cancel_requires_idempotency_key")
+        if expected_state_namespace not in (None, "", "alarm"):
+            raise DemoBackendExecutionError("demo_backend_ui_patch_namespace_mismatch")
+
+        alarm_id = str(arguments["alarm_id"])
+        matching_index = next(
+            (
+                index
+                for index, item in enumerate(self._alarm_items)
+                if item.get("alarm_id") == alarm_id
+            ),
+            None,
+        )
+        if matching_index is None:
+            raise DemoBackendExecutionError("alarm_cancel_target_not_found")
+
+        normalized_arguments = {key: arguments[key] for key in sorted(arguments)}
+        self._executed_calls.append((tool_name, dict(normalized_arguments)))
+        del self._alarm_items[matching_index]
+
+        opaque_result_id = f"alarm_cancel_{self._next_alarm_cancel_index:06d}"
+        self._next_alarm_cancel_index += 1
+        ui_patch = _ui_patch_metadata(
+            state_namespace="alarm",
+            operation="cancel",
+            idempotency_key=str(idempotency_key),
+        )
+        self._record_ui_patch(ui_patch)
+        return DemoBackendResult(
+            result_status="SUCCEEDED",
+            result_ref=f"result://synthetic/demo_backend/alarm/{opaque_result_id}",
+            progress_type="sandbox_destructive_action_completed",
+            progress_ref=f"progress://synthetic/demo_backend/alarm/{opaque_result_id}/cancel",
+            payload={
+                "state_namespace": "alarm",
+                "operation": "cancel",
+                "alarm_id": alarm_id,
+                "source": "in_memory_demo_backend",
+                "sandbox_only": True,
+            },
+            ui_patch=ui_patch,
         )
 
     def _execute_flashlight_set(
