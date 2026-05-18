@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from voice_agent.adapters.capabilities import OUTPUT_MODES
+from voice_agent.composer.constants import (
+    ALLOWED_PROGRESS_SOURCE_EVENTS,
+    ALLOWED_TRUTHFULNESS_LEVELS,
+)
 from voice_agent.events.envelope import EventValidationError, validate_event_envelope
 from voice_agent.events.registry import MVP1_EVENT_NAMES, get_event_definition
 from voice_agent.replay.manifest import ReplayManifest, validate_replay_manifest
@@ -21,6 +26,7 @@ from voice_agent.state.demo_ui_state import DemoUIState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
 from voice_agent.state.slowtask_state import SlowTaskState
+from voice_agent.state.spoken_plan_state import SpokenPlanState
 from voice_agent.state.task_focus_state import TaskFocusState
 from voice_agent.state.tool_execution_state import ToolExecutionState
 from voice_agent.state.trace_privacy_state import TracePrivacyState
@@ -45,6 +51,7 @@ class ReplayResult:
     slowtask_state: SlowTaskState
     tool_execution_state: ToolExecutionState
     demo_ui_state: DemoUIState
+    spoken_plan_state: SpokenPlanState
     diagnostics: dict[str, Any]
     state_digest: dict[str, Any]
     result_status: str
@@ -68,6 +75,7 @@ DATA_PLANE_REF_FIELDS = frozenset(
         "progress_ref",
         "patch_ref",
         "result_ref",
+        "commitment_ref",
     }
 )
 MVP_ALLOWED_TOOL_SIDE_EFFECT_CLASSES = frozenset(
@@ -77,6 +85,11 @@ MVP_ALLOWED_TOOL_SIDE_EFFECT_CLASSES = frozenset(
         "SANDBOX_WRITE",
         "DEMO_DESTRUCTIVE_ACTION",
     }
+)
+COMMITMENT_SYMBOLIC_METADATA_FIELDS = (
+    "immutable_fields",
+    "must_say_fields",
+    "forbidden_rewrite_fields",
 )
 
 
@@ -97,6 +110,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     trace_privacy_state = TracePrivacyState.from_manifest(manifest.to_dict())
     tool_execution_state = ToolExecutionState()
     demo_ui_state = DemoUIState()
+    spoken_plan_state = SpokenPlanState()
 
     for event in ordered_events:
         diagnostics["data_plane_refs"].extend(_unavailable_data_plane_refs(event))
@@ -107,6 +121,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
                 slowtask_state.reduce_event(event),
                 tool_execution_state.reduce_event(event),
                 demo_ui_state.reduce_event(event),
+                spoken_plan_state.reduce_event(event),
                 playback_state.reduce_event(event),
                 adapter_health_state.reduce_event(event),
                 trace_privacy_state.reduce_event(event),
@@ -145,6 +160,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         slowtask_state=slowtask_state,
         tool_execution_state=tool_execution_state,
         demo_ui_state=demo_ui_state,
+        spoken_plan_state=spoken_plan_state,
     )
     replay_events = _build_replay_marker_events(
         manifest=manifest,
@@ -164,6 +180,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         slowtask_state=slowtask_state,
         tool_execution_state=tool_execution_state,
         demo_ui_state=demo_ui_state,
+        spoken_plan_state=spoken_plan_state,
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
@@ -195,6 +212,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_post_commit_understanding_and_router_order(ordered_events)
     _validate_user_patch_evidence_pack_source_links(ordered_events)
     _validate_tool_execution_gate_links(ordered_events)
+    _validate_spoken_plan_source_links(ordered_events)
     return ordered_events
 
 
@@ -665,6 +683,143 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
         events_by_id[event_id] = event
 
 
+def _validate_spoken_plan_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    latest_plan_version_by_task_id: dict[str, int] = {}
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "SPOKEN_PLAN_EMITTED":
+            _validate_spoken_plan_event(
+                event,
+                events_by_id=events_by_id,
+                latest_plan_version_by_task_id=latest_plan_version_by_task_id,
+            )
+        _record_latest_task_plan(event, latest_plan_version_by_task_id)
+        events_by_id[str(event["event_id"])] = event
+
+
+def _validate_spoken_plan_event(
+    event: Mapping[str, Any],
+    *,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+    latest_plan_version_by_task_id: Mapping[str, int],
+) -> None:
+    if event.get("source_module") != "composer":
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED source_module must be composer")
+    if event.get("output_mode") not in OUTPUT_MODES:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED output_mode must be real, mock, fallback, or degraded")
+
+    source_event_ids = _string_list_for_replay(event.get("source_events"))
+    if not source_event_ids:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED source_events are required")
+    source_events = []
+    for source_event_id in source_event_ids:
+        source_event = events_by_id.get(source_event_id)
+        if source_event is None:
+            raise ReplayValidationError("SPOKEN_PLAN_EMITTED source event must exist and precede spoken plan")
+        source_events.append(source_event)
+
+    if event.get("caused_by_event_id") not in source_event_ids:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED caused_by_event_id must reference a source event")
+
+    task_id = str(event["task_id"])
+    plan_version = int(event["plan_version"])
+    latest_plan_version = latest_plan_version_by_task_id.get(task_id)
+    if latest_plan_version is not None and plan_version != latest_plan_version:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED plan_version must match current source plan_version")
+
+    for source_event in source_events:
+        if source_event.get("task_id") != task_id:
+            raise ReplayValidationError("SPOKEN_PLAN_EMITTED task_id must match source event task_id")
+        if source_event.get("plan_version") != plan_version:
+            raise ReplayValidationError("SPOKEN_PLAN_EMITTED plan_version must match source event plan_version")
+
+    source = event.get("source")
+    if source == "semantic_commitment":
+        _validate_commitment_spoken_plan(event, source_events)
+    elif source == "grounded_progress":
+        _validate_progress_spoken_plan(event, source_event_ids, source_events)
+    else:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED source must be semantic_commitment or grounded_progress")
+
+
+def _validate_commitment_spoken_plan(
+    event: Mapping[str, Any],
+    source_events: Sequence[Mapping[str, Any]],
+) -> None:
+    if len(source_events) != 1 or source_events[0].get("event_name") != "SEMANTIC_COMMITMENT_EMITTED":
+        raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED requires source commitment event")
+    source_commitment_id = event.get("source_commitment_id")
+    if source_commitment_id in (None, ""):
+        raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED requires source_commitment_id")
+    if source_commitment_id != source_events[0].get("commitment_id"):
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED source_commitment_id must match commitment_id")
+    if event.get("coverage_check_required") is not True:
+        raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED requires coverage_check_required=true")
+    if event.get("truthfulness_check_required") is not False:
+        raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED must not require progress truthfulness")
+    if _string_list_for_replay(event.get("source_progress_event_ids")):
+        raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED must not claim progress source ids")
+    _validate_commitment_symbolic_metadata(event, source_events[0])
+
+
+def _validate_commitment_symbolic_metadata(
+    event: Mapping[str, Any],
+    source_commitment: Mapping[str, Any],
+) -> None:
+    for field in COMMITMENT_SYMBOLIC_METADATA_FIELDS:
+        spoken_values = _string_list_for_replay(event.get(field))
+        commitment_values = _string_list_for_replay(source_commitment.get(field))
+        if spoken_values != commitment_values:
+            raise ReplayValidationError(
+                f"commitment-derived SPOKEN_PLAN_EMITTED {field} must match source commitment"
+            )
+
+
+def _validate_progress_spoken_plan(
+    event: Mapping[str, Any],
+    source_event_ids: Sequence[str],
+    source_events: Sequence[Mapping[str, Any]],
+) -> None:
+    source_progress_event_ids = _string_list_for_replay(event.get("source_progress_event_ids"))
+    if not source_progress_event_ids:
+        raise ReplayValidationError("progress-derived SPOKEN_PLAN_EMITTED requires source_progress_event_ids")
+    if list(source_progress_event_ids) != list(source_event_ids):
+        raise ReplayValidationError("source_progress_event_ids must match SPOKEN_PLAN source_events")
+    unsupported_sources = sorted(
+        str(source_event["event_name"])
+        for source_event in source_events
+        if source_event["event_name"] not in ALLOWED_PROGRESS_SOURCE_EVENTS
+    )
+    if unsupported_sources:
+        raise ReplayValidationError(
+            f"unsupported progress source event for SPOKEN_PLAN_EMITTED: {unsupported_sources}"
+        )
+    if event.get("truthfulness_check_required") is not True:
+        raise ReplayValidationError("progress-derived SPOKEN_PLAN_EMITTED requires truthfulness_check_required=true")
+    if event.get("coverage_check_required") is not False:
+        raise ReplayValidationError("progress-derived SPOKEN_PLAN_EMITTED must not require commitment coverage")
+    truthfulness_level = event.get("truthfulness_level")
+    if truthfulness_level not in ALLOWED_TRUTHFULNESS_LEVELS:
+        raise ReplayValidationError("truthfulness_level must be STATE_GROUNDED or STYLE_ONLY_ACK")
+    if event.get("source_commitment_id") not in (None, ""):
+        raise ReplayValidationError("progress-derived SPOKEN_PLAN_EMITTED must not claim source_commitment_id")
+
+
+def _record_latest_task_plan(
+    event: Mapping[str, Any],
+    latest_plan_version_by_task_id: dict[str, int],
+) -> None:
+    task_id = event.get("task_id")
+    plan_version = event.get("plan_version")
+    if task_id in (None, "") or not isinstance(plan_version, int) or isinstance(plan_version, bool):
+        return
+    previous_plan_version = latest_plan_version_by_task_id.get(str(task_id))
+    if previous_plan_version is None or plan_version > previous_plan_version:
+        latest_plan_version_by_task_id[str(task_id)] = plan_version
+
+
 def _validate_tool_start_manifest_gate(
     *,
     start_event: Mapping[str, Any],
@@ -1132,6 +1287,16 @@ def _require_source_id_in_refs(
     expected_event_id = router_event.get(source_id_field)
     if expected_event_id in (None, "") or str(expected_event_id) not in source_event_ids:
         raise ReplayValidationError(f"USER_PATCH_RECEIVED evidence_pack must include router {source_id_field}")
+
+
+def _string_list_for_replay(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        return [str(value)]
+    if not isinstance(value, Sequence):
+        raise ReplayValidationError("event ids must be a list")
+    return [str(item) for item in value]
 
 
 def _string_set(value: object) -> set[str]:

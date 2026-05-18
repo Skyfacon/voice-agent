@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+
+ALLOWED_TRUTHFULNESS_LEVELS = frozenset({"STATE_GROUNDED", "STYLE_ONLY_ACK"})
+ALLOWED_PROGRESS_SOURCE_EVENTS = frozenset(
+    {
+        "PLANNING_STARTED",
+        "PLANNING_RESTARTED",
+        "WAITING_FOR_SLOT",
+        "TOOL_MANIFEST_LOADED",
+        "TOOL_ARGUMENTS_PARTIAL",
+        "TOOL_ARGUMENTS_READY",
+        "TOOL_EXECUTION_STARTED",
+        "TOOL_PROGRESS_UPDATED",
+        "TOOL_CALL_RETRYING",
+        "WAITING_FOR_TOOL",
+        "TOOL_UI_STATE_PATCHED",
+        "WAITING_FOR_USER_CONFIRMATION",
+        "FINALIZING",
+        "SLOWTASK_DEGRADED",
+        "SLOWTASK_FAILED",
+    }
+)
