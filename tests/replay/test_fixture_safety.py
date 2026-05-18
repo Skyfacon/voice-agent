@@ -470,6 +470,13 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
                 "blocked execution, authorization, progress, UI patch refs, result refs, failure, retry, "
                 "and cancellation metadata"
             ),
+        },
+        {
+            "fixture": "002-tool-executor-skeleton.fixture.json",
+            "purpose": (
+                "Demo Tool Executor skeleton replay for read-only sandbox execution and "
+                "insufficient-provenance blocked execution without backend replay"
+            ),
         }
     ]
     assert manifest_index["fixture_safety_flags"] == {

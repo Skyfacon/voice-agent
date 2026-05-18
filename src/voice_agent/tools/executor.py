@@ -1,0 +1,765 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+from voice_agent.demo_backend.in_memory import DemoBackendExecutionError, InMemoryDemoBackend
+from voice_agent.events.journal import InMemoryEventJournal
+from voice_agent.tools.manifest import ToolExecutionPolicyError, ToolManifest, require_mvp_side_effect_class
+from voice_agent.tools.registry import ToolRegistry
+
+
+TOOL_EXECUTOR_SOURCE_MODULE = "tool_executor"
+TERMINAL_SLOWTASK_STATES = frozenset({"COMPLETED", "CANCELLED", "FAILED"})
+DEFAULT_CONFIRMATION_SCOPE = "FINAL_ARGUMENT_CONFIRMATION"
+
+
+@dataclass(frozen=True)
+class ToolExecutionRequest:
+    tool_call_id: str
+    tool_name: str
+    task_id: str
+    plan_version: int
+    current_plan_version: int
+    start_task_event_seq: int
+    caused_by_event_id: str
+    event_id_prefix: str
+    created_monotonic_ms: int
+    created_wall_clock_ms: int
+    idempotency_key: str
+    arguments: Mapping[str, Any]
+    argument_provenance: Mapping[str, str]
+    resolved_arguments_ref: str
+    provenance_ref: str
+    partial_arguments_ref: str | None = None
+    preview_ref: str | None = None
+    accepted_confirmation_event_id: str | None = None
+    accepted_confirmation_id: str | None = None
+    accepted_confirmation_scope: str | None = None
+    accepted_confirmation_plan_version: int | None = None
+
+
+@dataclass(frozen=True)
+class ToolExecutionResult:
+    produced_events: tuple[dict[str, Any], ...]
+    result_ref: str | None = None
+    result_status: str | None = None
+    blocking_fields: tuple[str, ...] = ()
+
+
+@dataclass
+class _EmissionContext:
+    request: ToolExecutionRequest
+    produced_events: list[dict[str, Any]] = field(default_factory=list)
+    next_task_event_seq: int = 0
+    next_time_offset: int = 0
+    caused_by_event_id: str = ""
+
+
+@dataclass(frozen=True)
+class _JournalTaskCursor:
+    current_plan_version: int | None = None
+    latest_task_event_seq: int | None = None
+    lifecycle_state: str | None = None
+
+
+class DemoToolExecutor:
+    """Sandbox-only MVP-2 Tool Executor skeleton.
+
+    It emits recorded tool events into the journal and delegates only to the
+    deterministic in-memory demo backend after all policy gates pass.
+    """
+
+    def __init__(
+        self,
+        *,
+        journal: InMemoryEventJournal,
+        registry: ToolRegistry,
+        backend: InMemoryDemoBackend,
+    ) -> None:
+        self._journal = journal
+        self._registry = registry
+        self._backend = backend
+
+    def execute(self, request: ToolExecutionRequest) -> ToolExecutionResult:
+        _validate_request_shape(request)
+        manifest = self._registry.get(request.tool_name)
+        _require_current_plan(request, self._journal.events())
+        require_mvp_side_effect_class(manifest.side_effect_class)
+        _reject_unimplemented_destructive_runtime(manifest.side_effect_class)
+        _require_unused_idempotency_key(request, manifest, self._journal.events())
+
+        context = _EmissionContext(
+            request=request,
+            next_task_event_seq=request.start_task_event_seq,
+            caused_by_event_id=request.caused_by_event_id,
+        )
+        self._append_manifest_loaded(context, manifest)
+
+        missing_fields = _missing_argument_or_provenance_fields(
+            request,
+            manifest,
+            self._journal.events(),
+        )
+        if missing_fields:
+            self._append_arguments_partial(context, missing_fields)
+            self._append_blocked_insufficient_arguments(context, missing_fields)
+            return ToolExecutionResult(
+                produced_events=tuple(context.produced_events),
+                blocking_fields=missing_fields,
+            )
+
+        self._append_arguments_ready(context)
+        if manifest.preview_required:
+            self._append_preview_available(context, requires_confirmation=manifest.confirmation_required)
+        authorization = self._append_execution_authorized_after_policy_gate(context, manifest)
+        self._append_execution_started(context, authorization_event_id=str(authorization["event_id"]))
+
+        try:
+            backend_result = self._backend.execute(
+                tool_name=manifest.tool_name,
+                tool_adapter_id=manifest.tool_adapter_id,
+                arguments=request.arguments,
+            )
+        except DemoBackendExecutionError as exc:
+            self._append_execution_failed(context, failure_reason=exc.reason, retryable=False)
+            return ToolExecutionResult(
+                produced_events=tuple(context.produced_events),
+                result_status="FAILED",
+            )
+
+        self._append_progress_updated(
+            context,
+            progress_type=backend_result.progress_type,
+            progress_ref=backend_result.progress_ref,
+        )
+        self._append_result_received(
+            context,
+            result_status=backend_result.result_status,
+            result_ref=backend_result.result_ref,
+            trust_level=manifest.trust_level,
+            source_type=manifest.source_type,
+        )
+        return ToolExecutionResult(
+            produced_events=tuple(context.produced_events),
+            result_ref=backend_result.result_ref,
+            result_status=backend_result.result_status,
+        )
+
+    def _append_manifest_loaded(self, context: _EmissionContext, manifest: ToolManifest) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_MANIFEST_LOADED",
+            event_id=f"{context.request.event_id_prefix}_manifest_loaded",
+            include_task_binding=False,
+            **manifest.manifest_event_fields(),
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_arguments_partial(self, context: _EmissionContext, missing_fields: tuple[str, ...]) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_ARGUMENTS_PARTIAL",
+            event_id=f"{context.request.event_id_prefix}_arguments_partial",
+            partial_arguments_ref=(
+                context.request.partial_arguments_ref
+                or f"args://synthetic/{context.request.event_id_prefix}/partial"
+            ),
+            missing_fields=list(missing_fields),
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_blocked_insufficient_arguments(
+        self,
+        context: _EmissionContext,
+        blocking_fields: tuple[str, ...],
+    ) -> None:
+        partial_event_id = context.caused_by_event_id
+        event = self._append_event(
+            context,
+            event_name="TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
+            event_id=f"{context.request.event_id_prefix}_blocked_insufficient_arguments",
+            blocking_fields=list(blocking_fields),
+            source_event_id=partial_event_id,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_arguments_ready(self, context: _EmissionContext) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_ARGUMENTS_READY",
+            event_id=f"{context.request.event_id_prefix}_arguments_ready",
+            resolved_arguments_ref=context.request.resolved_arguments_ref,
+            provenance_ref=context.request.provenance_ref,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_preview_available(self, context: _EmissionContext, *, requires_confirmation: bool) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_PREVIEW_AVAILABLE",
+            event_id=f"{context.request.event_id_prefix}_preview_available",
+            preview_ref=context.request.preview_ref or f"preview://synthetic/{context.request.event_id_prefix}",
+            requires_confirmation=requires_confirmation,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_execution_authorized_after_policy_gate(
+        self,
+        context: _EmissionContext,
+        manifest: ToolManifest,
+    ) -> dict[str, Any]:
+        if _requires_current_plan_confirmation(manifest):
+            _require_current_plan_confirmation(context.request, manifest)
+            self._require_recorded_confirmation(context.request, manifest)
+            return self._append_execution_authorized(
+                context,
+                authorization_basis="current_plan_confirmation_acceptance",
+                confirmation_id=context.request.accepted_confirmation_id,
+                caused_by_event_id=context.request.accepted_confirmation_event_id,
+            )
+        return self._append_execution_authorized(
+            context,
+            authorization_basis="current_plan_policy_allow",
+            confirmation_id=None,
+            caused_by_event_id=None,
+        )
+
+    def _require_recorded_confirmation(
+        self,
+        request: ToolExecutionRequest,
+        manifest: ToolManifest,
+    ) -> None:
+        journal_events = self._journal.events()
+        events_by_id = {str(event["event_id"]): event for event in journal_events}
+        expected_scope = _expected_confirmation_scope(manifest)
+        accepted = events_by_id.get(str(request.accepted_confirmation_event_id))
+        required = _matching_confirmation_required(
+            journal_events,
+            request=request,
+            confirmation_scope=expected_scope,
+            before_event=accepted,
+        )
+        if (
+            not _matches_confirmation_accepted(
+                accepted,
+                request=request,
+                confirmation_scope=expected_scope,
+            )
+            or required is None
+        ):
+            raise ToolExecutionPolicyError(
+                f"{manifest.tool_name} requires current-plan CONFIRMATION_ACCEPTED before tool authorization"
+            )
+
+        received = events_by_id.get(str(accepted.get("caused_by_event_id")))
+        interpreted = events_by_id.get(str(received.get("caused_by_event_id"))) if received else None
+        patch_received = events_by_id.get(str(interpreted.get("caused_by_event_id"))) if interpreted else None
+        if not _matches_confirmation_chain(
+            required=required,
+            patch_received=patch_received,
+            interpreted=interpreted,
+            received=received,
+            accepted=accepted,
+            request=request,
+            confirmation_scope=expected_scope,
+        ):
+            raise ToolExecutionPolicyError(
+                f"{manifest.tool_name} requires current-plan CONFIRMATION_ACCEPTED before tool authorization"
+            )
+
+    def _append_execution_authorized(
+        self,
+        context: _EmissionContext,
+        *,
+        authorization_basis: str,
+        confirmation_id: str | None,
+        caused_by_event_id: str | None,
+    ) -> dict[str, Any]:
+        fields: dict[str, Any] = {
+            "authorization_basis": authorization_basis,
+            "tool_name": context.request.tool_name,
+        }
+        if confirmation_id is not None:
+            fields["confirmation_id"] = confirmation_id
+        event = self._append_event(
+            context,
+            event_name="TOOL_EXECUTION_AUTHORIZED",
+            event_id=f"{context.request.event_id_prefix}_execution_authorized",
+            caused_by_event_id=caused_by_event_id,
+            **fields,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+        return event
+
+    def _append_execution_started(self, context: _EmissionContext, *, authorization_event_id: str) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_EXECUTION_STARTED",
+            event_id=f"{context.request.event_id_prefix}_execution_started",
+            idempotency_key=context.request.idempotency_key,
+            authorization_event_id=authorization_event_id,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_progress_updated(
+        self,
+        context: _EmissionContext,
+        *,
+        progress_type: str,
+        progress_ref: str,
+    ) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_PROGRESS_UPDATED",
+            event_id=f"{context.request.event_id_prefix}_progress_updated",
+            progress_type=progress_type,
+            progress_ref=progress_ref,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_result_received(
+        self,
+        context: _EmissionContext,
+        *,
+        result_status: str,
+        result_ref: str,
+        trust_level: str,
+        source_type: str,
+    ) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_RESULT_RECEIVED",
+            event_id=f"{context.request.event_id_prefix}_result_received",
+            result_status=result_status,
+            result_ref=result_ref,
+            trust_level=trust_level,
+            source_type=source_type,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_execution_failed(
+        self,
+        context: _EmissionContext,
+        *,
+        failure_reason: str,
+        retryable: bool,
+    ) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_EXECUTION_FAILED",
+            event_id=f"{context.request.event_id_prefix}_execution_failed",
+            failure_reason=failure_reason,
+            retryable=retryable,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_event(
+        self,
+        context: _EmissionContext,
+        *,
+        event_name: str,
+        event_id: str,
+        include_task_binding: bool = True,
+        caused_by_event_id: str | None = None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        event_fields = dict(fields)
+        if include_task_binding:
+            event_fields.update(
+                {
+                    "tool_call_id": context.request.tool_call_id,
+                    "task_id": context.request.task_id,
+                    "plan_version": context.request.plan_version,
+                    "task_event_seq": context.next_task_event_seq,
+                }
+            )
+            context.next_task_event_seq += 1
+
+        event = self._journal.append(
+            event_name=event_name,
+            event_id=event_id,
+            source_module=TOOL_EXECUTOR_SOURCE_MODULE,
+            caused_by_event_id=caused_by_event_id or context.caused_by_event_id,
+            created_monotonic_ms=context.request.created_monotonic_ms + context.next_time_offset,
+            created_wall_clock_ms=context.request.created_wall_clock_ms + context.next_time_offset,
+            trace_redaction_level="metadata_only",
+            **event_fields,
+        )
+        context.next_time_offset += 1
+        context.produced_events.append(event)
+        return event
+
+
+def _validate_request_shape(request: ToolExecutionRequest) -> None:
+    for field_name in (
+        "tool_call_id",
+        "tool_name",
+        "task_id",
+        "caused_by_event_id",
+        "event_id_prefix",
+        "idempotency_key",
+        "resolved_arguments_ref",
+        "provenance_ref",
+    ):
+        if not str(getattr(request, field_name)):
+            raise ToolExecutionPolicyError(f"{field_name} is required")
+    if request.plan_version < 1:
+        raise ToolExecutionPolicyError("plan_version must be positive")
+    if request.current_plan_version < 1:
+        raise ToolExecutionPolicyError("current_plan_version must be positive")
+    if request.start_task_event_seq < 1:
+        raise ToolExecutionPolicyError("start_task_event_seq must be positive")
+
+
+def _require_current_plan(
+    request: ToolExecutionRequest,
+    journal_events: Sequence[Mapping[str, Any]],
+) -> None:
+    if request.plan_version != request.current_plan_version:
+        raise ToolExecutionPolicyError(
+            "tool request plan_version must match current plan_version before execution"
+        )
+    cursor = _journal_task_cursor(
+        journal_events,
+        task_id=request.task_id,
+    )
+    if cursor.current_plan_version is None:
+        raise ToolExecutionPolicyError(
+            "tool request requires journal current plan_version before execution"
+        )
+    if request.plan_version != cursor.current_plan_version:
+        raise ToolExecutionPolicyError(
+            "tool request plan_version must match journal current plan_version before execution"
+        )
+    if cursor.lifecycle_state in TERMINAL_SLOWTASK_STATES:
+        raise ToolExecutionPolicyError("terminal SlowTask cannot execute tools")
+    if (
+        cursor.latest_task_event_seq is not None
+        and request.start_task_event_seq <= cursor.latest_task_event_seq
+    ):
+        raise ToolExecutionPolicyError(
+            "tool request start_task_event_seq must follow journal task_event_seq cursor"
+        )
+
+
+def _require_unused_idempotency_key(
+    request: ToolExecutionRequest,
+    manifest: ToolManifest,
+    journal_events: Sequence[Mapping[str, Any]],
+) -> None:
+    if not manifest.idempotency_required:
+        return
+    for event in journal_events:
+        if (
+            event.get("event_name") == "TOOL_EXECUTION_STARTED"
+            and event.get("idempotency_key") == request.idempotency_key
+        ):
+            raise ToolExecutionPolicyError(
+                "idempotency_key already has a recorded TOOL_EXECUTION_STARTED"
+            )
+
+
+def _reject_unimplemented_destructive_runtime(side_effect_class: str) -> None:
+    if side_effect_class == "DEMO_DESTRUCTIVE_ACTION":
+        raise ToolExecutionPolicyError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation runtime is not implemented in this slice"
+        )
+
+
+def _requires_current_plan_confirmation(manifest: ToolManifest) -> bool:
+    return manifest.confirmation_required or manifest.side_effect_class == "DEMO_DESTRUCTIVE_ACTION"
+
+
+def _require_current_plan_confirmation(
+    request: ToolExecutionRequest,
+    manifest: ToolManifest,
+) -> None:
+    if (
+        request.accepted_confirmation_event_id in (None, "")
+        or request.accepted_confirmation_id in (None, "")
+        or request.accepted_confirmation_scope in (None, "")
+        or request.accepted_confirmation_plan_version != request.plan_version
+        or request.accepted_confirmation_scope != _expected_confirmation_scope(manifest)
+    ):
+        raise ToolExecutionPolicyError(
+            f"{manifest.tool_name} requires current-plan CONFIRMATION_ACCEPTED before tool authorization"
+        )
+
+
+def _expected_confirmation_scope(manifest: ToolManifest) -> str:
+    if manifest.side_effect_class == "DEMO_DESTRUCTIVE_ACTION":
+        return "DEMO_DESTRUCTIVE_ACTION"
+    return DEFAULT_CONFIRMATION_SCOPE
+
+
+def _matches_confirmation_accepted(
+    event: Mapping[str, Any] | None,
+    *,
+    request: ToolExecutionRequest,
+    confirmation_scope: str,
+) -> bool:
+    return bool(
+        event is not None
+        and event.get("event_name") == "CONFIRMATION_ACCEPTED"
+        and event.get("task_id") == request.task_id
+        and event.get("plan_version") == request.plan_version
+        and event.get("confirmation_id") == request.accepted_confirmation_id
+        and event.get("accepted_scope") == confirmation_scope
+    )
+
+
+def _matching_confirmation_required(
+    journal_events: Sequence[Mapping[str, Any]],
+    *,
+    request: ToolExecutionRequest,
+    confirmation_scope: str,
+    before_event: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if before_event is None:
+        return None
+    accepted_event_seq = _int_value(before_event.get("event_seq"))
+    matching_required: Mapping[str, Any] | None = None
+    for event in journal_events:
+        if (
+            event.get("event_name") == "CONFIRMATION_REQUIRED"
+            and event.get("task_id") == request.task_id
+            and event.get("plan_version") == request.plan_version
+            and event.get("confirmation_id") == request.accepted_confirmation_id
+            and event.get("confirmation_scope") == confirmation_scope
+            and event.get("required_for_event_id") == request.caused_by_event_id
+            and event.get("caused_by_event_id") == request.caused_by_event_id
+            and _event_seq_before(event, accepted_event_seq)
+        ):
+            matching_required = event
+    return matching_required
+
+
+def _matches_confirmation_chain(
+    *,
+    required: Mapping[str, Any],
+    patch_received: Mapping[str, Any] | None,
+    interpreted: Mapping[str, Any] | None,
+    received: Mapping[str, Any] | None,
+    accepted: Mapping[str, Any],
+    request: ToolExecutionRequest,
+    confirmation_scope: str,
+) -> bool:
+    patch_id = received.get("patch_id") if received is not None else None
+    return bool(
+        _matches_user_patch_received(patch_received, request=request, patch_id=patch_id)
+        and _matches_user_patch_interpreted(interpreted, request=request, patch_id=patch_id)
+        and _matches_user_confirmation_received(
+            received,
+            request=request,
+            patch_id=patch_id,
+        )
+        and _matches_confirmation_accepted(
+            accepted,
+            request=request,
+            confirmation_scope=confirmation_scope,
+        )
+        and _caused_by_chain_matches(required, patch_received, interpreted, received, accepted)
+        and _strict_event_seq_order(required, patch_received, interpreted, received, accepted)
+    )
+
+
+def _matches_user_patch_received(
+    event: Mapping[str, Any] | None,
+    *,
+    request: ToolExecutionRequest,
+    patch_id: object,
+) -> bool:
+    return bool(
+        event is not None
+        and patch_id not in (None, "")
+        and event.get("event_name") == "USER_PATCH_RECEIVED"
+        and event.get("task_id") == request.task_id
+        and event.get("plan_version") == request.plan_version
+        and event.get("patch_id") == patch_id
+        and event.get("observed_plan_version") == request.plan_version
+    )
+
+
+def _matches_user_patch_interpreted(
+    event: Mapping[str, Any] | None,
+    *,
+    request: ToolExecutionRequest,
+    patch_id: object,
+) -> bool:
+    return bool(
+        event is not None
+        and patch_id not in (None, "")
+        and event.get("event_name") == "USER_PATCH_INTERPRETED"
+        and event.get("task_id") == request.task_id
+        and event.get("plan_version") == request.plan_version
+        and event.get("patch_id") == patch_id
+        and event.get("observed_plan_version") == request.plan_version
+        and event.get("interpreted_against_plan_version") == request.plan_version
+        and event.get("interpretation_type") == "confirmation"
+    )
+
+
+def _matches_user_confirmation_received(
+    event: Mapping[str, Any] | None,
+    *,
+    request: ToolExecutionRequest,
+    patch_id: object,
+) -> bool:
+    return bool(
+        event is not None
+        and patch_id not in (None, "")
+        and event.get("event_name") == "USER_CONFIRMATION_RECEIVED"
+        and event.get("task_id") == request.task_id
+        and event.get("plan_version") == request.plan_version
+        and event.get("confirmation_id") == request.accepted_confirmation_id
+        and event.get("patch_id") == patch_id
+        and event.get("confirmation_signal") == "accepted"
+    )
+
+
+def _strict_event_seq_order(*events: Mapping[str, Any] | None) -> bool:
+    previous_event_seq: int | None = None
+    for event in events:
+        if event is None:
+            return False
+        event_seq = _int_value(event.get("event_seq"))
+        if event_seq is None:
+            return False
+        if previous_event_seq is not None and event_seq <= previous_event_seq:
+            return False
+        previous_event_seq = event_seq
+    return True
+
+
+def _caused_by_chain_matches(*events: Mapping[str, Any] | None) -> bool:
+    previous_event_id: object | None = None
+    for event in events:
+        if event is None:
+            return False
+        if previous_event_id is not None and event.get("caused_by_event_id") != previous_event_id:
+            return False
+        previous_event_id = event.get("event_id")
+        if previous_event_id in (None, ""):
+            return False
+    return True
+
+
+def _event_seq_before(event: Mapping[str, Any], before_event_seq: int | None) -> bool:
+    event_seq = _int_value(event.get("event_seq"))
+    return event_seq is not None and before_event_seq is not None and event_seq < before_event_seq
+
+
+def _missing_argument_or_provenance_fields(
+    request: ToolExecutionRequest,
+    manifest: ToolManifest,
+    journal_events: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    events_by_id = {str(event["event_id"]): event for event in journal_events}
+    required_arguments = tuple(str(field) for field in manifest.required_arguments)
+    required_provenance = tuple(
+        str(field) for field in manifest.argument_provenance_requirements
+    )
+    missing_arguments = tuple(
+        field
+        for field in required_arguments
+        if not _has_value(request.arguments.get(field))
+    )
+    missing_argument_set = set(missing_arguments)
+    missing_provenance = tuple(
+        f"provenance.{field}"
+        for field in required_provenance
+        if field not in missing_argument_set
+        and not _has_current_plan_argument_provenance(
+            request.argument_provenance.get(field),
+            events_by_id=events_by_id,
+            task_id=request.task_id,
+            plan_version=request.plan_version,
+        )
+    )
+    return (*missing_arguments, *missing_provenance)
+
+
+def _journal_task_cursor(
+    journal_events: Sequence[Mapping[str, Any]],
+    *,
+    task_id: str,
+) -> _JournalTaskCursor:
+    current_plan_version: int | None = None
+    latest_task_event_seq: int | None = None
+    lifecycle_state: str | None = None
+    for event in journal_events:
+        if event.get("task_id") != task_id:
+            continue
+        event_name = event.get("event_name")
+        if event_name == "SLOWTASK_CREATED":
+            current_plan_version = _int_value(event.get("plan_version"))
+            lifecycle_state = lifecycle_state or "CREATED"
+        elif event_name == "PLAN_VERSION_ADVANCED":
+            current_plan_version = _int_value(event.get("to_plan_version"))
+        elif event_name == "SLOWTASK_STATE_CHANGED":
+            to_state = event.get("to_state")
+            if isinstance(to_state, str):
+                lifecycle_state = _next_lifecycle_state(lifecycle_state, to_state)
+        elif event_name == "SLOWTASK_FAILED":
+            lifecycle_state = "FAILED"
+        elif event_name == "SLOWTASK_CANCELLED":
+            lifecycle_state = "CANCELLED"
+
+        task_event_seq = _int_value(event.get("task_event_seq"))
+        if task_event_seq is not None and (
+            latest_task_event_seq is None or task_event_seq > latest_task_event_seq
+        ):
+            latest_task_event_seq = task_event_seq
+    return _JournalTaskCursor(
+        current_plan_version=current_plan_version,
+        latest_task_event_seq=latest_task_event_seq,
+        lifecycle_state=lifecycle_state,
+    )
+
+
+def _next_lifecycle_state(current_state: str | None, to_state: str) -> str:
+    if current_state in TERMINAL_SLOWTASK_STATES and to_state not in TERMINAL_SLOWTASK_STATES:
+        return current_state
+    return to_state
+
+
+def _has_current_plan_argument_provenance(
+    event_id: object,
+    *,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+    task_id: str,
+    plan_version: int,
+) -> bool:
+    if not _has_value(event_id):
+        return False
+    event = events_by_id.get(str(event_id))
+    if event is None:
+        return False
+    if event.get("task_id") != task_id:
+        return False
+    if event.get("event_name") not in {
+        "ARGUMENTS_RESOLVED",
+        "ARGUMENT_RESOLUTION_PROVENANCE",
+    }:
+        return False
+    return _int_value(event.get("plan_version")) == plan_version
+
+
+def _int_value(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _has_value(value: object) -> bool:
+    return value is not None and value != ""

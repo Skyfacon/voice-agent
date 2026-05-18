@@ -86,6 +86,10 @@
     {
       "fixture": "001-tool-execution-state.fixture.json",
       "purpose": "ToolExecutionState deterministic reducer replay for manifest metadata, argument readiness, blocked execution, authorization, progress, UI patch refs, result refs, failure, retry, and cancellation metadata"
+    },
+    {
+      "fixture": "002-tool-executor-skeleton.fixture.json",
+      "purpose": "Demo Tool Executor skeleton replay for read-only sandbox execution and insufficient-provenance blocked execution without backend replay"
     }
   ],
   "planned_fixture_checks": [
