@@ -20,6 +20,10 @@ class MVP1AcceptanceError(AssertionError):
     pass
 
 
+class MVP2AcceptanceError(AssertionError):
+    pass
+
+
 MVP0_REQUIRED_SCENARIOS = (
     "MVP0-TEXT-INGRESS-001",
     "MVP0-AUDIO-INGRESS-001",
@@ -43,6 +47,134 @@ MVP1_REQUIRED_SCENARIOS = (
     "MVP1-SEMANTIC-COMMITMENT-001",
 )
 MVP1_OUTPUT_MODES = frozenset({"mock", "degraded", "fallback"})
+MVP2_REQUIRED_SCENARIOS = (
+    "MVP2-TOOL-MANIFEST-001",
+    "MVP2-TOOL-ARGS-PARTIAL-001",
+    "MVP2-TOOL-BLOCKED-INSUFFICIENT-ARGS-001",
+    "MVP2-MEMO-SANDBOX-WRITE-001",
+    "MVP2-ALARM-SANDBOX-SCHEDULE-001",
+    "MVP2-FLASHLIGHT-DEMO-DEVICE-ACTION-001",
+    "MVP2-WEATHER-READ-ONLY-001",
+    "MVP2-WEBSEARCH-UNTRUSTED-EVIDENCE-001",
+    "MVP2-UI-STATE-PATCHED-001",
+    "MVP2-DEMO-DESTRUCTIVE-CONFIRMATION-001",
+    "MVP2-STALE-TOOL-RESULT-PROGRESSIVE-001",
+    "MVP2-COMPOSER-SPOKEN-PLAN-001",
+    "MVP2-COMMITMENT-COVERAGE-001",
+    "MVP2-PROGRESS-TRUTHFULNESS-001",
+    "MVP2-ACCEPTANCE-SCOPE-SAFETY-001",
+)
+MVP2_OUTPUT_MODES = frozenset({"mock", "degraded", "fallback"})
+MVP2_REQUIRED_REPLAY_PROPERTIES = frozenset(
+    {
+        "deterministic_replay_does_not_rerun_models_tools_network_clock_or_random",
+        "tool_ui_state_reconstructed_from_tool_ui_state_patched_events",
+        "websearch_content_replayed_as_untrusted_evidence_only",
+        "demo_destructive_action_requires_current_plan_confirmation",
+        "composer_output_requires_coverage_or_truthfulness_check_before_playback",
+        "old_plan_tool_result_requires_stale_evidence_chain_before_current_plan_use",
+    }
+)
+MVP2_TOOL_EXECUTOR_OWNED_EVENT_NAMES = frozenset(
+    {
+        "TOOL_CALL_STARTED",
+        "TOOL_MANIFEST_LOADED",
+        "TOOL_ARGUMENTS_PARTIAL",
+        "TOOL_ARGUMENTS_READY",
+        "TOOL_PREVIEW_AVAILABLE",
+        "TOOL_EXECUTION_AUTHORIZED",
+        "TOOL_EXECUTION_STARTED",
+        "TOOL_PROGRESS_UPDATED",
+        "TOOL_UI_STATE_PATCHED",
+        "TOOL_RESULT_RECEIVED",
+        "TOOL_EXECUTION_FAILED",
+        "TOOL_CALL_RETRYING",
+        "TOOL_EXECUTION_CANCELLED",
+        "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
+    }
+)
+MVP2_ALLOWED_SIDE_EFFECT_CLASSES_BY_TOOL = {
+    "memo": frozenset({"READ_ONLY", "SANDBOX_WRITE", "DEMO_DESTRUCTIVE_ACTION"}),
+    "alarm": frozenset({"READ_ONLY", "SANDBOX_WRITE", "DEMO_DESTRUCTIVE_ACTION"}),
+    "flashlight": frozenset({"SANDBOX_WRITE"}),
+    "weather": frozenset({"READ_ONLY"}),
+    "webSearch": frozenset({"READ_ONLY"}),
+}
+MVP2_GLOBAL_ALLOWED_SIDE_EFFECT_CLASSES = frozenset(
+    {"READ_ONLY", "DRY_RUN", "SANDBOX_WRITE", "DEMO_DESTRUCTIVE_ACTION"}
+)
+MVP2_REQUIRED_FORBIDDEN_BEHAVIORS = frozenset(
+    {
+        "real_external_write",
+        "real_external_communication",
+        "booking_or_payment",
+        "real_deletion",
+        "real_device_control",
+        "account_or_identity_mutation",
+        "credential_mutation",
+        "direct_frontend_mutation_by_model_text",
+        "websearch_as_instruction",
+        "websearch_direct_backend_action",
+        "composer_fact_rewrite",
+        "tool_executor_direct_slowtask_mutation",
+        "raw_text_confirmation_shortcut",
+        "fake_tool_cancellation_success",
+        "real_model_adapter_runtime_integration",
+    }
+)
+MVP2_REQUIRED_FORBIDDEN_SOURCE_MODULES = frozenset(
+    {
+        "direct_frontend_mutator",
+        "model_text_ui_driver",
+        "real_external_tool_adapter",
+        "external_write_adapter",
+        "external_communication_adapter",
+        "booking_or_payment_adapter",
+        "real_device_adapter",
+        "real_model_adapter",
+        "web_search_instruction_adapter",
+    }
+)
+MVP2_REQUIRED_TOOL_SCOPE = {
+    "memo": {
+        "tool_category": "DEMO_STATE_WRITE",
+        "result_trust_level": "TRUSTED_DEMO_TOOL_RESULT",
+    },
+    "alarm": {
+        "tool_category": "DEMO_SCHEDULE_ACTION",
+        "result_trust_level": "TRUSTED_DEMO_TOOL_RESULT",
+    },
+    "flashlight": {
+        "tool_category": "DEMO_DEVICE_ACTION",
+        "result_trust_level": "TRUSTED_DEMO_TOOL_RESULT",
+    },
+    "weather": {
+        "tool_category": "READ_ONLY_EXTERNAL",
+        "result_trust_level": "EXTERNAL_READ_PROVIDER_RESULT",
+    },
+    "webSearch": {
+        "tool_category": "EXTERNAL_READ_UNTRUSTED",
+        "result_trust_level": "UNTRUSTED_WEB_EVIDENCE",
+    },
+}
+MVP2_REQUIRED_STATE_DIGEST_FIELDS = frozenset(
+    {
+        "tool_execution_state_hash",
+        "demo_ui_state_hash",
+        "spoken_plan_state_hash",
+        "spoken_plan_check_state_hash",
+        "playback_state_hash",
+        "trace_privacy_state_hash",
+        "overall_digest",
+    }
+)
+MVP2_ALLOWED_SAFE_SECRET_METADATA_KEYS = frozenset(
+    {
+        "authorization_basis",
+        "authorization_event_id",
+        "secret_kind",
+    }
+)
 DEFAULT_FORBIDDEN_EVENT_NAMES = frozenset(
     {
         "SLOWTASK_CREATED",
@@ -305,6 +437,29 @@ class MVP1AcceptanceResult:
     summary: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class MVP2FixtureCheckResult:
+    fixture_name: str
+    result_status: str
+    state_digest: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP2ScenarioResult:
+    scenario_id: str
+    fixture_names: tuple[str, ...]
+    result_status: str
+    assertion_summary: dict[str, Any]
+    state_digest: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP2AcceptanceResult:
+    scenario_results: tuple[MVP2ScenarioResult, ...]
+    fixture_results: tuple[MVP2FixtureCheckResult, ...]
+    summary: dict[str, Any]
+
+
 def run_mvp0_acceptance_manifest(
     manifest_index: Mapping[str, Any],
     *,
@@ -525,6 +680,869 @@ def assert_mvp1_fixture_is_repo_safe(fixture: Mapping[str, Any]) -> None:
                 _assert_mvp1_safe_string_fixture_value(value, ".".join(path))
     except MVP1AcceptanceError as exc:
         raise MVP1AcceptanceError(f"repo-unsafe MVP-1 fixture content: {exc}") from exc
+
+
+def run_mvp2_acceptance_manifest(
+    manifest_index: Mapping[str, Any],
+    *,
+    fixture_dir: Path,
+    required_scenario_ids: Sequence[str] | None = None,
+) -> MVP2AcceptanceResult:
+    required_scenarios = tuple(required_scenario_ids or MVP2_REQUIRED_SCENARIOS)
+    index = deepcopy(dict(manifest_index))
+    _validate_mvp2_manifest_index(index, required_scenario_ids=required_scenarios)
+
+    forbidden_source_modules = frozenset(
+        _string_tuple_mvp2(index.get("forbidden_source_modules", ()), "forbidden_source_modules")
+    )
+    fixture_results: list[MVP2FixtureCheckResult] = []
+    replay_results_by_fixture: dict[str, ReplayResult] = {}
+    fixtures_by_name: dict[str, dict[str, Any]] = {}
+    for fixture_name in _mvp2_fixture_check_names(index):
+        fixture = _load_mvp2_fixture(fixture_dir / fixture_name)
+        assert_mvp2_fixture_is_repo_safe(fixture)
+        assert_fixture_has_no_forbidden_mvp2_scope(
+            fixture["events"],
+            forbidden_source_modules=forbidden_source_modules,
+        )
+        _assert_mvp2_mock_degraded_real_labels(fixture)
+        first_result = run_replay_fixture(fixture)
+        second_result = run_replay_fixture(fixture)
+        if first_result.state_digest != second_result.state_digest:
+            raise MVP2AcceptanceError(f"{fixture_name} replay is not deterministic")
+        _assert_mvp2_replay_matches_suite(index, fixture_name=fixture_name, result=first_result)
+        _assert_mvp2_replay_state_surface(first_result, fixture_name=fixture_name)
+        fixtures_by_name[fixture_name] = fixture
+        replay_results_by_fixture[fixture_name] = first_result
+        fixture_results.append(
+            MVP2FixtureCheckResult(
+                fixture_name=fixture_name,
+                result_status=first_result.result_status,
+                state_digest=first_result.state_digest,
+            )
+        )
+
+    scenario_entries = _mvp2_scenario_entries_by_id(index)
+    scenario_results: list[MVP2ScenarioResult] = []
+    for scenario_id in required_scenarios:
+        scenario = scenario_entries[scenario_id]
+        fixture_names = _mvp2_scenario_fixture_names(scenario)
+        fixtures = tuple(fixtures_by_name[name] for name in fixture_names)
+        replay_results = tuple(replay_results_by_fixture[name] for name in fixture_names)
+        assertion_summary = _assert_mvp2_scenario(
+            scenario_id,
+            fixtures=fixtures,
+            results=replay_results,
+        )
+        scenario_results.append(
+            MVP2ScenarioResult(
+                scenario_id=scenario_id,
+                fixture_names=fixture_names,
+                result_status="passed",
+                assertion_summary=assertion_summary,
+                state_digest=replay_results[-1].state_digest,
+            )
+        )
+
+    return MVP2AcceptanceResult(
+        scenario_results=tuple(scenario_results),
+        fixture_results=tuple(fixture_results),
+        summary={
+            "suite_id": str(index["suite_id"]),
+            "result_status": "passed",
+            "scenario_count": len(scenario_results),
+            "fixture_count": len(fixture_results),
+            "validated_fixture_names": [fixture.fixture_name for fixture in fixture_results],
+            "deterministic_replay_verified": True,
+            "runtime_execution_detected": False,
+            "adr_update_required": False,
+            "hidden_future_scope_detected": False,
+        },
+    )
+
+
+def assert_fixture_has_no_forbidden_mvp2_scope(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    forbidden_source_modules: frozenset[str] = MVP2_REQUIRED_FORBIDDEN_SOURCE_MODULES,
+) -> None:
+    for event in events:
+        event_name = str(event.get("event_name", ""))
+        source_module = str(event.get("source_module", ""))
+        if source_module in forbidden_source_modules:
+            raise MVP2AcceptanceError(f"forbidden MVP-2 source_module: {source_module}")
+
+        tool_name = str(event.get("tool_name", ""))
+        if event_name in MVP2_TOOL_EXECUTOR_OWNED_EVENT_NAMES and source_module != "tool_executor":
+            raise MVP2AcceptanceError(f"{event_name} must be Tool Executor owned")
+        if event_name == "TOOL_UI_STATE_PATCHED" and source_module != "tool_executor":
+            raise MVP2AcceptanceError("TOOL_UI_STATE_PATCHED must be Tool Executor owned")
+        if event_name == "TOOL_UI_STATE_PATCHED" and tool_name == "webSearch":
+            raise MVP2AcceptanceError("webSearch must not directly patch demo UI/backend state")
+        if event_name == "SPOKEN_PLAN_EMITTED" and source_module != "composer":
+            raise MVP2AcceptanceError("Thinker-as-Composer output must use source_module=composer")
+        if event_name == "COMMITMENT_COVERAGE_CHECK_PASSED" and source_module != "coverage_checker":
+            raise MVP2AcceptanceError("CommitmentCoverageCheck must be coverage_checker owned")
+        if event_name == "PROGRESS_TRUTHFULNESS_CHECK_PASSED" and source_module != "truthfulness_checker":
+            raise MVP2AcceptanceError("ProgressTruthfulnessCheck must be truthfulness_checker owned")
+        if event_name == "TOOL_RESULT_RECEIVED" and tool_name == "webSearch":
+            if event.get("trust_level") != "UNTRUSTED_WEB_EVIDENCE":
+                raise MVP2AcceptanceError("webSearch result must be UNTRUSTED_WEB_EVIDENCE")
+            if event.get("source_type") != "EXTERNAL_READ_UNTRUSTED":
+                raise MVP2AcceptanceError("webSearch result must remain EXTERNAL_READ_UNTRUSTED evidence")
+
+
+def assert_mvp2_fixture_is_repo_safe(fixture: Mapping[str, Any]) -> None:
+    try:
+        manifest = _required_mapping_mvp2(fixture, "replay_manifest")
+        if manifest.get("fixture_domain") != "GITHUB_ALLOWED":
+            raise MVP2AcceptanceError("fixture_domain must be GITHUB_ALLOWED")
+        if manifest.get("replay_mode") != "deterministic":
+            raise MVP2AcceptanceError("MVP-2 fixtures must use deterministic replay")
+        if manifest.get("generated_from") not in {"synthetic", "redacted", "hand_written_minimal"}:
+            raise MVP2AcceptanceError("GitHub fixtures must be synthetic, redacted, or hand_written_minimal")
+        if manifest.get("allowed_re_eval_components", []) != []:
+            raise MVP2AcceptanceError("deterministic MVP-2 fixtures must not opt into re-eval components")
+        if any(manifest.get(flag) is not False for flag in ALLOWED_MANIFEST_SAFETY_FLAGS):
+            raise MVP2AcceptanceError("GitHub fixture safety flags must all be false")
+
+        for path, value in _iter_json_values(fixture):
+            last_key = path[-1] if path else ""
+            if path[:1] == ("replay_manifest",) and last_key in ALLOWED_MANIFEST_SAFETY_FLAGS:
+                if value is not False:
+                    raise MVP2AcceptanceError(f"unsafe manifest safety flag: {'.'.join(path)}")
+                continue
+            if last_key in MVP2_ALLOWED_SAFE_SECRET_METADATA_KEYS:
+                if not isinstance(value, str) or _contains_secret_like_value(value):
+                    raise MVP2AcceptanceError(f"unsafe authorization/secret metadata: {'.'.join(path)}")
+                _assert_mvp2_safe_string_fixture_value(value, ".".join(path))
+                continue
+            if last_key in ALLOWED_SAFE_REF_KEYS:
+                if not isinstance(value, str) or not is_safe_authorization_ref(value, allow_local=False):
+                    raise MVP2AcceptanceError(f"unsafe authorization ref: {'.'.join(path)}")
+                _assert_mvp2_safe_string_fixture_value(value, ".".join(path))
+                continue
+            if any(pattern.search(last_key) for pattern in FORBIDDEN_FIXTURE_KEY_PATTERNS):
+                raise MVP2AcceptanceError(f"forbidden fixture key: {'.'.join(path)}")
+            if isinstance(value, str):
+                _assert_mvp2_safe_string_fixture_value(value, ".".join(path))
+    except MVP2AcceptanceError as exc:
+        raise MVP2AcceptanceError(f"repo-unsafe MVP-2 fixture content: {exc}") from exc
+
+
+def _validate_mvp2_manifest_index(
+    index: Mapping[str, Any],
+    *,
+    required_scenario_ids: tuple[str, ...],
+) -> None:
+    required_fields = {
+        "manifest_index_schema_version",
+        "suite_id",
+        "fixture_domain",
+        "replay_mode",
+        "generated_fixtures_must_be",
+        "required_scenarios",
+        "initial_tool_scope",
+        "fixture_checks",
+        "scenarios",
+        "forbidden_behaviors",
+        "forbidden_source_modules",
+        "fixture_safety_flags",
+        "required_replay_properties",
+    }
+    missing = required_fields - set(index)
+    if missing:
+        raise MVP2AcceptanceError(f"Missing MVP-2 acceptance manifest fields: {sorted(missing)}")
+    if index["manifest_index_schema_version"] != "1.0":
+        raise MVP2AcceptanceError("manifest_index_schema_version must be '1.0'")
+    if index["suite_id"] != "MVP2-ACCEPTANCE":
+        raise MVP2AcceptanceError("suite_id must be 'MVP2-ACCEPTANCE'")
+    if index["fixture_domain"] != "GITHUB_ALLOWED":
+        raise MVP2AcceptanceError("MVP-2 acceptance fixtures must be GITHUB_ALLOWED")
+    if index["replay_mode"] != "deterministic":
+        raise MVP2AcceptanceError("MVP-2 acceptance uses deterministic replay")
+
+    generated_requirements = _string_tuple_mvp2(
+        index["generated_fixtures_must_be"],
+        "generated_fixtures_must_be",
+    )
+    if generated_requirements != ("synthetic", "redacted", "minimal"):
+        raise MVP2AcceptanceError("generated_fixtures_must_be must be synthetic/redacted/minimal")
+
+    required_scenarios = _string_tuple_mvp2(index["required_scenarios"], "required_scenarios")
+    if required_scenarios != required_scenario_ids:
+        raise MVP2AcceptanceError(f"required_scenarios must be {list(required_scenario_ids)}")
+
+    _validate_mvp2_initial_tool_scope(index)
+    _validate_mvp2_scope_gate_lists(index)
+
+    scenario_entries = _mvp2_scenario_entries_by_id(index)
+    missing_scenarios = [scenario_id for scenario_id in required_scenarios if scenario_id not in scenario_entries]
+    if missing_scenarios:
+        raise MVP2AcceptanceError(f"Missing scenario entries: {missing_scenarios}")
+    fixture_check_names = set(_mvp2_fixture_check_names(index))
+    missing_fixture_checks = sorted(
+        {
+            fixture_name
+            for scenario in scenario_entries.values()
+            for fixture_name in _mvp2_scenario_fixture_names(scenario)
+            if fixture_name not in fixture_check_names
+        }
+    )
+    if missing_fixture_checks:
+        raise MVP2AcceptanceError(f"scenario fixtures must be listed in fixture_checks: {missing_fixture_checks}")
+
+
+def _validate_mvp2_initial_tool_scope(index: Mapping[str, Any]) -> None:
+    tool_scope = _required_sequence_mvp2(index, "initial_tool_scope")
+    tools_by_name: dict[str, Mapping[str, Any]] = {}
+    for tool in tool_scope:
+        if not isinstance(tool, Mapping):
+            raise MVP2AcceptanceError("initial_tool_scope entries must be objects")
+        tool_name = _required_str_mvp2(tool, "tool_name")
+        tools_by_name[tool_name] = tool
+    missing_tools = sorted(set(MVP2_REQUIRED_TOOL_SCOPE) - set(tools_by_name))
+    if missing_tools:
+        raise MVP2AcceptanceError(f"initial_tool_scope missing tools: {missing_tools}")
+    for tool_name, expected in MVP2_REQUIRED_TOOL_SCOPE.items():
+        tool = tools_by_name[tool_name]
+        for field, expected_value in expected.items():
+            if tool.get(field) != expected_value:
+                raise MVP2AcceptanceError(f"{tool_name} {field} must be {expected_value}")
+        side_effect_classes = set(_string_tuple_mvp2(tool.get("allowed_side_effect_classes", ()), "allowed_side_effect_classes"))
+        if not side_effect_classes:
+            raise MVP2AcceptanceError(f"{tool_name} must declare allowed_side_effect_classes")
+        expected_side_effect_classes = MVP2_ALLOWED_SIDE_EFFECT_CLASSES_BY_TOOL.get(
+            tool_name,
+            MVP2_GLOBAL_ALLOWED_SIDE_EFFECT_CLASSES,
+        )
+        unsafe_side_effect_classes = sorted(side_effect_classes - expected_side_effect_classes)
+        if unsafe_side_effect_classes:
+            raise MVP2AcceptanceError(
+                f"{tool_name} allowed_side_effect_classes include unsafe or future-scope classes: "
+                f"{unsafe_side_effect_classes}"
+            )
+        if tool_name == "webSearch":
+            if side_effect_classes != {"READ_ONLY"}:
+                raise MVP2AcceptanceError("webSearch must be READ_ONLY only")
+            if tool.get("ui_patch_capable") is not False:
+                raise MVP2AcceptanceError("webSearch must not be ui_patch_capable")
+
+
+def _validate_mvp2_scope_gate_lists(index: Mapping[str, Any]) -> None:
+    forbidden_behaviors = set(_string_tuple_mvp2(index["forbidden_behaviors"], "forbidden_behaviors"))
+    missing_behaviors = sorted(MVP2_REQUIRED_FORBIDDEN_BEHAVIORS - forbidden_behaviors)
+    if missing_behaviors:
+        raise MVP2AcceptanceError(f"forbidden_behaviors missing MVP-2 scope gates: {missing_behaviors}")
+
+    forbidden_source_modules = set(
+        _string_tuple_mvp2(index["forbidden_source_modules"], "forbidden_source_modules")
+    )
+    missing_source_modules = sorted(MVP2_REQUIRED_FORBIDDEN_SOURCE_MODULES - forbidden_source_modules)
+    if missing_source_modules:
+        raise MVP2AcceptanceError(
+            f"forbidden_source_modules missing MVP-2 scope gates: {missing_source_modules}"
+        )
+
+    fixture_safety_flags = _required_mapping_mvp2(index, "fixture_safety_flags")
+    if any(fixture_safety_flags.get(flag) is not False for flag in ALLOWED_MANIFEST_SAFETY_FLAGS):
+        raise MVP2AcceptanceError("fixture_safety_flags must all be false")
+
+    replay_properties = set(
+        _string_tuple_mvp2(index["required_replay_properties"], "required_replay_properties")
+    )
+    missing_properties = sorted(MVP2_REQUIRED_REPLAY_PROPERTIES - replay_properties)
+    if missing_properties:
+        raise MVP2AcceptanceError(f"required_replay_properties missing scope gates: {missing_properties}")
+
+
+def _mvp2_fixture_check_names(index: Mapping[str, Any]) -> tuple[str, ...]:
+    checks = _required_sequence_mvp2(index, "fixture_checks")
+    names: list[str] = []
+    for check in checks:
+        if not isinstance(check, Mapping) or not isinstance(check.get("fixture"), str):
+            raise MVP2AcceptanceError("fixture_checks entries must contain fixture")
+        names.append(str(check["fixture"]))
+    if len(names) != len(set(names)):
+        raise MVP2AcceptanceError("fixture_checks must not contain duplicate fixtures")
+    return tuple(names)
+
+
+def _mvp2_scenario_entries_by_id(index: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    scenarios = _required_sequence_mvp2(index, "scenarios")
+    entries: dict[str, Mapping[str, Any]] = {}
+    for scenario in scenarios:
+        if not isinstance(scenario, Mapping):
+            raise MVP2AcceptanceError("scenarios entries must be objects")
+        scenario_id = scenario.get("scenario_id")
+        if not isinstance(scenario_id, str) or not scenario_id:
+            raise MVP2AcceptanceError("scenario entry must include scenario_id")
+        _mvp2_scenario_fixture_names(scenario)
+        if scenario_id in entries:
+            raise MVP2AcceptanceError(f"duplicate scenario_id: {scenario_id}")
+        entries[scenario_id] = scenario
+    return entries
+
+
+def _mvp2_scenario_fixture_names(scenario: Mapping[str, Any]) -> tuple[str, ...]:
+    if "fixtures" in scenario:
+        fixture_names = _string_tuple_mvp2(scenario["fixtures"], "fixtures")
+    else:
+        fixture = scenario.get("fixture")
+        if not isinstance(fixture, str):
+            raise MVP2AcceptanceError("scenario entry must include fixture or fixtures")
+        fixture_names = (fixture,)
+    if not fixture_names or not all(name.endswith(".fixture.json") for name in fixture_names):
+        raise MVP2AcceptanceError("scenario fixtures must be .fixture.json files")
+    return fixture_names
+
+
+def _assert_mvp2_replay_matches_suite(
+    index: Mapping[str, Any],
+    *,
+    fixture_name: str,
+    result: ReplayResult,
+) -> None:
+    if result.fixture_domain != index["fixture_domain"]:
+        raise MVP2AcceptanceError(f"{fixture_name} fixture_domain mismatch")
+    if result.replay_mode != index["replay_mode"]:
+        raise MVP2AcceptanceError(f"{fixture_name} replay_mode mismatch")
+    if result.result_status != "passed":
+        raise MVP2AcceptanceError(f"{fixture_name} replay did not pass")
+    if result.diagnostics["ignored_events"]:
+        raise MVP2AcceptanceError(f"{fixture_name} replay ignored MVP-2 events")
+
+
+def _assert_mvp2_replay_state_surface(result: ReplayResult, *, fixture_name: str) -> None:
+    missing = sorted(MVP2_REQUIRED_STATE_DIGEST_FIELDS - set(result.state_digest))
+    if missing:
+        raise MVP2AcceptanceError(f"{fixture_name} state digest missing fields: {missing}")
+    if result.trace_privacy_state.fixture_domain != "GITHUB_ALLOWED":
+        raise MVP2AcceptanceError(f"{fixture_name} did not replay TracePrivacyState fixture domain")
+    unsafe_flags = {
+        "contains_raw_audio": result.trace_privacy_state.contains_raw_audio,
+        "contains_raw_trace": result.trace_privacy_state.contains_raw_trace,
+        "contains_real_user_input": result.trace_privacy_state.contains_real_user_input,
+        "contains_secrets": result.trace_privacy_state.contains_secrets,
+        "contains_unredacted_tool_result": result.trace_privacy_state.contains_unredacted_tool_result,
+        "contains_large_raw_web_content": result.trace_privacy_state.contains_large_raw_web_content,
+    }
+    if any(value is not False for value in unsafe_flags.values()):
+        raise MVP2AcceptanceError(f"{fixture_name} replayed unsafe fixture flags: {unsafe_flags}")
+
+
+def _assert_mvp2_scenario(
+    scenario_id: str,
+    *,
+    fixtures: tuple[Mapping[str, Any], ...],
+    results: tuple[ReplayResult, ...],
+) -> dict[str, Any]:
+    if scenario_id == "MVP2-TOOL-MANIFEST-001":
+        return _assert_mvp2_tool_manifest(fixtures[0], results[0])
+    if scenario_id == "MVP2-TOOL-ARGS-PARTIAL-001":
+        return _assert_mvp2_tool_arguments_partial(fixtures[0], results[0])
+    if scenario_id == "MVP2-TOOL-BLOCKED-INSUFFICIENT-ARGS-001":
+        return _assert_mvp2_tool_blocked_insufficient_args(fixtures[0], results[0])
+    if scenario_id == "MVP2-MEMO-SANDBOX-WRITE-001":
+        return _assert_mvp2_demo_tool_call(
+            fixtures[0],
+            results[0],
+            tool_call_id="tool_call_mvp2_slice4_memo_create",
+            tool_name="memo",
+            trust_level="TRUSTED_DEMO_TOOL_RESULT",
+            source_type="DEMO_SANDBOX",
+            required_ui_namespace="memo",
+        )
+    if scenario_id == "MVP2-ALARM-SANDBOX-SCHEDULE-001":
+        return _assert_mvp2_demo_tool_call(
+            fixtures[0],
+            results[0],
+            tool_call_id="tool_call_mvp2_slice4_alarm_create",
+            tool_name="alarm",
+            trust_level="TRUSTED_DEMO_TOOL_RESULT",
+            source_type="DEMO_SANDBOX",
+            required_ui_namespace="alarm",
+        )
+    if scenario_id == "MVP2-FLASHLIGHT-DEMO-DEVICE-ACTION-001":
+        return _assert_mvp2_demo_tool_call(
+            fixtures[0],
+            results[0],
+            tool_call_id="tool_call_mvp2_slice4_flashlight_on",
+            tool_name="flashlight",
+            trust_level="TRUSTED_DEMO_TOOL_RESULT",
+            source_type="DEMO_SANDBOX",
+            required_ui_namespace="flashlight",
+        )
+    if scenario_id == "MVP2-WEATHER-READ-ONLY-001":
+        return _assert_mvp2_demo_tool_call(
+            fixtures[0],
+            results[0],
+            tool_call_id="tool_call_mvp2_slice4_weather",
+            tool_name="weather",
+            trust_level="EXTERNAL_READ_PROVIDER_RESULT",
+            source_type="READ_ONLY_EXTERNAL",
+            required_ui_namespace=None,
+            optional_ui_namespace="weather",
+        )
+    if scenario_id == "MVP2-WEBSEARCH-UNTRUSTED-EVIDENCE-001":
+        return _assert_mvp2_websearch_untrusted_evidence(fixtures[0], results[0])
+    if scenario_id == "MVP2-UI-STATE-PATCHED-001":
+        return _assert_mvp2_ui_state_patched(fixtures[0], results[0])
+    if scenario_id == "MVP2-DEMO-DESTRUCTIVE-CONFIRMATION-001":
+        return _assert_mvp2_demo_destructive_confirmation(fixtures[0], results[0])
+    if scenario_id == "MVP2-STALE-TOOL-RESULT-PROGRESSIVE-001":
+        return _assert_mvp2_progressive_stale_tool_result(fixtures[0], results[0])
+    if scenario_id == "MVP2-COMPOSER-SPOKEN-PLAN-001":
+        return _assert_mvp2_composer_spoken_plan(fixtures[0], results[0])
+    if scenario_id == "MVP2-COMMITMENT-COVERAGE-001":
+        return _assert_mvp2_commitment_coverage_gate(fixtures[0], results[0])
+    if scenario_id == "MVP2-PROGRESS-TRUTHFULNESS-001":
+        return _assert_mvp2_progress_truthfulness_gate(fixtures[0], results[0])
+    if scenario_id == "MVP2-ACCEPTANCE-SCOPE-SAFETY-001":
+        return _assert_mvp2_acceptance_scope_safety(fixtures, results)
+    raise MVP2AcceptanceError(f"Unknown MVP-2 acceptance scenario: {scenario_id}")
+
+
+def _assert_mvp2_tool_manifest(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(events, ["TOOL_MANIFEST_LOADED"])
+    if "TOOL_EXECUTION_STARTED" in events:
+        raise MVP2AcceptanceError("tool manifest scenario must not start execution")
+    manifests = {str(event["tool_name"]): event for event in events["TOOL_MANIFEST_LOADED"]}
+    expected_tool_names = ("alarm", "flashlight", "memo", "weather", "webSearch")
+    if tuple(sorted(manifests)) != expected_tool_names:
+        raise MVP2AcceptanceError("tool manifest scenario must load all MVP-2 tools")
+    required_fields = {"tool_adapter_id", "tool_manifest_version", "side_effect_class"}
+    for tool_name, event in manifests.items():
+        missing_fields = sorted(field for field in required_fields if event.get(field) in (None, ""))
+        if missing_fields:
+            raise MVP2AcceptanceError(f"{tool_name} manifest missing fields: {missing_fields}")
+    websearch = manifests["webSearch"]
+    if websearch.get("tool_category") != "EXTERNAL_READ_UNTRUSTED":
+        raise MVP2AcceptanceError("webSearch manifest must mark untrusted external read category")
+    if websearch.get("trust_level") != "UNTRUSTED_WEB_EVIDENCE":
+        raise MVP2AcceptanceError("webSearch manifest trust label must be UNTRUSTED_WEB_EVIDENCE")
+    if result.tool_execution_state.tool_calls:
+        raise MVP2AcceptanceError("tool manifest scenario must not replay tool calls")
+    return {
+        "manifest_tool_names": list(expected_tool_names),
+        "manifest_count": len(manifests),
+        "execution_started_count": 0,
+    }
+
+
+def _assert_mvp2_tool_arguments_partial(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(events, ["TOOL_ARGUMENTS_PARTIAL"])
+    partial = events["TOOL_ARGUMENTS_PARTIAL"][0]
+    tool_call_id = str(partial["tool_call_id"])
+    call = result.tool_execution_state.tool_calls[tool_call_id]
+    if not partial.get("missing_fields"):
+        raise MVP2AcceptanceError("TOOL_ARGUMENTS_PARTIAL must record missing_fields")
+    if call.ready_arguments or call.authorizations or call.execution_started or call.results:
+        raise MVP2AcceptanceError("partial argument scenario must not execute incomplete tool call")
+    return {
+        "tool_call_id": tool_call_id,
+        "missing_fields": list(partial["missing_fields"]),
+        "partial_argument_count": len(call.partial_arguments),
+        "execution_started_count": len(call.execution_started),
+    }
+
+
+def _assert_mvp2_tool_blocked_insufficient_args(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(events, ["TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS"])
+    blocked = events["TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS"][0]
+    if blocked.get("source_event_id") in (None, ""):
+        raise MVP2AcceptanceError("blocked insufficient args event must cite source_event_id")
+    tool_call_id = str(blocked["tool_call_id"])
+    call = result.tool_execution_state.tool_calls[tool_call_id]
+    if call.lifecycle_status != "BLOCKED_INSUFFICIENT_ARGUMENTS":
+        raise MVP2AcceptanceError("blocked insufficient args must replay blocked lifecycle")
+    if call.execution_started or call.results:
+        raise MVP2AcceptanceError("blocked insufficient args must not execute or produce ToolResult")
+    return {
+        "tool_call_id": tool_call_id,
+        "blocking_fields": list(blocked["blocking_fields"]),
+        "source_event_id": blocked["source_event_id"],
+        "lifecycle_status": call.lifecycle_status,
+    }
+
+
+def _assert_mvp2_demo_tool_call(
+    fixture: Mapping[str, Any],
+    result: ReplayResult,
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    trust_level: str,
+    source_type: str,
+    required_ui_namespace: str | None,
+    optional_ui_namespace: str | None = None,
+) -> dict[str, Any]:
+    call = result.tool_execution_state.tool_calls[tool_call_id]
+    call_tool_name = call.tool_name or _mvp2_tool_name_for_call(fixture, tool_call_id)
+    if call_tool_name != tool_name:
+        raise MVP2AcceptanceError(f"{tool_call_id} must bind tool_name={tool_name}")
+    if call.lifecycle_status != "RESULT_RECEIVED":
+        raise MVP2AcceptanceError(f"{tool_call_id} must replay a completed ToolResult")
+    if not call.execution_started:
+        raise MVP2AcceptanceError(f"{tool_call_id} must record TOOL_EXECUTION_STARTED")
+    result_event = call.results[-1]
+    if result_event.trust_level != trust_level or result_event.source_type != source_type:
+        raise MVP2AcceptanceError(f"{tool_call_id} ToolResult trust/source mismatch")
+    if required_ui_namespace is None and optional_ui_namespace is None:
+        if call.ui_patches:
+            raise MVP2AcceptanceError(f"{tool_call_id} must not mutate demo UI state")
+    elif required_ui_namespace is not None:
+        if not call.ui_patches:
+            raise MVP2AcceptanceError(f"{tool_call_id} must emit TOOL_UI_STATE_PATCHED")
+        if required_ui_namespace not in result.demo_ui_state.namespaces:
+            raise MVP2AcceptanceError(f"{required_ui_namespace} UI namespace was not replayed from patches")
+    elif call.ui_patches and optional_ui_namespace not in result.demo_ui_state.namespaces:
+        raise MVP2AcceptanceError(f"{optional_ui_namespace} UI namespace was not replayed from optional patch")
+    _assert_mvp2_no_non_patch_demo_mutations(fixture)
+    return {
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "trust_level": trust_level,
+        "source_type": source_type,
+        "ui_patch_count": len(call.ui_patches),
+    }
+
+
+def _assert_mvp2_websearch_untrusted_evidence(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    call = result.tool_execution_state.tool_calls["tool_call_mvp2_slice4_websearch"]
+    if call.results[-1].trust_level != "UNTRUSTED_WEB_EVIDENCE":
+        raise MVP2AcceptanceError("webSearch ToolResult must be UNTRUSTED_WEB_EVIDENCE")
+    if call.results[-1].source_type != "EXTERNAL_READ_UNTRUSTED":
+        raise MVP2AcceptanceError("webSearch source_type must be EXTERNAL_READ_UNTRUSTED")
+    if call.ui_patches:
+        raise MVP2AcceptanceError("webSearch must not emit UI patches")
+    task = result.slowtask_state.tasks["task_mvp2_slice4"]
+    evidence_reviewed = any(
+        event.event_name == "EVIDENCE_REVIEWED"
+        and event.refs == ("result://synthetic/demo_backend/websearch/search_000001",)
+        for event in task.evidence_events
+    )
+    if not evidence_reviewed:
+        raise MVP2AcceptanceError("webSearch result must enter evidence review, not instruction/backend action")
+    return {
+        "tool_name": "webSearch",
+        "trust_level": call.results[-1].trust_level,
+        "source_type": call.results[-1].source_type,
+        "ui_patch_count": len(call.ui_patches),
+        "evidence_reviewed": evidence_reviewed,
+    }
+
+
+def _assert_mvp2_ui_state_patched(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(events, ["TOOL_UI_STATE_PATCHED"])
+    if len(events["TOOL_UI_STATE_PATCHED"]) != 1:
+        raise MVP2AcceptanceError("UI patch scenario must carry exactly one TOOL_UI_STATE_PATCHED")
+    _assert_mvp2_no_non_patch_demo_mutations(fixture)
+    return {
+        "demo_ui_namespaces": sorted(result.demo_ui_state.namespaces),
+        "tool_ui_patch_count": len(events["TOOL_UI_STATE_PATCHED"]),
+        "non_patch_demo_mutation_count": 0,
+    }
+
+
+def _assert_mvp2_demo_destructive_confirmation(
+    fixture: Mapping[str, Any],
+    result: ReplayResult,
+) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(
+        events,
+        [
+            "CONFIRMATION_REQUIRED",
+            "WAITING_FOR_USER_CONFIRMATION",
+            "USER_CONFIRMATION_RECEIVED",
+            "CONFIRMATION_ACCEPTED",
+            "TOOL_EXECUTION_AUTHORIZED",
+            "TOOL_EXECUTION_STARTED",
+            "TOOL_UI_STATE_PATCHED",
+            "TOOL_RESULT_RECEIVED",
+        ],
+    )
+    destructive_calls: list[str] = []
+    for event in events["TOOL_MANIFEST_LOADED"]:
+        if event.get("side_effect_class") == "DEMO_DESTRUCTIVE_ACTION":
+            tool_prefix = str(event["tool_name"])
+            for call_id, call in result.tool_execution_state.tool_calls.items():
+                call_tool_name = call.tool_name or _mvp2_tool_name_for_call(fixture, call_id)
+                if call_tool_name == tool_prefix:
+                    destructive_calls.append(call_id)
+                    if not call.authorizations or call.authorizations[-1].confirmation_id in (None, ""):
+                        raise MVP2AcceptanceError("destructive tool execution must cite accepted confirmation")
+                    if not call.execution_started or not call.ui_patches or not call.results:
+                        raise MVP2AcceptanceError("destructive tool call must start, patch UI, and record result")
+    if sorted(destructive_calls) != [
+        "tool_call_mvp2_slice5_alarm_cancel",
+        "tool_call_mvp2_slice5_memo_delete",
+    ]:
+        raise MVP2AcceptanceError("destructive confirmation fixture must cover memo delete and alarm cancel")
+    return {
+        "destructive_tool_calls": sorted(destructive_calls),
+        "accepted_confirmation_count": len(events["CONFIRMATION_ACCEPTED"]),
+        "execution_started_count": len(destructive_calls),
+        "demo_ui_namespaces": sorted(result.demo_ui_state.namespaces),
+    }
+
+
+def _assert_mvp2_progressive_stale_tool_result(
+    fixture: Mapping[str, Any],
+    result: ReplayResult,
+) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(
+        events,
+        [
+            "TOOL_EXECUTION_STARTED",
+            "PLAN_VERSION_ADVANCED",
+            "TOOL_RESULT_RECEIVED",
+            "TOOL_RESULT_MARKED_STALE",
+            "STALE_EVIDENCE_RECORDED",
+        ],
+    )
+    result_event = events["TOOL_RESULT_RECEIVED"][0]
+    stale_event = events["TOOL_RESULT_MARKED_STALE"][0]
+    recorded = events["STALE_EVIDENCE_RECORDED"][0]
+    if int(result_event["plan_version"]) >= int(stale_event["current_plan_version"]):
+        raise MVP2AcceptanceError("stale ToolResult must retain old plan_version binding")
+    if stale_event.get("caused_by_event_id") != result_event["event_id"]:
+        raise MVP2AcceptanceError("TOOL_RESULT_MARKED_STALE must be caused by old-plan ToolResult")
+    if recorded.get("source_tool_result_event_id") != result_event["event_id"]:
+        raise MVP2AcceptanceError("STALE_EVIDENCE_RECORDED must cite old ToolResult")
+    task = result.slowtask_state.tasks[str(recorded["task_id"])]
+    if task.semantic_commitments:
+        raise MVP2AcceptanceError("stale result without adoption must not emit SemanticCommitment")
+    return {
+        "old_plan_tool_result_event_id": result_event["event_id"],
+        "current_plan_version": task.current_plan_version,
+        "stale_evidence_count": len(task.stale_evidence_refs),
+        "adopted_evidence_count": len(task.adopted_evidence),
+        "semantic_commitment_count": len(task.semantic_commitments),
+    }
+
+
+def _assert_mvp2_composer_spoken_plan(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(events, ["SPOKEN_PLAN_EMITTED"])
+    if any(event_name in events for event_name in {
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        "COMMITMENT_COVERAGE_CHECK_FAILED",
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+        "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+        "PLAYBACK_SPAN_STARTED",
+    }):
+        raise MVP2AcceptanceError("composer scenario must leave SpokenPlan unchecked and unplayed")
+    output_modes = sorted({plan.output_mode for plan in result.spoken_plan_state.spoken_plans.values()})
+    return {
+        "spoken_plan_count": len(result.spoken_plan_state.spoken_plans),
+        "checked_plan_count": len(result.spoken_plan_check_state.passed_checks)
+        + len(result.spoken_plan_check_state.failed_checks),
+        "playback_count": len(events.get("PLAYBACK_SPAN_STARTED", ())),
+        "output_modes": output_modes,
+    }
+
+
+def _assert_mvp2_commitment_coverage_gate(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(events, ["COMMITMENT_COVERAGE_CHECK_PASSED", "PLAYBACK_SPAN_STARTED"])
+    coverage = _find_event_mvp2(fixture, "COMMITMENT_COVERAGE_CHECK_PASSED")
+    playback = _find_event_mvp2(
+        fixture,
+        "PLAYBACK_SPAN_STARTED",
+        approved_check_event_id=coverage["event_id"],
+    )
+    if playback.get("spoken_plan_id") != coverage.get("spoken_plan_id"):
+        raise MVP2AcceptanceError("coverage-gated playback must reference matching spoken_plan_id")
+    if result.playback_state.approved_check_event_id != coverage["event_id"]:
+        raise MVP2AcceptanceError("PlaybackState must retain approved coverage check id")
+    return {
+        "coverage_pass_event_id": coverage["event_id"],
+        "spoken_plan_id": coverage["spoken_plan_id"],
+        "playback_span_id": playback["playback_span_id"],
+    }
+
+
+def _assert_mvp2_progress_truthfulness_gate(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp2(fixture)
+    _require_mvp2_event_names(events, ["PROGRESS_TRUTHFULNESS_CHECK_PASSED", "PLAYBACK_SPAN_STARTED"])
+    truthfulness = _find_event_mvp2(fixture, "PROGRESS_TRUTHFULNESS_CHECK_PASSED")
+    playback = _find_event_mvp2(
+        fixture,
+        "PLAYBACK_SPAN_STARTED",
+        approved_check_event_id=truthfulness["event_id"],
+    )
+    if playback.get("spoken_plan_id") != truthfulness.get("spoken_plan_id"):
+        raise MVP2AcceptanceError("truthfulness-gated playback must reference matching spoken_plan_id")
+    return {
+        "truthfulness_pass_event_id": truthfulness["event_id"],
+        "spoken_plan_id": truthfulness["spoken_plan_id"],
+        "truthfulness_level": truthfulness["truthfulness_level"],
+        "playback_span_id": playback["playback_span_id"],
+    }
+
+
+def _assert_mvp2_acceptance_scope_safety(
+    fixtures: tuple[Mapping[str, Any], ...],
+    results: tuple[ReplayResult, ...],
+) -> dict[str, Any]:
+    if not fixtures or len(fixtures) != len(results):
+        raise MVP2AcceptanceError("scope safety scenario must cover all checked fixtures")
+    for fixture, result in zip(fixtures, results, strict=True):
+        assert_mvp2_fixture_is_repo_safe(fixture)
+        if result.replay_mode != "deterministic" or result.fixture_domain != "GITHUB_ALLOWED":
+            raise MVP2AcceptanceError("scope safety scenario requires deterministic GITHUB_ALLOWED fixtures")
+    return {
+        "fixture_count": len(fixtures),
+        "replay_modes": sorted({result.replay_mode for result in results}),
+        "fixture_domains": sorted({result.fixture_domain for result in results}),
+        "unsafe_fixture_count": 0,
+        "runtime_execution_detected": False,
+    }
+
+
+def _assert_mvp2_no_non_patch_demo_mutations(fixture: Mapping[str, Any]) -> None:
+    for event in _required_sequence_mvp2(fixture, "events"):
+        if not isinstance(event, Mapping):
+            raise MVP2AcceptanceError("fixture events must be objects")
+        event_name = str(event.get("event_name", ""))
+        source_module = str(event.get("source_module", ""))
+        if source_module in {"direct_frontend_mutator", "model_text_ui_driver"}:
+            raise MVP2AcceptanceError("demo UI/backend mutation must not come from model text or frontend direct mutator")
+        if event_name == "TOOL_RESULT_RECEIVED" and event.get("tool_name") != "webSearch":
+            continue
+
+
+def _mvp2_tool_name_for_call(fixture: Mapping[str, Any], tool_call_id: str) -> str | None:
+    for event in _required_sequence_mvp2(fixture, "events"):
+        if not isinstance(event, Mapping) or event.get("tool_call_id") != tool_call_id:
+            continue
+        tool_name = event.get("tool_name")
+        if isinstance(tool_name, str) and tool_name:
+            return tool_name
+    return None
+
+
+def _assert_mvp2_mock_degraded_real_labels(fixture: Mapping[str, Any]) -> None:
+    for event in _required_sequence_mvp2(fixture, "events"):
+        if not isinstance(event, Mapping):
+            raise MVP2AcceptanceError("fixture events must be objects")
+        event_name = str(event.get("event_name", ""))
+        output_mode = event.get("output_mode")
+        if output_mode is not None and output_mode not in MVP2_OUTPUT_MODES:
+            raise MVP2AcceptanceError(f"{event_name} must not use real or unlabeled output_mode in MVP-2 acceptance")
+        if event_name == "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED":
+            output_modes = event.get("output_modes", ())
+            deployment_modes = event.get("deployment_modes", ())
+            if not isinstance(output_modes, Sequence) or isinstance(output_modes, (str, bytes)):
+                raise MVP2AcceptanceError("capability output_modes must be a list")
+            if not isinstance(deployment_modes, Sequence) or isinstance(deployment_modes, (str, bytes)):
+                raise MVP2AcceptanceError("capability deployment_modes must be a list")
+            if not set(output_modes) <= MVP2_OUTPUT_MODES or not set(deployment_modes) <= MVP2_OUTPUT_MODES:
+                raise MVP2AcceptanceError("MVP-2 capability modes must be mock/degraded/fallback and must not be real")
+        capability = event.get("capability")
+        if capability is not None and capability not in MVP2_OUTPUT_MODES:
+            raise MVP2AcceptanceError("MVP-2 fixture tool capability must be mock/degraded/fallback")
+        if str(event.get("execution_mode", "")).startswith("real"):
+            raise MVP2AcceptanceError("MVP-2 acceptance must not claim real execution mode")
+
+
+def _assert_mvp2_safe_string_fixture_value(value: str, key_path: str) -> None:
+    lower_value = value.lower()
+    if _contains_secret_like_value(value):
+        raise MVP2AcceptanceError(f"forbidden secret-like fixture value: {key_path}")
+    if any(lower_value.endswith(extension) for extension in RAW_AUDIO_EXTENSIONS):
+        raise MVP2AcceptanceError(f"forbidden raw audio ref: {key_path}")
+    forbidden_markers = (
+        "audio/raw/",
+        "traces/",
+        "diagnostics/",
+        "replays/local/",
+        "raw trace",
+        "raw audio",
+        "raw transcript",
+        "raw web",
+        "large raw web",
+        "real user",
+        "access_token",
+        "api_key",
+        "authorization header",
+        "cookie=",
+    )
+    if any(marker in lower_value for marker in forbidden_markers):
+        raise MVP2AcceptanceError(f"forbidden local, raw, or secret marker: {key_path}")
+
+
+def _events_by_name_mvp2(fixture: Mapping[str, Any]) -> dict[str, list[Mapping[str, Any]]]:
+    events_by_name: dict[str, list[Mapping[str, Any]]] = {}
+    for event in _required_sequence_mvp2(fixture, "events"):
+        if not isinstance(event, Mapping):
+            raise MVP2AcceptanceError("fixture events must be objects")
+        events_by_name.setdefault(str(event["event_name"]), []).append(event)
+    return events_by_name
+
+
+def _require_mvp2_event_names(
+    events_by_name: Mapping[str, Sequence[Mapping[str, Any]]],
+    event_names: Sequence[str],
+) -> None:
+    missing = [event_name for event_name in event_names if event_name not in events_by_name]
+    if missing:
+        raise MVP2AcceptanceError(f"Missing expected MVP-2 scenario events: {missing}")
+
+
+def _find_event_mvp2(fixture: Mapping[str, Any], event_name: str, **matches: object) -> Mapping[str, Any]:
+    for event in _required_sequence_mvp2(fixture, "events"):
+        if not isinstance(event, Mapping) or event.get("event_name") != event_name:
+            continue
+        if all(event.get(field) == expected for field, expected in matches.items()):
+            return event
+    raise MVP2AcceptanceError(f"Missing {event_name} event matching {matches}")
+
+
+def _load_mvp2_fixture(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise MVP2AcceptanceError(f"Fixture not found: {path.name}")
+    with path.open(encoding="utf-8") as fixture_file:
+        loaded = json.load(fixture_file)
+    if not isinstance(loaded, dict):
+        raise MVP2AcceptanceError(f"Fixture must contain a JSON object: {path.name}")
+    return loaded
+
+
+def _required_mapping_mvp2(mapping: Mapping[str, Any], field: str) -> Mapping[str, Any]:
+    value = mapping.get(field)
+    if not isinstance(value, Mapping):
+        raise MVP2AcceptanceError(f"{field} must be an object")
+    return value
+
+
+def _required_sequence_mvp2(mapping: Mapping[str, Any], field: str) -> Sequence[Any]:
+    value = mapping.get(field)
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise MVP2AcceptanceError(f"{field} must be a list")
+    return value
+
+
+def _required_str_mvp2(mapping: Mapping[str, Any], field: str) -> str:
+    value = mapping.get(field)
+    if not isinstance(value, str) or not value:
+        raise MVP2AcceptanceError(f"{field} must be a non-empty string")
+    return value
+
+
+def _string_tuple_mvp2(value: object, field: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise MVP2AcceptanceError(f"{field} must be a list of strings")
+    if not all(isinstance(item, str) and item for item in value):
+        raise MVP2AcceptanceError(f"{field} must be a list of non-empty strings")
+    return tuple(value)
 
 
 def _validate_mvp1_manifest_index(index: Mapping[str, Any]) -> None:

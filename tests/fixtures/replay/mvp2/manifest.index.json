@@ -110,6 +110,102 @@
     {
       "fixture": "007-composer-checks.fixture.json",
       "purpose": "CommitmentCoverageCheck and ProgressTruthfulnessCheck pass events gate checked playback without TTS/audio/frontend execution"
+    },
+    {
+      "fixture": "008-tool-manifest-only.fixture.json",
+      "purpose": "Tool manifest loading for memo, alarm, flashlight, weather, and webSearch without execution"
+    },
+    {
+      "fixture": "009-progressive-stale-tool-result.fixture.json",
+      "purpose": "Progressive Tool Executor stale result policy with old-plan ToolResult recorded as stale evidence"
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "MVP2-TOOL-MANIFEST-001",
+      "fixture": "008-tool-manifest-only.fixture.json",
+      "assertion": "manifest loading for all MVP-2 tools without TOOL_EXECUTION_STARTED"
+    },
+    {
+      "scenario_id": "MVP2-TOOL-ARGS-PARTIAL-001",
+      "fixture": "002-tool-executor-skeleton.fixture.json",
+      "assertion": "partial arguments record missing fields and do not execute blocked call"
+    },
+    {
+      "scenario_id": "MVP2-TOOL-BLOCKED-INSUFFICIENT-ARGS-001",
+      "fixture": "002-tool-executor-skeleton.fixture.json",
+      "assertion": "blocked insufficient arguments preserve source event and do not execute"
+    },
+    {
+      "scenario_id": "MVP2-MEMO-SANDBOX-WRITE-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "memo sandbox write emits Tool Executor lifecycle, UI patch, and trusted demo result"
+    },
+    {
+      "scenario_id": "MVP2-ALARM-SANDBOX-SCHEDULE-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "alarm sandbox schedule emits Tool Executor lifecycle, UI patch, and trusted demo result"
+    },
+    {
+      "scenario_id": "MVP2-FLASHLIGHT-DEMO-DEVICE-ACTION-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "flashlight simulated device action mutates only replayed demo UI state"
+    },
+    {
+      "scenario_id": "MVP2-WEATHER-READ-ONLY-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "weather read-only result is structured provider-style evidence without external write"
+    },
+    {
+      "scenario_id": "MVP2-WEBSEARCH-UNTRUSTED-EVIDENCE-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "webSearch result is UNTRUSTED_WEB_EVIDENCE and evidence-only"
+    },
+    {
+      "scenario_id": "MVP2-UI-STATE-PATCHED-001",
+      "fixture": "003-tool-ui-state-patch.fixture.json",
+      "assertion": "demo UI/backend replay state is reconstructed only from TOOL_UI_STATE_PATCHED"
+    },
+    {
+      "scenario_id": "MVP2-DEMO-DESTRUCTIVE-CONFIRMATION-001",
+      "fixture": "005-demo-destructive-confirmation.fixture.json",
+      "assertion": "DEMO_DESTRUCTIVE_ACTION execution starts only after current-plan CONFIRMATION_ACCEPTED"
+    },
+    {
+      "scenario_id": "MVP2-STALE-TOOL-RESULT-PROGRESSIVE-001",
+      "fixture": "009-progressive-stale-tool-result.fixture.json",
+      "assertion": "old-plan progressive ToolResult is marked stale and cannot advance current task without adoption"
+    },
+    {
+      "scenario_id": "MVP2-COMPOSER-SPOKEN-PLAN-001",
+      "fixture": "006-thinker-as-composer.fixture.json",
+      "assertion": "Thinker-as-Composer emits unchecked SpokenPlan from current-plan commitment and grounded progress"
+    },
+    {
+      "scenario_id": "MVP2-COMMITMENT-COVERAGE-001",
+      "fixture": "007-composer-checks.fixture.json",
+      "assertion": "CommitmentCoverageCheck passed event gates semantic commitment playback and failed checks cannot authorize playback"
+    },
+    {
+      "scenario_id": "MVP2-PROGRESS-TRUTHFULNESS-001",
+      "fixture": "007-composer-checks.fixture.json",
+      "assertion": "ProgressTruthfulnessCheck passed event gates grounded progress playback and failed checks cannot authorize playback"
+    },
+    {
+      "scenario_id": "MVP2-ACCEPTANCE-SCOPE-SAFETY-001",
+      "fixtures": [
+        "000-empty-mvp2-session.fixture.json",
+        "001-tool-execution-state.fixture.json",
+        "002-tool-executor-skeleton.fixture.json",
+        "003-tool-ui-state-patch.fixture.json",
+        "004-demo-tools.fixture.json",
+        "005-demo-destructive-confirmation.fixture.json",
+        "006-thinker-as-composer.fixture.json",
+        "007-composer-checks.fixture.json",
+        "008-tool-manifest-only.fixture.json",
+        "009-progressive-stale-tool-result.fixture.json"
+      ],
+      "assertion": "all MVP-2 fixtures are deterministic, GITHUB_ALLOWED, synthetic/redacted/minimal, and scope-safe"
     }
   ],
   "planned_fixture_checks": [
