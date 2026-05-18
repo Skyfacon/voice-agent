@@ -3,7 +3,7 @@ from __future__ import annotations
 from voice_agent.tools.manifest import ToolManifest
 
 
-MVP2_DEMO_TOOL_MANIFEST_VERSION = "2026-05-18.slice4"
+MVP2_DEMO_TOOL_MANIFEST_VERSION = "2026-05-18.slice5"
 
 
 def memo_create_manifest(
@@ -56,6 +56,29 @@ def memo_list_manifest() -> ToolManifest:
     )
 
 
+def memo_delete_manifest() -> ToolManifest:
+    return ToolManifest(
+        tool_name="memo.delete",
+        tool_adapter_id="demo.memo.delete",
+        tool_manifest_version=MVP2_DEMO_TOOL_MANIFEST_VERSION,
+        tool_category="DEMO_STATE_WRITE",
+        side_effect_class="DEMO_DESTRUCTIVE_ACTION",
+        risk_class="LOW",
+        required_arguments=("memo_item_id",),
+        optional_arguments=(),
+        argument_provenance_requirements=("memo_item_id",),
+        result_type="memo_delete",
+        trust_level="TRUSTED_DEMO_TOOL_RESULT",
+        source_type="DEMO_SANDBOX",
+        preview_required=True,
+        confirmation_required=True,
+        ui_patch_capable=True,
+        idempotency_required=True,
+        sandbox_state_namespace="memo",
+        capability="mock",
+    )
+
+
 def alarm_create_manifest(*, side_effect_class: str = "SANDBOX_WRITE") -> ToolManifest:
     return ToolManifest(
         tool_name="alarm",
@@ -96,6 +119,29 @@ def alarm_list_manifest() -> ToolManifest:
         preview_required=False,
         confirmation_required=False,
         ui_patch_capable=False,
+        idempotency_required=True,
+        sandbox_state_namespace="alarm",
+        capability="mock",
+    )
+
+
+def alarm_cancel_manifest() -> ToolManifest:
+    return ToolManifest(
+        tool_name="alarm.cancel",
+        tool_adapter_id="demo.alarm.cancel",
+        tool_manifest_version=MVP2_DEMO_TOOL_MANIFEST_VERSION,
+        tool_category="DEMO_SCHEDULE_ACTION",
+        side_effect_class="DEMO_DESTRUCTIVE_ACTION",
+        risk_class="LOW",
+        required_arguments=("alarm_id",),
+        optional_arguments=(),
+        argument_provenance_requirements=("alarm_id",),
+        result_type="alarm_cancel",
+        trust_level="TRUSTED_DEMO_TOOL_RESULT",
+        source_type="DEMO_SANDBOX",
+        preview_required=True,
+        confirmation_required=True,
+        ui_patch_capable=True,
         idempotency_required=True,
         sandbox_state_namespace="alarm",
         capability="mock",
@@ -175,8 +221,10 @@ def mvp2_demo_tool_manifests() -> tuple[ToolManifest, ...]:
     return (
         memo_create_manifest(),
         memo_list_manifest(),
+        memo_delete_manifest(),
         alarm_create_manifest(),
         alarm_list_manifest(),
+        alarm_cancel_manifest(),
         flashlight_set_manifest(),
         weather_manifest(),
         web_search_manifest(),
