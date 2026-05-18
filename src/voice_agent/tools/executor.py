@@ -46,6 +46,7 @@ class ToolExecutionResult:
     result_ref: str | None = None
     result_status: str | None = None
     blocking_fields: tuple[str, ...] = ()
+    payload: Mapping[str, Any] | None = None
 
 
 @dataclass
@@ -164,6 +165,7 @@ class DemoToolExecutor:
             produced_events=tuple(context.produced_events),
             result_ref=backend_result.result_ref,
             result_status=backend_result.result_status,
+            payload=backend_result.payload,
         )
 
     def _append_manifest_loaded(self, context: _EmissionContext, manifest: ToolManifest) -> None:

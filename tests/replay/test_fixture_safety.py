@@ -484,6 +484,13 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
                 "TOOL_UI_STATE_PATCHED replay reconstructs minimal demo UI/backend state from safe "
                 "synthetic patch refs without backend execution"
             ),
+        },
+        {
+            "fixture": "004-demo-tools.fixture.json",
+            "purpose": (
+                "memo, alarm, flashlight, weather, and webSearch demo tool replay with UI patch "
+                "reconstruction and UNTRUSTED_WEB_EVIDENCE webSearch result"
+            ),
         }
     ]
     assert manifest_index["fixture_safety_flags"] == {
