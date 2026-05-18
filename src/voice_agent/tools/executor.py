@@ -121,6 +121,8 @@ class DemoToolExecutor:
                 tool_name=manifest.tool_name,
                 tool_adapter_id=manifest.tool_adapter_id,
                 arguments=request.arguments,
+                idempotency_key=request.idempotency_key,
+                expected_state_namespace=manifest.sandbox_state_namespace,
             )
         except DemoBackendExecutionError as exc:
             self._append_execution_failed(context, failure_reason=exc.reason, retryable=False)
@@ -129,11 +131,28 @@ class DemoToolExecutor:
                 result_status="FAILED",
             )
 
+        if manifest.ui_patch_capable and backend_result.ui_patch is not None:
+            if backend_result.ui_patch.state_namespace != manifest.sandbox_state_namespace:
+                self._append_execution_failed(
+                    context,
+                    failure_reason="demo_backend_ui_patch_namespace_mismatch",
+                    retryable=False,
+                )
+                return ToolExecutionResult(
+                    produced_events=tuple(context.produced_events),
+                    result_status="FAILED",
+                )
         self._append_progress_updated(
             context,
             progress_type=backend_result.progress_type,
             progress_ref=backend_result.progress_ref,
         )
+        if manifest.ui_patch_capable and backend_result.ui_patch is not None:
+            self._append_ui_state_patched(
+                context,
+                ui_patch_id=backend_result.ui_patch.ui_patch_id,
+                patch_ref=backend_result.ui_patch.patch_ref,
+            )
         self._append_result_received(
             context,
             result_status=backend_result.result_status,
@@ -321,6 +340,24 @@ class DemoToolExecutor:
             event_id=f"{context.request.event_id_prefix}_progress_updated",
             progress_type=progress_type,
             progress_ref=progress_ref,
+            tool_name=context.request.tool_name,
+        )
+        context.caused_by_event_id = str(event["event_id"])
+
+    def _append_ui_state_patched(
+        self,
+        context: _EmissionContext,
+        *,
+        ui_patch_id: str,
+        patch_ref: str,
+    ) -> None:
+        event = self._append_event(
+            context,
+            event_name="TOOL_UI_STATE_PATCHED",
+            event_id=f"{context.request.event_id_prefix}_ui_state_patched",
+            ui_patch_id=ui_patch_id,
+            idempotency_key=context.request.idempotency_key,
+            patch_ref=patch_ref,
             tool_name=context.request.tool_name,
         )
         context.caused_by_event_id = str(event["event_id"])

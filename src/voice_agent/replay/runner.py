@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from voice_agent.events.envelope import EventValidationError, validate_event_envelope
 from voice_agent.events.registry import MVP1_EVENT_NAMES, get_event_definition
@@ -16,6 +17,7 @@ from voice_agent.router.router import (
     MVP1_TASK_FOCUS_VALUES,
 )
 from voice_agent.state.adapter_health_state import AdapterHealthState
+from voice_agent.state.demo_ui_state import DemoUIState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
 from voice_agent.state.slowtask_state import SlowTaskState
@@ -42,6 +44,7 @@ class ReplayResult:
     trace_privacy_state: TracePrivacyState
     slowtask_state: SlowTaskState
     tool_execution_state: ToolExecutionState
+    demo_ui_state: DemoUIState
     diagnostics: dict[str, Any]
     state_digest: dict[str, Any]
     result_status: str
@@ -93,6 +96,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     adapter_health_state = AdapterHealthState()
     trace_privacy_state = TracePrivacyState.from_manifest(manifest.to_dict())
     tool_execution_state = ToolExecutionState()
+    demo_ui_state = DemoUIState()
 
     for event in ordered_events:
         diagnostics["data_plane_refs"].extend(_unavailable_data_plane_refs(event))
@@ -102,6 +106,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
                 task_focus_state.reduce_event(event),
                 slowtask_state.reduce_event(event),
                 tool_execution_state.reduce_event(event),
+                demo_ui_state.reduce_event(event),
                 playback_state.reduce_event(event),
                 adapter_health_state.reduce_event(event),
                 trace_privacy_state.reduce_event(event),
@@ -139,6 +144,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         trace_privacy_state=trace_privacy_state,
         slowtask_state=slowtask_state,
         tool_execution_state=tool_execution_state,
+        demo_ui_state=demo_ui_state,
     )
     replay_events = _build_replay_marker_events(
         manifest=manifest,
@@ -157,6 +163,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         task_focus_state=task_focus_state,
         slowtask_state=slowtask_state,
         tool_execution_state=tool_execution_state,
+        demo_ui_state=demo_ui_state,
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
@@ -544,7 +551,9 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
     tool_manifests_by_name: dict[str, Mapping[str, Any]] = {}
     tool_names_by_call: dict[str, str] = {}
     accepted_destructive_confirmations_by_id: dict[str, Mapping[str, Any]] = {}
-    started_tool_calls: set[tuple[str, str]] = set()
+    started_tool_calls_by_task: dict[tuple[str, str], Mapping[str, Any]] = {}
+    started_tool_calls_by_plan: dict[tuple[str, str, int], Mapping[str, Any]] = {}
+    started_tool_manifests_by_plan: dict[tuple[str, str, int], Mapping[str, Any]] = {}
     cancel_requests_by_id: dict[str, Mapping[str, Any]] = {}
 
     for event in ordered_events:
@@ -584,7 +593,33 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
                 manifest=manifest,
                 accepted_confirmations_by_id=accepted_destructive_confirmations_by_id,
             )
-            started_tool_calls.add(_tool_call_task_key(event))
+            tool_call_plan_key = _tool_call_plan_key(event)
+            started_tool_calls_by_task[_tool_call_task_key(event)] = event
+            started_tool_calls_by_plan[tool_call_plan_key] = event
+            started_tool_manifests_by_plan[tool_call_plan_key] = manifest
+        elif event_name == "TOOL_UI_STATE_PATCHED":
+            tool_call_plan_key = _tool_call_plan_key(event)
+            started_event = started_tool_calls_by_plan.get(tool_call_plan_key)
+            if started_event is None:
+                raise ReplayValidationError(
+                    "TOOL_UI_STATE_PATCHED requires prior TOOL_EXECUTION_STARTED for the same "
+                    "tool_call_id, task_id, and plan_version"
+                )
+            if event.get("idempotency_key") != started_event.get("idempotency_key"):
+                raise ReplayValidationError("TOOL_UI_STATE_PATCHED idempotency_key must match TOOL_EXECUTION_STARTED")
+            patch_manifest = started_tool_manifests_by_plan.get(tool_call_plan_key)
+            if patch_manifest is None:
+                raise ReplayValidationError(
+                    "TOOL_UI_STATE_PATCHED requires manifest bound to prior TOOL_EXECUTION_STARTED"
+                )
+            patch_manifest = _validate_tool_ui_patch_manifest_gate(
+                patch_event=event,
+                manifest=patch_manifest,
+            )
+            _validate_ui_patch_namespace_matches_manifest(
+                patch_event=event,
+                manifest=patch_manifest,
+            )
         elif event_name == "TOOL_EXECUTION_CANCEL_REQUESTED":
             caused_by_event = events_by_id.get(str(event["caused_by_event_id"]))
             if caused_by_event is None or caused_by_event["event_name"] not in {
@@ -605,7 +640,7 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
                 raise ReplayValidationError(
                     "TOOL_EXECUTION_CANCEL_REQUESTED task_event_seq must follow SlowTask decision"
                 )
-            if _tool_call_task_key(event) not in started_tool_calls:
+            if _tool_call_task_key(event) not in started_tool_calls_by_task:
                 raise ReplayValidationError(
                     "TOOL_EXECUTION_CANCEL_REQUESTED requires prior TOOL_EXECUTION_STARTED for the same "
                     "tool_call_id and task_id"
@@ -646,6 +681,49 @@ def _validate_tool_start_manifest_gate(
         )
     _validate_tool_manifest_side_effect_allowed(manifest)
     return manifest
+
+
+def _validate_tool_ui_patch_manifest_gate(
+    *,
+    patch_event: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    tool_name = patch_event.get("tool_name")
+    if tool_name not in (None, "") and str(tool_name) != str(manifest["tool_name"]):
+        raise ReplayValidationError("TOOL_UI_STATE_PATCHED tool_name must match started tool manifest")
+    _validate_tool_manifest_side_effect_allowed(manifest)
+    if manifest.get("ui_patch_capable") is not True:
+        raise ReplayValidationError("TOOL_UI_STATE_PATCHED requires ui_patch_capable manifest")
+    return manifest
+
+
+def _validate_ui_patch_namespace_matches_manifest(
+    *,
+    patch_event: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> None:
+    manifest_namespace = manifest.get("sandbox_state_namespace")
+    if manifest_namespace in (None, ""):
+        return
+    patch_namespace = _patch_ref_namespace(str(patch_event["patch_ref"]))
+    if patch_namespace is None:
+        raise ReplayValidationError(
+            "TOOL_UI_STATE_PATCHED patch_ref namespace must be parseable when manifest declares sandbox_state_namespace"
+        )
+    if patch_namespace != str(manifest_namespace):
+        raise ReplayValidationError("TOOL_UI_STATE_PATCHED patch_ref namespace must match manifest namespace")
+
+
+def _patch_ref_namespace(patch_ref: str) -> str | None:
+    parsed = urlparse(patch_ref)
+    if parsed.scheme != "patch" or parsed.netloc != "synthetic":
+        return None
+    path_parts = tuple(unquote(part) for part in parsed.path.split("/") if part)
+    if len(path_parts) >= 4 and path_parts[0] == "demo_backend":
+        return path_parts[1]
+    if len(path_parts) >= 2:
+        return path_parts[-2]
+    return None
 
 
 def _validate_tool_manifest_side_effect_allowed(manifest: Mapping[str, Any]) -> None:

@@ -109,6 +109,18 @@ Reducer 负责从 canonical event journal 重建运行状态。Reducer 是 deter
 | terminal_state_policy | `TOOL_RESULT_RECEIVED`, `TOOL_EXECUTION_FAILED`, `TOOL_EXECUTION_CANCELLED`, `TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS` 只更新该 call 的 recorded lifecycle status；本 slice 不实现 retry scheduler、cancel runtime 或 executor terminal enforcement。 |
 | replay_validation | MVP-2 Slice 1 replay 必须重建 manifest、partial args、blocked insufficient args、ready args、preview、authorization、started、progress、UI patch refs、result refs、failure、retry、cancel metadata，且 deterministic replay 不执行任何 tool/runtime。`TOOL_EXECUTION_STARTED` 必须能绑定 recorded `TOOL_MANIFEST_LOADED`，且不得用 started-event `tool_name` 覆盖既有 `TOOL_CALL_STARTED` binding；manifest `side_effect_class` 必须属于 MVP allowlist (`READ_ONLY`, `DRY_RUN`, `SANDBOX_WRITE`, `DEMO_DESTRUCTIVE_ACTION`)；真实外部副作用 class 必须拒绝。`TOOL_EXECUTION_CANCEL_REQUESTED` 必须晚于造成它的 SlowTask plan advance / cancel decision。 |
 
+### DemoUIState
+
+| 字段 | 规格 |
+| --- | --- |
+| owned_by | Tool Executor / Replay Runtime。 |
+| input_events | `TOOL_UI_STATE_PATCHED`。 |
+| output_state | frontend-visible demo backend namespaces；per-namespace applied `ui_patch_id` list；operation counts；latest patch id；per-patch `tool_call_id`, `task_id`, `plan_version`, `task_event_seq`, `idempotency_key`, `patch_ref`, parsed synthetic namespace / operation。 |
+| invariant_rules | 只 consume recorded `TOOL_UI_STATE_PATCHED` canonical fields；不得执行 demo backend、调用 frontend、调用网络、读取真实文件 payload、fetch `patch_ref`、读取 clock/random。`patch_ref` 只能作为 safe structured ref / synthetic substitute 解析为最小 replay state；不得从 `TOOL_RESULT_RECEIVED` 推断 demo UI mutation。重复 `ui_patch_id` 必须绑定同一 `idempotency_key` 和 `patch_ref`。 |
+| late_event_policy | Replay 按 `event_seq` 顺序应用 patch；同一 `ui_patch_id` 的重复幂等记录不重复计数。 |
+| terminal_state_policy | Demo UI replay state 不自行推断工具终态；工具终态仍由 `ToolExecutionState` 记录。 |
+| replay_validation | MVP-2 Slice 3 replay 必须从 `TOOL_UI_STATE_PATCHED.patch_ref` / synthetic substitute 重建最小 demo UI/backend state，且无 patch event 时即使有 successful `TOOL_RESULT_RECEIVED` 也不得产生 demo state mutation。 |
+
 ### PlaybackState
 
 | 字段 | 规格 |
@@ -154,6 +166,7 @@ State digest 至少包含：
 - `task_focus_state_hash`
 - `slowtask_state_hash`
 - `tool_execution_state_hash`
+- `demo_ui_state_hash`
 - `playback_state_hash`
 - `adapter_health_state_hash`
 - `trace_privacy_state_hash`

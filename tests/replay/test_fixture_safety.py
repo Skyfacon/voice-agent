@@ -477,6 +477,13 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
                 "Demo Tool Executor skeleton replay for read-only sandbox execution and "
                 "insufficient-provenance blocked execution without backend replay"
             ),
+        },
+        {
+            "fixture": "003-tool-ui-state-patch.fixture.json",
+            "purpose": (
+                "TOOL_UI_STATE_PATCHED replay reconstructs minimal demo UI/backend state from safe "
+                "synthetic patch refs without backend execution"
+            ),
         }
     ]
     assert manifest_index["fixture_safety_flags"] == {

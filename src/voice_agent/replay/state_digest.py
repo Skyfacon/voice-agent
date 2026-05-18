@@ -51,6 +51,7 @@ def state_digest(
     task_focus_state: Any | None = None,
     slowtask_state: Any | None = None,
     tool_execution_state: Any | None = None,
+    demo_ui_state: Any | None = None,
 ) -> dict[str, Any]:
     digest_without_overall: dict[str, Any] = {
         "digest_schema_version": DIGEST_SCHEMA_VERSION,
@@ -61,6 +62,7 @@ def state_digest(
         "task_focus_state_hash": stable_hash(task_focus_state or {}),
         "slowtask_state_hash": stable_hash(slowtask_state or {}),
         "tool_execution_state_hash": stable_hash(tool_execution_state or {}),
+        "demo_ui_state_hash": stable_hash(demo_ui_state or {}),
         "playback_state_hash": stable_hash(playback_state),
         "adapter_health_state_hash": stable_hash(adapter_health_state),
         "trace_privacy_state_hash": stable_hash(trace_privacy_state),
