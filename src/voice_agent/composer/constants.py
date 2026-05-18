@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+
+ALLOWED_TRUTHFULNESS_LEVELS = frozenset({"STATE_GROUNDED", "STYLE_ONLY_ACK"})
+ALLOWED_PROGRESS_SOURCE_EVENTS = frozenset(
+    {
+        "PLANNING_STARTED",
+        "PLANNING_RESTARTED",
+        "WAITING_FOR_SLOT",
+        "TOOL_MANIFEST_LOADED",
+        "TOOL_ARGUMENTS_PARTIAL",
+        "TOOL_ARGUMENTS_READY",
+        "TOOL_EXECUTION_STARTED",
+        "TOOL_PROGRESS_UPDATED",
+        "TOOL_CALL_RETRYING",
+        "WAITING_FOR_TOOL",
+        "TOOL_UI_STATE_PATCHED",
+        "WAITING_FOR_USER_CONFIRMATION",
+        "FINALIZING",
+        "SLOWTASK_DEGRADED",
+        "SLOWTASK_FAILED",
+    }
+)
+SLOWTASK_PROGRESS_SOURCE_EVENTS = frozenset(
+    {
+        "PLANNING_STARTED",
+        "PLANNING_RESTARTED",
+        "WAITING_FOR_SLOT",
+        "WAITING_FOR_TOOL",
+        "WAITING_FOR_USER_CONFIRMATION",
+        "FINALIZING",
+        "SLOWTASK_DEGRADED",
+        "SLOWTASK_FAILED",
+    }
+)
+TOOL_PROGRESS_SOURCE_EVENTS = ALLOWED_PROGRESS_SOURCE_EVENTS - SLOWTASK_PROGRESS_SOURCE_EVENTS
+ALLOWED_SOURCE_MODULES_BY_EVENT = {
+    "SEMANTIC_COMMITMENT_EMITTED": frozenset({"slowtask_runtime"}),
+    **{event_name: frozenset({"slowtask_runtime"}) for event_name in SLOWTASK_PROGRESS_SOURCE_EVENTS},
+    **{event_name: frozenset({"tool_executor"}) for event_name in TOOL_PROGRESS_SOURCE_EVENTS},
+}

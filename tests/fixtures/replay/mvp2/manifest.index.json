@@ -102,6 +102,10 @@
     {
       "fixture": "005-demo-destructive-confirmation.fixture.json",
       "purpose": "DEMO_DESTRUCTIVE_ACTION current-plan confirmation gate for sandbox-only memo delete and alarm cancel"
+    },
+    {
+      "fixture": "006-thinker-as-composer.fixture.json",
+      "purpose": "Thinker-as-Composer emits SPOKEN_PLAN_EMITTED from current-plan SemanticCommitment and grounded progress without checks or playback"
     }
   ],
   "planned_fixture_checks": [
@@ -132,6 +136,10 @@
     {
       "fixture": "006-progressive-stale-tool-result.fixture.json",
       "purpose": "progressive Tool Executor stale result policy"
+    },
+    {
+      "fixture": "006-thinker-as-composer.fixture.json",
+      "purpose": "SPOKEN_PLAN_EMITTED from current-plan SemanticCommitment and grounded progress"
     },
     {
       "fixture": "007-composer-checks.fixture.json",

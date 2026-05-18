@@ -618,6 +618,26 @@ MVP2_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "source_event_id",
         ),
     ),
+    "SPOKEN_PLAN_EMITTED": _definition(
+        "SPOKEN_PLAN_EMITTED",
+        required_fields=(
+            "spoken_plan_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "source_events",
+            "source_progress_event_ids",
+            "coverage_check_required",
+            "truthfulness_check_required",
+            "text_ref",
+            "emotion",
+            "speaking_style",
+            "interruptible",
+            "priority",
+            "source",
+            "output_mode",
+        ),
+    ),
 }
 MVP2_EVENT_NAMES = frozenset(MVP2_EVENT_DEFINITIONS) | {
     "TOOL_CALL_STARTED",

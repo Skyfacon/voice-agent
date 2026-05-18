@@ -1,0 +1,192 @@
+{
+  "replay_manifest": {
+    "manifest_schema_version": "1.0",
+    "replay_id": "replay_mvp2_thinker_as_composer_006",
+    "source_trace_ref": "fixture://mvp2/006-thinker-as-composer",
+    "replay_mode": "deterministic",
+    "event_schema_version_range": [
+      "1.0"
+    ],
+    "fixture_domain": "GITHUB_ALLOWED",
+    "generated_from": "hand_written_minimal",
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false,
+    "allowed_re_eval_components": []
+  },
+  "events": [
+    {
+      "event_name": "SESSION_STARTED",
+      "event_id": "evt_mvp2_slice6_session_started",
+      "event_seq": 1,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp2_slice6",
+      "conversation_id": "conv_mvp2_slice6",
+      "source_module": "session_runtime",
+      "created_monotonic_ms": 10,
+      "created_wall_clock_ms": 1700000060010,
+      "trace_redaction_level": "metadata_only",
+      "runtime_config_ref": "config://synthetic/mvp2/slice6",
+      "capability_snapshot_ref": "capability://synthetic/mvp2/slice6/mock"
+    },
+    {
+      "event_name": "SLOWTASK_CREATED",
+      "event_id": "evt_mvp2_slice6_slowtask_created",
+      "event_seq": 2,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp2_slice6",
+      "conversation_id": "conv_mvp2_slice6",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 20,
+      "created_wall_clock_ms": 1700000060020,
+      "caused_by_event_id": "evt_mvp2_slice6_session_started",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp2_slice6",
+      "plan_version": 1,
+      "task_event_seq": 1,
+      "initial_goal_ref": "goal://synthetic/mvp2/slice6"
+    },
+    {
+      "event_name": "PLANNING_STARTED",
+      "event_id": "evt_mvp2_slice6_planning_started",
+      "event_seq": 3,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp2_slice6",
+      "conversation_id": "conv_mvp2_slice6",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 30,
+      "created_wall_clock_ms": 1700000060030,
+      "caused_by_event_id": "evt_mvp2_slice6_slowtask_created",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp2_slice6",
+      "plan_version": 1,
+      "task_event_seq": 2,
+      "planning_reason": "synthetic_initial_plan"
+    },
+    {
+      "event_name": "SPOKEN_PLAN_EMITTED",
+      "event_id": "evt_mvp2_slice6_progress_spoken",
+      "event_seq": 4,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp2_slice6",
+      "conversation_id": "conv_mvp2_slice6",
+      "source_module": "composer",
+      "created_monotonic_ms": 40,
+      "created_wall_clock_ms": 1700000060040,
+      "caused_by_event_id": "evt_mvp2_slice6_planning_started",
+      "trace_redaction_level": "metadata_only",
+      "spoken_plan_id": "spoken_mvp2_slice6_progress",
+      "task_id": "task_mvp2_slice6",
+      "plan_version": 1,
+      "task_event_seq": 3,
+      "source_events": [
+        "evt_mvp2_slice6_planning_started"
+      ],
+      "source_progress_event_ids": [
+        "evt_mvp2_slice6_planning_started"
+      ],
+      "coverage_check_required": false,
+      "truthfulness_check_required": true,
+      "truthfulness_level": "STATE_GROUNDED",
+      "text_ref": "spoken://synthetic/mvp2/slice6/progress/planning",
+      "emotion": "focused",
+      "speaking_style": "brief",
+      "interruptible": true,
+      "priority": "low",
+      "source": "grounded_progress",
+      "output_mode": "mock"
+    },
+    {
+      "event_name": "FINALIZING",
+      "event_id": "evt_mvp2_slice6_finalizing",
+      "event_seq": 5,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp2_slice6",
+      "conversation_id": "conv_mvp2_slice6",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 50,
+      "created_wall_clock_ms": 1700000060050,
+      "caused_by_event_id": "evt_mvp2_slice6_planning_started",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp2_slice6",
+      "plan_version": 1,
+      "task_event_seq": 4,
+      "source_events": [
+        "evt_mvp2_slice6_planning_started"
+      ]
+    },
+    {
+      "event_name": "SEMANTIC_COMMITMENT_EMITTED",
+      "event_id": "evt_mvp2_slice6_semantic_commitment",
+      "event_seq": 6,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp2_slice6",
+      "conversation_id": "conv_mvp2_slice6",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 60,
+      "created_wall_clock_ms": 1700000060060,
+      "caused_by_event_id": "evt_mvp2_slice6_finalizing",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp2_slice6",
+      "plan_version": 1,
+      "task_event_seq": 5,
+      "commitment_id": "commitment_mvp2_slice6",
+      "source_events": [
+        "evt_mvp2_slice6_finalizing"
+      ],
+      "commitment_ref": "commitment://synthetic/mvp2/slice6/final",
+      "immutable_fields": [
+        "final_result.status"
+      ],
+      "must_say_fields": [
+        "final_result.summary"
+      ],
+      "forbidden_rewrite_fields": [
+        "resolved_arguments"
+      ]
+    },
+    {
+      "event_name": "SPOKEN_PLAN_EMITTED",
+      "event_id": "evt_mvp2_slice6_commitment_spoken",
+      "event_seq": 7,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp2_slice6",
+      "conversation_id": "conv_mvp2_slice6",
+      "source_module": "composer",
+      "created_monotonic_ms": 70,
+      "created_wall_clock_ms": 1700000060070,
+      "caused_by_event_id": "evt_mvp2_slice6_semantic_commitment",
+      "trace_redaction_level": "metadata_only",
+      "spoken_plan_id": "spoken_mvp2_slice6_commitment",
+      "task_id": "task_mvp2_slice6",
+      "plan_version": 1,
+      "task_event_seq": 6,
+      "source_events": [
+        "evt_mvp2_slice6_semantic_commitment"
+      ],
+      "source_commitment_id": "commitment_mvp2_slice6",
+      "source_progress_event_ids": [],
+      "coverage_check_required": true,
+      "truthfulness_check_required": false,
+      "text_ref": "spoken://synthetic/mvp2/slice6/commitment",
+      "emotion": "calm",
+      "speaking_style": "concise",
+      "interruptible": true,
+      "priority": "normal",
+      "source": "semantic_commitment",
+      "output_mode": "mock",
+      "immutable_fields": [
+        "final_result.status"
+      ],
+      "must_say_fields": [
+        "final_result.summary"
+      ],
+      "forbidden_rewrite_fields": [
+        "resolved_arguments"
+      ]
+    }
+  ]
+}

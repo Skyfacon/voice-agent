@@ -86,6 +86,7 @@ def test_state_digest_shape_includes_required_component_hashes_without_raw_paylo
         "slowtask_state_hash",
         "tool_execution_state_hash",
         "demo_ui_state_hash",
+        "spoken_plan_state_hash",
         "playback_state_hash",
         "adapter_health_state_hash",
         "trace_privacy_state_hash",

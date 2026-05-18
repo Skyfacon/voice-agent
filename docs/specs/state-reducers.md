@@ -121,6 +121,16 @@ Reducer 负责从 canonical event journal 重建运行状态。Reducer 是 deter
 | terminal_state_policy | Demo UI replay state 不自行推断工具终态；工具终态仍由 `ToolExecutionState` 记录。 |
 | replay_validation | MVP-2 Slice 3 replay 必须从 `TOOL_UI_STATE_PATCHED.patch_ref` / synthetic substitute 重建最小 demo UI/backend state，且无 patch event 时即使有 successful `TOOL_RESULT_RECEIVED` 也不得产生 demo state mutation。 |
 
+### SpokenPlanState
+
+| 字段 | 规格 |
+| --- | --- |
+| owned_by | Composer / Replay Runtime。 |
+| input_events | `SPOKEN_PLAN_EMITTED`。 |
+| output_state | per-`spoken_plan_id` draft metadata；`task_id`, `plan_version`, `task_event_seq`; source commitment/progress ids；coverage/truthfulness required flags；synthetic/redacted `text_ref`; emotion/style/priority；`output_mode`; symbolic commitment metadata such as `immutable_fields`, `must_say_fields`, `forbidden_rewrite_fields`。 |
+| invariant_rules | Reducer 只 consume recorded journal events；不得调用 Composer runtime、模型、TTS、tool、网络、clock/random 或 fetch `text_ref`。Composer output 只是 unchecked draft；不得改变 SlowTask-owned facts、resolved arguments、tool status、risk warnings、confirmation state、stale/adopted evidence metadata。 |
+| replay_validation | Replay 必须验证 source commitment/progress event exists and precedes `SPOKEN_PLAN_EMITTED`；source event 必须来自 canonical owner (`SEMANTIC_COMMITMENT_EMITTED` / SlowTask progress from `slowtask_runtime`, Tool progress from `tool_executor`)；`task_id` / `plan_version` match；commitment-derived speech has matching `source_commitment_id`, `coverage_check_required=true`, and exact symbolic metadata preservation for `immutable_fields` / `must_say_fields` / `forbidden_rewrite_fields`；progress-derived speech has matching `source_progress_event_ids`, `truthfulness_check_required=true`, and MVP truthfulness level in `STATE_GROUNDED` / `STYLE_ONLY_ACK`。 |
+
 ### PlaybackState
 
 | 字段 | 规格 |
@@ -167,6 +177,7 @@ State digest 至少包含：
 - `slowtask_state_hash`
 - `tool_execution_state_hash`
 - `demo_ui_state_hash`
+- `spoken_plan_state_hash`
 - `playback_state_hash`
 - `adapter_health_state_hash`
 - `trace_privacy_state_hash`

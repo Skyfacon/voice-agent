@@ -498,6 +498,13 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
                 "DEMO_DESTRUCTIVE_ACTION current-plan confirmation gate for sandbox-only memo "
                 "delete and alarm cancel"
             ),
+        },
+        {
+            "fixture": "006-thinker-as-composer.fixture.json",
+            "purpose": (
+                "Thinker-as-Composer emits SPOKEN_PLAN_EMITTED from current-plan SemanticCommitment "
+                "and grounded progress without checks or playback"
+            ),
         }
     ]
     assert manifest_index["fixture_safety_flags"] == {
