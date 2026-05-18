@@ -505,6 +505,13 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
                 "Thinker-as-Composer emits SPOKEN_PLAN_EMITTED from current-plan SemanticCommitment "
                 "and grounded progress without checks or playback"
             ),
+        },
+        {
+            "fixture": "007-composer-checks.fixture.json",
+            "purpose": (
+                "CommitmentCoverageCheck and ProgressTruthfulnessCheck pass events gate checked "
+                "playback without TTS/audio/frontend execution"
+            ),
         }
     ]
     assert manifest_index["fixture_safety_flags"] == {

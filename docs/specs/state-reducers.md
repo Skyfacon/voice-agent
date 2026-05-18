@@ -131,6 +131,16 @@ Reducer 负责从 canonical event journal 重建运行状态。Reducer 是 deter
 | invariant_rules | Reducer 只 consume recorded journal events；不得调用 Composer runtime、模型、TTS、tool、网络、clock/random 或 fetch `text_ref`。Composer output 只是 unchecked draft；不得改变 SlowTask-owned facts、resolved arguments、tool status、risk warnings、confirmation state、stale/adopted evidence metadata。 |
 | replay_validation | Replay 必须验证 source commitment/progress event exists and precedes `SPOKEN_PLAN_EMITTED`；source event 必须来自 canonical owner (`SEMANTIC_COMMITMENT_EMITTED` / SlowTask progress from `slowtask_runtime`, Tool progress from `tool_executor`)；`task_id` / `plan_version` match；commitment-derived speech has matching `source_commitment_id`, `coverage_check_required=true`, and exact symbolic metadata preservation for `immutable_fields` / `must_say_fields` / `forbidden_rewrite_fields`；progress-derived speech has matching `source_progress_event_ids`, `truthfulness_check_required=true`, and MVP truthfulness level in `STATE_GROUNDED` / `STYLE_ONLY_ACK`。 |
 
+### SpokenPlanCheckState
+
+| 字段 | 规格 |
+| --- | --- |
+| owned_by | Coverage Checker / ProgressTruthfulnessCheck / Replay Runtime。 |
+| input_events | `COMMITMENT_COVERAGE_CHECK_PASSED`, `COMMITMENT_COVERAGE_CHECK_FAILED`, `PROGRESS_TRUTHFULNESS_CHECK_PASSED`, `PROGRESS_TRUTHFULNESS_CHECK_FAILED`。 |
+| output_state | per-check pass/fail metadata by check `event_id`; `spoken_plan_id`; source commitment/progress ids; `truthfulness_level`; checked fields or failure reasons; `check_result_ref`; `output_mode`; per-spoken-plan check event ids。 |
+| invariant_rules | Reducer 只 consume recorded check events；不得调用 checker runtime、Composer、模型、TTS、tool、网络、clock/random 或 fetch `check_result_ref`。Check pass/fail 是独立 checker event，不是 Composer self-attestation。 |
+| replay_validation | Replay 必须验证 check source `SPOKEN_PLAN_EMITTED` exists and precedes check；coverage check 只能用于 `source=semantic_commitment`; truthfulness check 只能用于 `source=grounded_progress`; check `output_mode` 必须为 `real` / `mock` / `fallback` / `degraded`; `PLAYBACK_SPAN_STARTED.approved_check_event_id` 必须引用 matching passed check；failed check 不得 authorize playback。 |
+
 ### PlaybackState
 
 | 字段 | 规格 |
@@ -178,6 +188,7 @@ State digest 至少包含：
 - `tool_execution_state_hash`
 - `demo_ui_state_hash`
 - `spoken_plan_state_hash`
+- `spoken_plan_check_state_hash`
 - `playback_state_hash`
 - `adapter_health_state_hash`
 - `trace_privacy_state_hash`

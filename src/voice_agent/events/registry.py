@@ -638,6 +638,46 @@ MVP2_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "output_mode",
         ),
     ),
+    "COMMITMENT_COVERAGE_CHECK_PASSED": _definition(
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_commitment_id",
+            "checked_fields",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
+    "COMMITMENT_COVERAGE_CHECK_FAILED": _definition(
+        "COMMITMENT_COVERAGE_CHECK_FAILED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_commitment_id",
+            "failure_reasons",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
+    "PROGRESS_TRUTHFULNESS_CHECK_PASSED": _definition(
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_progress_event_ids",
+            "truthfulness_level",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
+    "PROGRESS_TRUTHFULNESS_CHECK_FAILED": _definition(
+        "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_progress_event_ids",
+            "failure_reasons",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
 }
 MVP2_EVENT_NAMES = frozenset(MVP2_EVENT_DEFINITIONS) | {
     "TOOL_CALL_STARTED",

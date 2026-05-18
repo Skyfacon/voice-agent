@@ -106,6 +106,10 @@
     {
       "fixture": "006-thinker-as-composer.fixture.json",
       "purpose": "Thinker-as-Composer emits SPOKEN_PLAN_EMITTED from current-plan SemanticCommitment and grounded progress without checks or playback"
+    },
+    {
+      "fixture": "007-composer-checks.fixture.json",
+      "purpose": "CommitmentCoverageCheck and ProgressTruthfulnessCheck pass events gate checked playback without TTS/audio/frontend execution"
     }
   ],
   "planned_fixture_checks": [
