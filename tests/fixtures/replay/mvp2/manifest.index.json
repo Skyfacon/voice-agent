@@ -90,6 +90,10 @@
     {
       "fixture": "002-tool-executor-skeleton.fixture.json",
       "purpose": "Demo Tool Executor skeleton replay for read-only sandbox execution and insufficient-provenance blocked execution without backend replay"
+    },
+    {
+      "fixture": "003-tool-ui-state-patch.fixture.json",
+      "purpose": "TOOL_UI_STATE_PATCHED replay reconstructs minimal demo UI/backend state from safe synthetic patch refs without backend execution"
     }
   ],
   "planned_fixture_checks": [

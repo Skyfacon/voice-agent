@@ -78,7 +78,9 @@
       "tool_adapter_id": "demo.memo",
       "tool_manifest_version": "2026-05-17.slice1",
       "side_effect_class": "SANDBOX_WRITE",
-      "risk_class": "LOW"
+      "risk_class": "LOW",
+      "ui_patch_capable": true,
+      "sandbox_state_namespace": "memo"
     },
     {
       "event_name": "SLOWTASK_CREATED",
