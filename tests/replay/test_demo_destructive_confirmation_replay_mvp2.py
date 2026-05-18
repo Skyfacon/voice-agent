@@ -120,12 +120,32 @@ def test_replay_rejects_destructive_confirmation_without_router_mediation() -> N
         run_replay_fixture(deepcopy(fixture))
 
 
+def test_replay_rejects_confirmation_router_turn_not_caused_by_waiting_prompt() -> None:
+    fixture = load_json_fixture(DESTRUCTIVE_CONFIRMATION_FIXTURE)
+    turn = _event_by_id(fixture["events"], "evt_mvp2_slice5_memo_delete_confirmation_turn_committed")
+    turn["caused_by_event_id"] = "evt_mvp2_slice5_memo_delete_confirmation_required"
+
+    with pytest.raises(ReplayValidationError, match="confirmation causal chain"):
+        run_replay_fixture(deepcopy(fixture))
+
+
 def test_replay_rejects_destructive_confirmation_with_different_preview_arguments() -> None:
     fixture = load_json_fixture(DESTRUCTIVE_CONFIRMATION_FIXTURE)
     _insert_memo_delete_execution_arguments_mismatch(fixture["events"])
 
     with pytest.raises(ReplayValidationError, match="previewed arguments"):
         run_replay_fixture(deepcopy(fixture))
+
+
+def test_replay_accepts_superseded_argument_snapshot_before_confirmed_preview() -> None:
+    fixture = load_json_fixture(DESTRUCTIVE_CONFIRMATION_FIXTURE)
+    _insert_superseded_memo_delete_arguments_before_preview(fixture["events"])
+
+    replay = run_replay_fixture(deepcopy(fixture))
+
+    memo_call = replay.tool_execution_state.tool_calls["tool_call_mvp2_slice5_memo_delete"]
+    assert memo_call.lifecycle_status == "RESULT_RECEIVED"
+    assert memo_call.authorizations[-1].confirmation_id == "confirmation_mvp2_slice5_memo_delete"
 
 
 def test_replay_rejects_destructive_confirmation_with_same_refs_but_different_argument_fingerprint() -> None:
@@ -262,6 +282,44 @@ def _route_memo_confirmation_patch_through_router(events: list[dict[str, object]
     }
     patch["caused_by_event_id"] = router["event_id"]
     events[insert_at:insert_at] = [turn, thinker, router]
+
+
+def _insert_superseded_memo_delete_arguments_before_preview(events: list[dict[str, object]]) -> None:
+    arguments = _event_by_id(events, "evt_mvp2_slice5_memo_delete_arguments_ready")
+    insert_at = events.index(arguments)
+    insert_event_seq = int(arguments["event_seq"])
+    insert_task_event_seq = int(arguments["task_event_seq"])
+    for event in events[insert_at:]:
+        event["event_seq"] = int(event["event_seq"]) + 1
+        event["created_monotonic_ms"] = int(event["created_monotonic_ms"]) + 1
+        event["created_wall_clock_ms"] = int(event["created_wall_clock_ms"]) + 1
+        if event.get("task_id") == "task_mvp2_slice5" and "task_event_seq" in event:
+            event["task_event_seq"] = int(event["task_event_seq"]) + 1
+
+    events.insert(
+        insert_at,
+        {
+            "event_name": "TOOL_ARGUMENTS_READY",
+            "event_id": "evt_mvp2_slice5_memo_delete_superseded_arguments_ready",
+            "event_seq": insert_event_seq,
+            "event_schema_version": "1.0",
+            "session_id": arguments["session_id"],
+            "conversation_id": arguments["conversation_id"],
+            "source_module": "tool_executor",
+            "created_monotonic_ms": int(arguments["created_monotonic_ms"]),
+            "created_wall_clock_ms": int(arguments["created_wall_clock_ms"]),
+            "caused_by_event_id": arguments["caused_by_event_id"],
+            "trace_redaction_level": "metadata_only",
+            "tool_call_id": "tool_call_mvp2_slice5_memo_delete",
+            "task_id": "task_mvp2_slice5",
+            "plan_version": 1,
+            "task_event_seq": insert_task_event_seq,
+            "tool_name": "memo.delete",
+            "resolved_arguments_ref": "args://synthetic/mvp2/slice5/memo-delete/superseded",
+            "provenance_ref": "provenance://synthetic/mvp2/slice5/memo-delete/superseded",
+            "argument_fingerprint": "sha256:superseded-argument-snapshot",
+        },
+    )
 
 
 def _insert_memo_delete_execution_arguments_mismatch(

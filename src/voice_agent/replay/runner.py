@@ -938,6 +938,11 @@ def _patch_received_is_caused_by_confirmation_path(
             task_focus="ACTIVE_TASK_PATCH",
             active_task_id=start.get("task_id"),
         )
+        and _confirmation_router_has_turn_evidence(
+            router_event,
+            waiting=waiting,
+            events_by_id=events_by_id,
+        )
         and _event_seq_strictly_increases(waiting, router_event, patch_received)
     )
 
@@ -990,6 +995,7 @@ def _validate_destructive_confirmation_required_for_event(
             and event.get("plan_version") == start_event.get("plan_version")
             and event.get("tool_call_id") == start_event.get("tool_call_id")
             and event.get("tool_name") == start_event.get("tool_name")
+            and _event_seq_before(required_for_event, event)
             and _event_seq_before(event, start_event)
             and (
                 event.get("resolved_arguments_ref") != preview_arguments.get("resolved_arguments_ref")
@@ -999,7 +1005,37 @@ def _validate_destructive_confirmation_required_for_event(
         ):
             raise ReplayValidationError(
                 "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the previewed arguments"
-            )
+    )
+
+
+def _confirmation_router_has_turn_evidence(
+    router_event: Mapping[str, Any] | None,
+    *,
+    waiting: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if router_event is None:
+        return False
+    turn_event = events_by_id.get(str(router_event.get("turn_committed_event_id")))
+    thinker_event = events_by_id.get(str(router_event.get("thinker_frame_event_id")))
+    return bool(
+        _event_matches(
+            turn_event,
+            event_name="TURN_INGRESS_COMMITTED",
+            turn_id=router_event.get("turn_id"),
+            utterance_id=router_event.get("utterance_id"),
+        )
+        and _event_matches(
+            thinker_event,
+            event_name="MOCK_THINKER_FRAME_EMITTED",
+            turn_id=router_event.get("turn_id"),
+            utterance_id=router_event.get("utterance_id"),
+        )
+        and turn_event.get("caused_by_event_id") == waiting.get("event_id")
+        and thinker_event.get("caused_by_event_id") == turn_event.get("event_id")
+        and router_event.get("caused_by_event_id") == thinker_event.get("event_id")
+        and _event_seq_strictly_increases(waiting, turn_event, thinker_event, router_event)
+    )
 
 
 def _matches_tool_arguments_ready(
