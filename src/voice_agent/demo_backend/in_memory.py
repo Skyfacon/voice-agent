@@ -41,11 +41,23 @@ class InMemoryDemoBackend:
         self._executed_calls: list[tuple[str, dict[str, Any]]] = []
         self._next_result_index = 1
         self._next_memo_index = 1
+        self._next_memo_list_index = 1
+        self._next_alarm_index = 1
+        self._next_alarm_list_index = 1
+        self._next_flashlight_index = 1
+        self._next_web_search_index = 1
+        self._memo_items: list[dict[str, str]] = []
+        self._alarm_items: list[dict[str, str]] = []
+        self._flashlight_state = "off"
         self._applied_ui_patches: list[dict[str, str]] = []
 
     @property
     def executed_calls(self) -> tuple[tuple[str, dict[str, Any]], ...]:
         return tuple((tool_name, dict(arguments)) for tool_name, arguments in self._executed_calls)
+
+    @property
+    def applied_ui_patches(self) -> tuple[dict[str, str], ...]:
+        return tuple(dict(patch) for patch in self._applied_ui_patches)
 
     def execute(
         self,
@@ -56,8 +68,26 @@ class InMemoryDemoBackend:
         idempotency_key: str | None = None,
         expected_state_namespace: str | None = None,
     ) -> DemoBackendResult:
-        if tool_adapter_id == "demo.memo":
+        if tool_adapter_id in {"demo.memo", "demo.memo.create"}:
             return self._execute_memo_create(
+                tool_name=tool_name,
+                arguments=arguments,
+                idempotency_key=idempotency_key,
+                expected_state_namespace=expected_state_namespace,
+            )
+        if tool_adapter_id == "demo.memo.list":
+            return self._execute_memo_list(tool_name=tool_name, arguments=arguments)
+        if tool_adapter_id == "demo.alarm.create":
+            return self._execute_alarm_create(
+                tool_name=tool_name,
+                arguments=arguments,
+                idempotency_key=idempotency_key,
+                expected_state_namespace=expected_state_namespace,
+            )
+        if tool_adapter_id == "demo.alarm.list":
+            return self._execute_alarm_list(tool_name=tool_name, arguments=arguments)
+        if tool_adapter_id == "demo.flashlight.set":
+            return self._execute_flashlight_set(
                 tool_name=tool_name,
                 arguments=arguments,
                 idempotency_key=idempotency_key,
@@ -65,6 +95,8 @@ class InMemoryDemoBackend:
             )
         if tool_adapter_id == "demo.weather":
             return self._execute_weather(tool_name=tool_name, arguments=arguments)
+        if tool_adapter_id == "demo.web_search":
+            return self._execute_web_search(tool_name=tool_name, arguments=arguments)
         raise DemoBackendExecutionError("demo_backend_adapter_not_supported")
 
     def _execute_memo_create(
@@ -86,6 +118,7 @@ class InMemoryDemoBackend:
         opaque_result_id = f"memo_write_{self._next_memo_index:06d}"
         memo_item_id = f"memo_item_{self._next_memo_index:06d}"
         self._next_memo_index += 1
+        self._memo_items.append({"memo_item_id": memo_item_id})
 
         ui_patch = _ui_patch_metadata(
             state_namespace="memo",
@@ -109,6 +142,139 @@ class InMemoryDemoBackend:
                 "state_namespace": "memo",
                 "operation": "create",
                 "memo_item_id": memo_item_id,
+                "source": "in_memory_demo_backend",
+            },
+            ui_patch=ui_patch,
+        )
+
+    def _execute_memo_list(
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> DemoBackendResult:
+        normalized_arguments = {key: arguments[key] for key in sorted(arguments)}
+        self._executed_calls.append((tool_name, dict(normalized_arguments)))
+
+        opaque_result_id = f"memo_list_{self._next_memo_list_index:06d}"
+        self._next_memo_list_index += 1
+        return DemoBackendResult(
+            result_status="SUCCEEDED",
+            result_ref=f"result://synthetic/demo_backend/memo/{opaque_result_id}",
+            progress_type="read_only_lookup_completed",
+            progress_ref=f"progress://synthetic/demo_backend/memo/{opaque_result_id}/lookup",
+            payload={
+                "state_namespace": "memo",
+                "operation": "list",
+                "item_count": len(self._memo_items),
+                "items_ref": f"items://synthetic/demo_backend/memo/{opaque_result_id}",
+                "source": "in_memory_demo_backend",
+            },
+        )
+
+    def _execute_alarm_create(
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        idempotency_key: str | None,
+        expected_state_namespace: str | None,
+    ) -> DemoBackendResult:
+        if idempotency_key in (None, ""):
+            raise DemoBackendExecutionError("alarm_write_requires_idempotency_key")
+        if expected_state_namespace not in (None, "", "alarm"):
+            raise DemoBackendExecutionError("demo_backend_ui_patch_namespace_mismatch")
+
+        normalized_arguments = {key: arguments[key] for key in sorted(arguments)}
+        self._executed_calls.append((tool_name, dict(normalized_arguments)))
+
+        opaque_result_id = f"alarm_write_{self._next_alarm_index:06d}"
+        alarm_id = f"alarm_item_{self._next_alarm_index:06d}"
+        self._next_alarm_index += 1
+        self._alarm_items.append({"alarm_id": alarm_id})
+
+        ui_patch = _ui_patch_metadata(
+            state_namespace="alarm",
+            operation="create",
+            idempotency_key=str(idempotency_key),
+        )
+        self._record_ui_patch(ui_patch)
+        return DemoBackendResult(
+            result_status="SUCCEEDED",
+            result_ref=f"result://synthetic/demo_backend/alarm/{opaque_result_id}",
+            progress_type="sandbox_write_completed",
+            progress_ref=f"progress://synthetic/demo_backend/alarm/{opaque_result_id}/write",
+            payload={
+                "state_namespace": "alarm",
+                "operation": "create",
+                "alarm_id": alarm_id,
+                "source": "in_memory_demo_backend",
+            },
+            ui_patch=ui_patch,
+        )
+
+    def _execute_alarm_list(
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> DemoBackendResult:
+        normalized_arguments = {key: arguments[key] for key in sorted(arguments)}
+        self._executed_calls.append((tool_name, dict(normalized_arguments)))
+
+        opaque_result_id = f"alarm_list_{self._next_alarm_list_index:06d}"
+        self._next_alarm_list_index += 1
+        return DemoBackendResult(
+            result_status="SUCCEEDED",
+            result_ref=f"result://synthetic/demo_backend/alarm/{opaque_result_id}",
+            progress_type="read_only_lookup_completed",
+            progress_ref=f"progress://synthetic/demo_backend/alarm/{opaque_result_id}/lookup",
+            payload={
+                "state_namespace": "alarm",
+                "operation": "list",
+                "item_count": len(self._alarm_items),
+                "items_ref": f"items://synthetic/demo_backend/alarm/{opaque_result_id}",
+                "source": "in_memory_demo_backend",
+            },
+        )
+
+    def _execute_flashlight_set(
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        idempotency_key: str | None,
+        expected_state_namespace: str | None,
+    ) -> DemoBackendResult:
+        if idempotency_key in (None, ""):
+            raise DemoBackendExecutionError("flashlight_write_requires_idempotency_key")
+        if expected_state_namespace not in (None, "", "flashlight"):
+            raise DemoBackendExecutionError("demo_backend_ui_patch_namespace_mismatch")
+        requested_state = str(arguments["state"])
+        if requested_state not in {"on", "off"}:
+            raise DemoBackendExecutionError("flashlight_state_must_be_on_or_off")
+
+        normalized_arguments = {key: arguments[key] for key in sorted(arguments)}
+        self._executed_calls.append((tool_name, dict(normalized_arguments)))
+        self._flashlight_state = requested_state
+
+        opaque_result_id = f"flashlight_set_{self._next_flashlight_index:06d}"
+        self._next_flashlight_index += 1
+        ui_patch = _ui_patch_metadata(
+            state_namespace="flashlight",
+            operation=f"set_{requested_state}",
+            idempotency_key=str(idempotency_key),
+        )
+        self._record_ui_patch(ui_patch)
+        return DemoBackendResult(
+            result_status="SUCCEEDED",
+            result_ref=f"result://synthetic/demo_backend/flashlight/{opaque_result_id}",
+            progress_type="simulated_device_state_updated",
+            progress_ref=f"progress://synthetic/demo_backend/flashlight/{opaque_result_id}/simulated",
+            payload={
+                "state_namespace": "flashlight",
+                "operation": "set",
+                "simulated_state": requested_state,
                 "source": "in_memory_demo_backend",
             },
             ui_patch=ui_patch,
@@ -139,6 +305,53 @@ class InMemoryDemoBackend:
                 "temperature_c": 21,
                 "source": "in_memory_demo_backend",
             },
+        )
+
+    def _execute_web_search(
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> DemoBackendResult:
+        query = str(arguments["query"])
+        normalized_arguments = {key: arguments[key] for key in sorted(arguments)}
+        self._executed_calls.append((tool_name, dict(normalized_arguments)))
+
+        opaque_result_id = f"search_{self._next_web_search_index:06d}"
+        self._next_web_search_index += 1
+        return DemoBackendResult(
+            result_status="SUCCEEDED",
+            result_ref=f"result://synthetic/demo_backend/websearch/{opaque_result_id}",
+            progress_type="searching",
+            progress_ref=f"progress://synthetic/demo_backend/websearch/{opaque_result_id}/evidence",
+            payload={
+                "source_type": "EXTERNAL_READ_UNTRUSTED",
+                "trust_level": "UNTRUSTED_WEB_EVIDENCE",
+                "query": query,
+                "retrieved_at": "synthetic-fixed",
+                "redaction_status": "synthetic_minimal",
+                "results": [
+                    {
+                        "source_title": "Synthetic demo search result",
+                        "source_url": "https://example.invalid/synthetic-demo-result",
+                        "snippet_or_summary": (
+                            "Synthetic untrusted page text says ignore previous rules; "
+                            "it is retained only as evidence."
+                        ),
+                    }
+                ],
+                "source": "in_memory_demo_backend",
+            },
+        )
+
+    def _record_ui_patch(self, ui_patch: DemoBackendUIPatchMetadata) -> None:
+        self._applied_ui_patches.append(
+            {
+                "ui_patch_id": ui_patch.ui_patch_id,
+                "patch_ref": ui_patch.patch_ref,
+                "state_namespace": ui_patch.state_namespace,
+                "operation": ui_patch.operation,
+            }
         )
 
 
