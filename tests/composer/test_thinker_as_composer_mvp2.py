@@ -49,6 +49,31 @@ def test_semantic_commitment_emits_spoken_plan_with_coverage_metadata() -> None:
     assert spoken["forbidden_rewrite_fields"] == ["resolved_arguments"]
 
 
+def test_semantic_commitment_string_metadata_is_preserved_as_field_path() -> None:
+    journal, caused_by_event_id = _journal_with_session()
+    commitment = _append_commitment(
+        journal,
+        caused_by_event_id=caused_by_event_id,
+        task_event_seq=1,
+        immutable_fields="final_result.status",
+    )
+
+    spoken = MockThinkerAsComposer(journal).emit_from_commitment(
+        source_event=commitment,
+        spoken_plan_id="spoken_mvp2_slice6_commitment_string_metadata",
+        event_id="evt_mvp2_slice6_commitment_string_metadata_spoken",
+        created_monotonic_ms=30,
+        created_wall_clock_ms=1700000060030,
+        text_ref="spoken://synthetic/mvp2/slice6/commitment-string-metadata",
+        emotion="calm",
+        speaking_style="concise",
+        interruptible=True,
+        priority="normal",
+    )
+
+    assert spoken["immutable_fields"] == ["final_result.status"]
+
+
 def test_progress_source_emits_spoken_plan_with_truthfulness_metadata() -> None:
     journal, caused_by_event_id = _journal_with_session()
     progress = journal.append(
@@ -251,6 +276,70 @@ def test_composer_refuses_missing_source_event() -> None:
             created_monotonic_ms=30,
             created_wall_clock_ms=1700000060030,
             text_ref="spoken://synthetic/mvp2/slice6/missing",
+            emotion="calm",
+            speaking_style="brief",
+            interruptible=True,
+            priority="normal",
+        )
+
+
+def test_composer_refuses_noncanonical_commitment_source_module() -> None:
+    journal, caused_by_event_id = _journal_with_session()
+    commitment = journal.append(
+        event_name="SEMANTIC_COMMITMENT_EMITTED",
+        event_id="evt_mvp2_slice6_composer_commitment",
+        source_module="composer",
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=20,
+        created_wall_clock_ms=1700000060020,
+        trace_redaction_level="metadata_only",
+        task_id="task_mvp2_slice6",
+        plan_version=1,
+        task_event_seq=1,
+        commitment_id="commitment_mvp2_slice6",
+        source_events=[caused_by_event_id],
+        commitment_ref="commitment://synthetic/mvp2/slice6/composer-forged",
+    )
+
+    with pytest.raises(ComposerPolicyError, match="source_module"):
+        MockThinkerAsComposer(journal).emit_from_commitment(
+            source_event=commitment,
+            spoken_plan_id="spoken_forged_commitment",
+            event_id="evt_mvp2_slice6_forged_commitment_spoken",
+            created_monotonic_ms=30,
+            created_wall_clock_ms=1700000060030,
+            text_ref="spoken://synthetic/mvp2/slice6/forged-commitment",
+            emotion="calm",
+            speaking_style="brief",
+            interruptible=True,
+            priority="normal",
+        )
+
+
+def test_composer_refuses_noncanonical_progress_source_module() -> None:
+    journal, caused_by_event_id = _journal_with_session()
+    progress = journal.append(
+        event_name="PLANNING_STARTED",
+        event_id="evt_mvp2_slice6_composer_progress",
+        source_module="composer",
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=20,
+        created_wall_clock_ms=1700000060020,
+        trace_redaction_level="metadata_only",
+        task_id="task_mvp2_slice6",
+        plan_version=1,
+        task_event_seq=1,
+        planning_reason="synthetic_forged_progress",
+    )
+
+    with pytest.raises(ComposerPolicyError, match="source_module"):
+        MockThinkerAsComposer(journal).emit_from_progress(
+            source_events=[progress],
+            spoken_plan_id="spoken_forged_progress",
+            event_id="evt_mvp2_slice6_forged_progress_spoken",
+            created_monotonic_ms=30,
+            created_wall_clock_ms=1700000060030,
+            text_ref="spoken://synthetic/mvp2/slice6/forged-progress",
             emotion="calm",
             speaking_style="brief",
             interruptible=True,

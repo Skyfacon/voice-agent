@@ -108,6 +108,24 @@ def test_replay_rejects_spoken_plan_with_missing_source_event() -> None:
         run_replay_fixture(deepcopy(fixture))
 
 
+def test_replay_rejects_commitment_spoken_plan_from_noncanonical_source_module() -> None:
+    fixture = load_json_fixture(SPOKEN_PLAN_FIXTURE)
+    commitment = _event_by_id(fixture["events"], "evt_mvp2_slice6_semantic_commitment")
+    commitment["source_module"] = "composer"
+
+    with pytest.raises(ReplayValidationError, match="source_module"):
+        run_replay_fixture(deepcopy(fixture))
+
+
+def test_replay_rejects_progress_spoken_plan_from_noncanonical_source_module() -> None:
+    fixture = load_json_fixture(SPOKEN_PLAN_FIXTURE)
+    progress = _event_by_id(fixture["events"], "evt_mvp2_slice6_planning_started")
+    progress["source_module"] = "composer"
+
+    with pytest.raises(ReplayValidationError, match="source_module"):
+        run_replay_fixture(deepcopy(fixture))
+
+
 def test_replay_rejects_progress_spoken_plan_from_unsupported_source_event() -> None:
     fixture = load_json_fixture(SPOKEN_PLAN_FIXTURE)
     spoken = _event_by_id(fixture["events"], "evt_mvp2_slice6_progress_spoken")

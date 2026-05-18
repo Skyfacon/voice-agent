@@ -9,6 +9,7 @@ from urllib.parse import unquote, urlparse
 from voice_agent.adapters.capabilities import OUTPUT_MODES
 from voice_agent.composer.constants import (
     ALLOWED_PROGRESS_SOURCE_EVENTS,
+    ALLOWED_SOURCE_MODULES_BY_EVENT,
     ALLOWED_TRUTHFULNESS_LEVELS,
 )
 from voice_agent.events.envelope import EventValidationError, validate_event_envelope
@@ -750,6 +751,7 @@ def _validate_commitment_spoken_plan(
 ) -> None:
     if len(source_events) != 1 or source_events[0].get("event_name") != "SEMANTIC_COMMITMENT_EMITTED":
         raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED requires source commitment event")
+    _validate_spoken_plan_source_event_module(source_events[0])
     source_commitment_id = event.get("source_commitment_id")
     if source_commitment_id in (None, ""):
         raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED requires source_commitment_id")
@@ -796,6 +798,8 @@ def _validate_progress_spoken_plan(
         raise ReplayValidationError(
             f"unsupported progress source event for SPOKEN_PLAN_EMITTED: {unsupported_sources}"
         )
+    for source_event in source_events:
+        _validate_spoken_plan_source_event_module(source_event)
     if event.get("truthfulness_check_required") is not True:
         raise ReplayValidationError("progress-derived SPOKEN_PLAN_EMITTED requires truthfulness_check_required=true")
     if event.get("coverage_check_required") is not False:
@@ -805,6 +809,19 @@ def _validate_progress_spoken_plan(
         raise ReplayValidationError("truthfulness_level must be STATE_GROUNDED or STYLE_ONLY_ACK")
     if event.get("source_commitment_id") not in (None, ""):
         raise ReplayValidationError("progress-derived SPOKEN_PLAN_EMITTED must not claim source_commitment_id")
+
+
+def _validate_spoken_plan_source_event_module(source_event: Mapping[str, Any]) -> None:
+    event_name = str(source_event["event_name"])
+    source_module = source_event.get("source_module")
+    allowed_source_modules = ALLOWED_SOURCE_MODULES_BY_EVENT.get(event_name)
+    if allowed_source_modules is None:
+        raise ReplayValidationError(f"SPOKEN_PLAN source event {event_name} has no canonical source_module owner")
+    if source_module not in allowed_source_modules:
+        allowed = ", ".join(sorted(allowed_source_modules))
+        raise ReplayValidationError(
+            f"SPOKEN_PLAN source event {event_name} source_module must be {allowed}"
+        )
 
 
 def _record_latest_task_plan(

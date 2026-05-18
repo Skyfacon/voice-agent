@@ -21,3 +21,21 @@ ALLOWED_PROGRESS_SOURCE_EVENTS = frozenset(
         "SLOWTASK_FAILED",
     }
 )
+SLOWTASK_PROGRESS_SOURCE_EVENTS = frozenset(
+    {
+        "PLANNING_STARTED",
+        "PLANNING_RESTARTED",
+        "WAITING_FOR_SLOT",
+        "WAITING_FOR_TOOL",
+        "WAITING_FOR_USER_CONFIRMATION",
+        "FINALIZING",
+        "SLOWTASK_DEGRADED",
+        "SLOWTASK_FAILED",
+    }
+)
+TOOL_PROGRESS_SOURCE_EVENTS = ALLOWED_PROGRESS_SOURCE_EVENTS - SLOWTASK_PROGRESS_SOURCE_EVENTS
+ALLOWED_SOURCE_MODULES_BY_EVENT = {
+    "SEMANTIC_COMMITMENT_EMITTED": frozenset({"slowtask_runtime"}),
+    **{event_name: frozenset({"slowtask_runtime"}) for event_name in SLOWTASK_PROGRESS_SOURCE_EVENTS},
+    **{event_name: frozenset({"tool_executor"}) for event_name in TOOL_PROGRESS_SOURCE_EVENTS},
+}

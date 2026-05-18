@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from voice_agent.composer.constants import ALLOWED_PROGRESS_SOURCE_EVENTS, ALLOWED_TRUTHFULNESS_LEVELS
+from voice_agent.composer.constants import (
+    ALLOWED_PROGRESS_SOURCE_EVENTS,
+    ALLOWED_SOURCE_MODULES_BY_EVENT,
+    ALLOWED_TRUTHFULNESS_LEVELS,
+)
 from voice_agent.events.journal import InMemoryEventJournal
 
 
@@ -50,6 +54,7 @@ class MockThinkerAsComposer:
         source = self._validated_source_event(source_event)
         if source["event_name"] != "SEMANTIC_COMMITMENT_EMITTED":
             raise ComposerPolicyError("commitment-derived speech requires SEMANTIC_COMMITMENT_EMITTED")
+        _require_allowed_source_module(source)
         binding = self._validated_current_plan_binding(
             source_events=[source],
             expected_task_id=expected_task_id,
@@ -62,7 +67,7 @@ class MockThinkerAsComposer:
             raise ComposerPolicyError("source_commitment_id must match source commitment_id")
 
         symbolic_metadata = {
-            field: list(source[field])
+            field: _string_list_field(source, field)
             for field in SYMBOLIC_COMMITMENT_METADATA_FIELDS
             if field in source
         }
@@ -113,6 +118,7 @@ class MockThinkerAsComposer:
         for source in validated_sources:
             if source["event_name"] not in ALLOWED_PROGRESS_SOURCE_EVENTS:
                 raise ComposerPolicyError(f"unsupported progress source event: {source['event_name']}")
+            _require_allowed_source_module(source)
         if truthfulness_level not in ALLOWED_TRUTHFULNESS_LEVELS:
             raise ComposerPolicyError("truthfulness_level must be STATE_GROUNDED or STYLE_ONLY_ACK")
 
@@ -263,6 +269,35 @@ def _optional_non_empty_string(value: object) -> str | None:
     if not isinstance(value, str) or not value:
         raise ComposerPolicyError("source_commitment_id is required")
     return value
+
+
+def _require_allowed_source_module(event: Mapping[str, Any]) -> None:
+    event_name = _required_string(event, "event_name")
+    source_module = _required_string(event, "source_module")
+    allowed_source_modules = ALLOWED_SOURCE_MODULES_BY_EVENT.get(event_name)
+    if allowed_source_modules is None:
+        raise ComposerPolicyError(f"{event_name} is not a supported Composer source event")
+    if source_module not in allowed_source_modules:
+        allowed = ", ".join(sorted(allowed_source_modules))
+        raise ComposerPolicyError(f"{event_name} source_module must be {allowed}")
+
+
+def _string_list_field(event: Mapping[str, Any], field: str) -> list[str]:
+    value = event.get(field)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        if not value:
+            raise ComposerPolicyError(f"{field} must not contain empty field paths")
+        return [value]
+    if isinstance(value, bytes) or not isinstance(value, Sequence):
+        raise ComposerPolicyError(f"{field} must be a string or list of strings")
+    values = []
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise ComposerPolicyError(f"{field} must contain only non-empty string field paths")
+        values.append(item)
+    return values
 
 
 def _required_int(event: Mapping[str, Any], field: str) -> int:
