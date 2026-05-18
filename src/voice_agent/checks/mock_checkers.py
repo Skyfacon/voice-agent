@@ -115,7 +115,7 @@ class MockProgressTruthfulnessChecker:
 
         source_progress_events = _source_progress_events_for_spoken_plan(self._journal, spoken)
         source_progress_event_ids = _string_list(spoken.get("source_progress_event_ids"))
-        truthfulness_level = _optional_string(spoken.get("truthfulness_level")) or "UNSUPPORTED_BLOCKED"
+        truthfulness_level = _optional_string(spoken.get("truthfulness_level"))
         failure_reasons = _progress_truthfulness_failure_reasons(
             spoken,
             source_progress_events=source_progress_events,
@@ -124,6 +124,12 @@ class MockProgressTruthfulnessChecker:
         )
 
         if failure_reasons:
+            failure_fields: dict[str, Any] = {
+                "source_progress_event_ids": source_progress_event_ids,
+                "failure_reasons": failure_reasons,
+            }
+            if truthfulness_level is not None:
+                failure_fields["truthfulness_level"] = truthfulness_level
             return _append_check_event(
                 self._journal,
                 event_name="PROGRESS_TRUTHFULNESS_CHECK_FAILED",
@@ -133,12 +139,12 @@ class MockProgressTruthfulnessChecker:
                 created_monotonic_ms=created_monotonic_ms,
                 created_wall_clock_ms=created_wall_clock_ms,
                 check_result_ref=check_result_ref,
-                source_progress_event_ids=source_progress_event_ids,
-                truthfulness_level=truthfulness_level,
-                failure_reasons=failure_reasons,
                 output_mode=CHECK_OUTPUT_MODE,
+                **failure_fields,
             )
 
+        if truthfulness_level is None:
+            raise CheckPolicyError("truthfulness_level is required for passed truthfulness check")
         return _append_check_event(
             self._journal,
             event_name="PROGRESS_TRUTHFULNESS_CHECK_PASSED",
@@ -187,7 +193,7 @@ def _progress_truthfulness_failure_reasons(
     *,
     source_progress_events: list[Mapping[str, Any]],
     source_progress_event_ids: list[str],
-    truthfulness_level: str,
+    truthfulness_level: str | None,
 ) -> list[str]:
     failure_reasons: list[str] = []
     if spoken.get("truthfulness_check_required") is not True:
@@ -218,7 +224,9 @@ def _progress_truthfulness_failure_reasons(
         if source_event.get("source_module") not in allowed_source_modules:
             failure_reasons.append("progress_source_module_mismatch")
 
-    if truthfulness_level not in ALLOWED_TRUTHFULNESS_LEVELS:
+    if truthfulness_level is None:
+        failure_reasons.append("missing_truthfulness_level")
+    elif truthfulness_level not in ALLOWED_TRUTHFULNESS_LEVELS:
         failure_reasons.append("unsupported_truthfulness_level")
     return _dedupe_preserving_order(failure_reasons)
 
@@ -232,6 +240,8 @@ def _validated_spoken_plan_event(
         if event["event_id"] == spoken_event_id:
             if event["event_name"] != "SPOKEN_PLAN_EMITTED":
                 raise CheckPolicyError("check source must be a SPOKEN_PLAN_EMITTED event")
+            if event.get("source_module") != "composer":
+                raise CheckPolicyError("SPOKEN_PLAN_EMITTED source_module must be composer")
             if event.get("output_mode") not in OUTPUT_MODES:
                 raise CheckPolicyError("SpokenPlan output_mode must be real, mock, fallback, or degraded")
             _raise_if_spoken_plan_stale(journal, event)
@@ -336,12 +346,12 @@ def _safe_source_commitment_id(
     spoken: Mapping[str, Any],
     source_commitment: Mapping[str, Any] | None,
 ) -> str:
-    source_commitment_id = _optional_string(source_commitment.get("commitment_id")) if source_commitment else None
-    if source_commitment_id is not None:
-        return source_commitment_id
     spoken_commitment_id = _optional_string(spoken.get("source_commitment_id"))
     if spoken_commitment_id is not None:
         return spoken_commitment_id
+    source_commitment_id = _optional_string(source_commitment.get("commitment_id")) if source_commitment else None
+    if source_commitment_id is not None:
+        return source_commitment_id
     return "missing_source_commitment_id"
 
 

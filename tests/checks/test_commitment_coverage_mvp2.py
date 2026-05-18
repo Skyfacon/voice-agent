@@ -103,6 +103,7 @@ def test_commitment_coverage_checker_records_output_mode_on_failure() -> None:
 
     assert check["event_name"] == "COMMITMENT_COVERAGE_CHECK_FAILED"
     assert check["output_mode"] == "mock"
+    assert check["source_commitment_id"] == "commitment_wrong"
     assert check["failure_reasons"] == ["source_commitment_id_mismatch"]
 
 
@@ -127,6 +128,27 @@ def test_commitment_coverage_checker_fails_unexpected_truthfulness_requirement()
 
     assert check["event_name"] == "COMMITMENT_COVERAGE_CHECK_FAILED"
     assert "unexpected_truthfulness_check_required" in check["failure_reasons"]
+
+
+def test_commitment_coverage_checker_refuses_non_composer_spoken_plan() -> None:
+    journal, caused_by_event_id = _journal_with_session()
+    commitment = _append_commitment(journal, caused_by_event_id=caused_by_event_id, task_event_seq=1)
+    spoken = _append_commitment_spoken(
+        journal,
+        caused_by_event_id=commitment["event_id"],
+        task_event_seq=2,
+        source_commitment_id=commitment["commitment_id"],
+        source_module="slowtask_runtime",
+    )
+
+    with pytest.raises(CheckPolicyError, match="source_module"):
+        MockCommitmentCoverageChecker(journal).check(
+            spoken_plan_event=spoken,
+            event_id="evt_mvp2_slice7_non_composer_coverage_check",
+            created_monotonic_ms=40,
+            created_wall_clock_ms=1700000070040,
+            check_result_ref="check://synthetic/mvp2/slice7/coverage/non-composer",
+        )
 
 
 def test_commitment_coverage_checker_refuses_stale_spoken_plan_after_plan_advance() -> None:
@@ -271,6 +293,7 @@ def _append_commitment_spoken(
     caused_by_event_id: str,
     task_event_seq: int,
     source_commitment_id: str,
+    source_module: str = "composer",
     immutable_fields: list[str] | None = None,
     must_say_fields: list[str] | None = None,
     forbidden_rewrite_fields: list[str] | None = None,
@@ -279,7 +302,7 @@ def _append_commitment_spoken(
     return journal.append(
         event_name="SPOKEN_PLAN_EMITTED",
         event_id=f"evt_mvp2_slice7_commitment_spoken_{task_event_seq}",
-        source_module="composer",
+        source_module=source_module,
         caused_by_event_id=caused_by_event_id,
         created_monotonic_ms=30,
         created_wall_clock_ms=1700000070030,

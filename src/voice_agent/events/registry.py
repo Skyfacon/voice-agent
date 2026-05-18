@@ -673,7 +673,6 @@ MVP2_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
         required_fields=(
             "spoken_plan_id",
             "source_progress_event_ids",
-            "truthfulness_level",
             "failure_reasons",
             "check_result_ref",
             "output_mode",

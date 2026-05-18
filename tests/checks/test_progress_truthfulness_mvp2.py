@@ -114,6 +114,52 @@ def test_progress_truthfulness_checker_fails_commitment_metadata_on_progress_spo
     ]
 
 
+def test_progress_truthfulness_checker_preserves_missing_truthfulness_level_on_failure() -> None:
+    journal, caused_by_event_id = _journal_with_session()
+    progress = _append_progress(journal, caused_by_event_id=caused_by_event_id, task_event_seq=1)
+    spoken = _append_progress_spoken(
+        journal,
+        caused_by_event_id=progress["event_id"],
+        task_event_seq=2,
+        source_progress_event_ids=[progress["event_id"]],
+        truthfulness_level=None,
+    )
+
+    check = MockProgressTruthfulnessChecker(journal).check(
+        spoken_plan_event=spoken,
+        event_id="evt_mvp2_slice7_truthfulness_failed_missing_level",
+        created_monotonic_ms=40,
+        created_wall_clock_ms=1700000070040,
+        check_result_ref="check://synthetic/mvp2/slice7/truthfulness/fail-missing-level",
+    )
+
+    assert check["event_name"] == "PROGRESS_TRUTHFULNESS_CHECK_FAILED"
+    assert "truthfulness_level" not in check
+    assert check["failure_reasons"] == ["missing_truthfulness_level"]
+
+
+def test_progress_truthfulness_checker_refuses_non_composer_spoken_plan() -> None:
+    journal, caused_by_event_id = _journal_with_session()
+    progress = _append_progress(journal, caused_by_event_id=caused_by_event_id, task_event_seq=1)
+    spoken = _append_progress_spoken(
+        journal,
+        caused_by_event_id=progress["event_id"],
+        task_event_seq=2,
+        source_progress_event_ids=[progress["event_id"]],
+        truthfulness_level="STATE_GROUNDED",
+        source_module="slowtask_runtime",
+    )
+
+    with pytest.raises(CheckPolicyError, match="source_module"):
+        MockProgressTruthfulnessChecker(journal).check(
+            spoken_plan_event=spoken,
+            event_id="evt_mvp2_slice7_non_composer_truthfulness_check",
+            created_monotonic_ms=40,
+            created_wall_clock_ms=1700000070040,
+            check_result_ref="check://synthetic/mvp2/slice7/truthfulness/non-composer",
+        )
+
+
 def test_progress_truthfulness_checker_refuses_stale_spoken_plan_after_plan_advance() -> None:
     journal, caused_by_event_id = _journal_with_session()
     progress = _append_progress(journal, caused_by_event_id=caused_by_event_id, task_event_seq=1)
@@ -267,17 +313,20 @@ def _append_progress_spoken(
     caused_by_event_id: str,
     task_event_seq: int,
     source_progress_event_ids: list[object],
-    truthfulness_level: str,
+    truthfulness_level: str | None,
+    source_module: str = "composer",
     coverage_check_required: bool = False,
     source_commitment_id: str | None = None,
 ) -> dict[str, object]:
     fields: dict[str, object] = {}
     if source_commitment_id is not None:
         fields["source_commitment_id"] = source_commitment_id
+    if truthfulness_level is not None:
+        fields["truthfulness_level"] = truthfulness_level
     return journal.append(
         event_name="SPOKEN_PLAN_EMITTED",
         event_id=f"evt_mvp2_slice7_progress_spoken_{task_event_seq}",
-        source_module="composer",
+        source_module=source_module,
         caused_by_event_id=caused_by_event_id,
         created_monotonic_ms=30,
         created_wall_clock_ms=1700000070030,
@@ -290,7 +339,6 @@ def _append_progress_spoken(
         source_progress_event_ids=source_progress_event_ids,
         coverage_check_required=coverage_check_required,
         truthfulness_check_required=True,
-        truthfulness_level=truthfulness_level,
         text_ref="spoken://synthetic/mvp2/slice7/progress",
         emotion="focused",
         speaking_style="brief",

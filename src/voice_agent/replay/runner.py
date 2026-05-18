@@ -848,18 +848,24 @@ def _validate_commitment_check_event(
         raise ReplayValidationError("commitment coverage check source_module must be coverage_checker")
     if spoken_plan.get("source") != "semantic_commitment":
         raise ReplayValidationError("coverage check requires semantic_commitment SpokenPlan source")
+    expected_source_commitment_id = _check_source_commitment_id(spoken_plan)
+    if event.get("source_commitment_id") != expected_source_commitment_id:
+        raise ReplayValidationError("coverage check source_commitment_id must match SpokenPlan")
     if event["event_name"] == "COMMITMENT_COVERAGE_CHECK_PASSED":
-        if event.get("source_commitment_id") != spoken_plan.get("source_commitment_id"):
-            raise ReplayValidationError("coverage check source_commitment_id must match SpokenPlan")
         if not _string_list_for_replay(event.get("checked_fields")):
             raise ReplayValidationError("COMMITMENT_COVERAGE_CHECK_PASSED requires checked_fields")
         if event.get("check_result_ref") in (None, ""):
             raise ReplayValidationError("COMMITMENT_COVERAGE_CHECK_PASSED requires check_result_ref")
     else:
-        if event.get("source_commitment_id") in (None, ""):
-            raise ReplayValidationError("COMMITMENT_COVERAGE_CHECK_FAILED requires source_commitment_id")
         if not _string_list_for_replay(event.get("failure_reasons")):
             raise ReplayValidationError("COMMITMENT_COVERAGE_CHECK_FAILED requires failure_reasons")
+
+
+def _check_source_commitment_id(spoken_plan: Mapping[str, Any]) -> str:
+    source_commitment_id = _optional_string_for_replay(spoken_plan.get("source_commitment_id"))
+    if source_commitment_id is not None:
+        return source_commitment_id
+    return "missing_source_commitment_id"
 
 
 def _validate_progress_check_event(
@@ -876,10 +882,13 @@ def _validate_progress_check_event(
     spoken_source_progress_ids = _string_list_for_replay(spoken_plan.get("source_progress_event_ids"))
     if event_source_progress_ids != spoken_source_progress_ids:
         raise ReplayValidationError("truthfulness check source_progress_event_ids must match SpokenPlan")
-    if event.get("truthfulness_level") != spoken_plan.get("truthfulness_level"):
+
+    event_truthfulness_level = _optional_string_for_replay(event.get("truthfulness_level"))
+    spoken_truthfulness_level = _optional_string_for_replay(spoken_plan.get("truthfulness_level"))
+    if event_truthfulness_level != spoken_truthfulness_level:
         raise ReplayValidationError("truthfulness check truthfulness_level must match SpokenPlan")
     if event["event_name"] == "PROGRESS_TRUTHFULNESS_CHECK_PASSED":
-        if event.get("truthfulness_level") not in ALLOWED_TRUTHFULNESS_LEVELS:
+        if event_truthfulness_level not in ALLOWED_TRUTHFULNESS_LEVELS:
             raise ReplayValidationError("truthfulness check truthfulness_level must be STATE_GROUNDED or STYLE_ONLY_ACK")
         if event.get("check_result_ref") in (None, ""):
             raise ReplayValidationError("PROGRESS_TRUTHFULNESS_CHECK_PASSED requires check_result_ref")
@@ -1589,6 +1598,12 @@ def _string_list_for_replay(value: object) -> list[str]:
     if not isinstance(value, Sequence):
         raise ReplayValidationError("event ids must be a list")
     return [str(item) for item in value]
+
+
+def _optional_string_for_replay(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
 
 
 def _string_set(value: object) -> set[str]:

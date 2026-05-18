@@ -178,6 +178,24 @@ def test_replay_accepts_coverage_failure_trace_for_invalid_commitment_spoken_pla
     assert "evt_mvp2_slice7_coverage_passed" not in result.spoken_plan_check_state.passed_checks
 
 
+def test_replay_rejects_failed_coverage_check_with_wrong_source_commitment_id() -> None:
+    fixture = load_json_fixture(COMPOSER_CHECK_FIXTURE)
+    coverage = _event_by_id(fixture["events"], "evt_mvp2_slice7_coverage_passed")
+    coverage["event_name"] = "COMMITMENT_COVERAGE_CHECK_FAILED"
+    coverage["source_commitment_id"] = "commitment_mvp2_slice7_wrong"
+    coverage["failure_reasons"] = ["source_commitment_id_mismatch"]
+    coverage.pop("checked_fields")
+    _remove_events(
+        fixture["events"],
+        {
+            "evt_mvp2_slice7_commitment_playback_started",
+        },
+    )
+
+    with pytest.raises(ReplayValidationError, match="source_commitment_id"):
+        run_replay_fixture(deepcopy(fixture))
+
+
 def test_replay_accepts_truthfulness_failure_trace_for_unsupported_progress_level() -> None:
     fixture = load_json_fixture(COMPOSER_CHECK_FIXTURE)
     spoken = _event_by_id(fixture["events"], "evt_mvp2_slice7_progress_spoken")
@@ -199,6 +217,29 @@ def test_replay_accepts_truthfulness_failure_trace_for_unsupported_progress_leve
     failed = result.spoken_plan_check_state.failed_checks["evt_mvp2_slice7_truthfulness_passed"]
     assert failed.truthfulness_level == "ESTIMATE_WITH_BASIS"
     assert failed.failure_reasons == ("unsupported_truthfulness_level",)
+
+
+def test_replay_accepts_truthfulness_failure_trace_for_missing_progress_truthfulness_level() -> None:
+    fixture = load_json_fixture(COMPOSER_CHECK_FIXTURE)
+    spoken = _event_by_id(fixture["events"], "evt_mvp2_slice7_progress_spoken")
+    spoken.pop("truthfulness_level")
+    truthfulness = _event_by_id(fixture["events"], "evt_mvp2_slice7_truthfulness_passed")
+    truthfulness["event_name"] = "PROGRESS_TRUTHFULNESS_CHECK_FAILED"
+    truthfulness.pop("truthfulness_level")
+    truthfulness["failure_reasons"] = ["missing_truthfulness_level"]
+    _remove_events(
+        fixture["events"],
+        {
+            "evt_mvp2_slice7_progress_playback_started",
+            "evt_mvp2_slice7_progress_playback_finished",
+        },
+    )
+
+    result = run_replay_fixture(deepcopy(fixture))
+
+    failed = result.spoken_plan_check_state.failed_checks["evt_mvp2_slice7_truthfulness_passed"]
+    assert failed.truthfulness_level is None
+    assert failed.failure_reasons == ("missing_truthfulness_level",)
 
 
 def test_replay_rejects_coverage_check_for_progress_derived_speech() -> None:
