@@ -512,6 +512,20 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
                 "CommitmentCoverageCheck and ProgressTruthfulnessCheck pass events gate checked "
                 "playback without TTS/audio/frontend execution"
             ),
+        },
+        {
+            "fixture": "008-tool-manifest-only.fixture.json",
+            "purpose": (
+                "Tool manifest loading for memo, alarm, flashlight, weather, and webSearch "
+                "without execution"
+            ),
+        },
+        {
+            "fixture": "009-progressive-stale-tool-result.fixture.json",
+            "purpose": (
+                "Progressive Tool Executor stale result policy with old-plan ToolResult "
+                "recorded as stale evidence"
+            ),
         }
     ]
     assert manifest_index["fixture_safety_flags"] == {
