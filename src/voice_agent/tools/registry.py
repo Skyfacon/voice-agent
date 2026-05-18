@@ -25,8 +25,12 @@ class ToolRegistry:
         if validate_side_effect_class:
             require_mvp_side_effect_class(manifest.side_effect_class)
         existing = self._manifests.get(manifest.tool_name)
-        if existing is not None and existing.tool_manifest_version != manifest.tool_manifest_version:
-            raise ToolExecutionPolicyError("duplicate tool_name with different manifest version")
+        if existing is not None:
+            if existing.tool_manifest_version != manifest.tool_manifest_version:
+                raise ToolExecutionPolicyError("duplicate tool_name with different manifest version")
+            if existing != manifest:
+                raise ToolExecutionPolicyError("duplicate tool_name/version with conflicting manifest fields")
+            return
         self._manifests[manifest.tool_name] = manifest
 
     def get(self, tool_name: str) -> ToolManifest:

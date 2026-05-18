@@ -536,6 +536,8 @@ def _matching_confirmation_required(
             and event.get("plan_version") == request.plan_version
             and event.get("confirmation_id") == request.accepted_confirmation_id
             and event.get("confirmation_scope") == confirmation_scope
+            and event.get("required_for_event_id") == request.caused_by_event_id
+            and event.get("caused_by_event_id") == request.caused_by_event_id
             and _event_seq_before(event, accepted_event_seq)
         ):
             matching_required = event
@@ -566,6 +568,7 @@ def _matches_confirmation_chain(
             request=request,
             confirmation_scope=confirmation_scope,
         )
+        and _caused_by_chain_matches(required, patch_received, interpreted, received, accepted)
         and _strict_event_seq_order(required, patch_received, interpreted, received, accepted)
     )
 
@@ -635,6 +638,19 @@ def _strict_event_seq_order(*events: Mapping[str, Any] | None) -> bool:
         if previous_event_seq is not None and event_seq <= previous_event_seq:
             return False
         previous_event_seq = event_seq
+    return True
+
+
+def _caused_by_chain_matches(*events: Mapping[str, Any] | None) -> bool:
+    previous_event_id: object | None = None
+    for event in events:
+        if event is None:
+            return False
+        if previous_event_id is not None and event.get("caused_by_event_id") != previous_event_id:
+            return False
+        previous_event_id = event.get("event_id")
+        if previous_event_id in (None, ""):
+            return False
     return True
 
 
@@ -734,7 +750,6 @@ def _has_current_plan_argument_provenance(
     if event.get("event_name") not in {
         "ARGUMENTS_RESOLVED",
         "ARGUMENT_RESOLUTION_PROVENANCE",
-        "STALE_EVIDENCE_ADOPTED",
     }:
         return False
     return _int_value(event.get("plan_version")) == plan_version

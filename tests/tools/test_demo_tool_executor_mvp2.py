@@ -232,6 +232,13 @@ def test_side_effect_class_gate_allows_only_mvp_demo_classes() -> None:
             ToolRegistry([_weather_manifest(side_effect_class=side_effect_class)])
 
 
+def test_registry_rejects_same_version_manifest_conflicts() -> None:
+    ToolRegistry([_weather_manifest(), _weather_manifest()])
+
+    with pytest.raises(ToolExecutionPolicyError, match="conflicting manifest fields"):
+        ToolRegistry([_weather_manifest(), _weather_manifest(confirmation_required=True)])
+
+
 def test_executor_refuses_blocked_manifest_before_journal_or_backend_execution() -> None:
     journal, caused_by_event_id = _started_journal()
     backend = InMemoryDemoBackend()
@@ -518,6 +525,64 @@ def test_old_plan_argument_provenance_blocks_without_adoption() -> None:
     assert backend.executed_calls == ()
 
 
+def test_stale_evidence_adoption_is_not_argument_level_provenance() -> None:
+    journal, caused_by_event_id = _started_journal()
+    adopted = journal.append(
+        event_name="STALE_EVIDENCE_ADOPTED",
+        event_id="evt_mvp2_slice2_stale_evidence_adopted",
+        source_module="slowtask_runtime",
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=358,
+        created_wall_clock_ms=1700000040358,
+        trace_redaction_level="metadata_only",
+        task_id="task_mvp2_slice2",
+        plan_version=1,
+        task_event_seq=3,
+        stale_evidence_ref="stale://synthetic/mvp2/slice2/adopted",
+        source_tool_result_event_id="evt_mvp2_slice2_old_tool_result",
+        adopted_from_plan_version=0,
+        adoption_reason="synthetic_stale_evidence_reviewed",
+        adopted_scope="evidence_only",
+        adopted_by_event_id=caused_by_event_id,
+        adoption_mode="adopt_or_rebase",
+    )
+    backend = InMemoryDemoBackend()
+    executor = DemoToolExecutor(
+        journal=journal,
+        registry=ToolRegistry([_weather_manifest()]),
+        backend=backend,
+    )
+
+    result = executor.execute(
+        ToolExecutionRequest(
+            tool_call_id="tool_call_mvp2_slice2_adoption_provenance",
+            tool_name="weather",
+            task_id="task_mvp2_slice2",
+            plan_version=1,
+            current_plan_version=1,
+            start_task_event_seq=4,
+            caused_by_event_id=str(adopted["event_id"]),
+            event_id_prefix="evt_mvp2_slice2_adoption_provenance",
+            created_monotonic_ms=359,
+            created_wall_clock_ms=1700000040359,
+            idempotency_key="idem://synthetic/mvp2/slice2/adoption-provenance",
+            arguments={"location": "Testville", "date": "2026-05-17"},
+            argument_provenance={
+                "location": "evt_mvp2_slice2_stale_evidence_adopted",
+                "date": "evt_mvp2_slice2_stale_evidence_adopted",
+            },
+            resolved_arguments_ref="args://synthetic/mvp2/slice2/adoption-provenance/ready",
+            provenance_ref="provenance://synthetic/mvp2/slice2/adoption-provenance/ready",
+        )
+    )
+
+    event_names = [event["event_name"] for event in result.produced_events]
+    assert "TOOL_ARGUMENTS_READY" not in event_names
+    assert "TOOL_EXECUTION_STARTED" not in event_names
+    assert result.blocking_fields == ("provenance.location", "provenance.date")
+    assert backend.executed_calls == ()
+
+
 def test_confirmation_required_manifest_does_not_authorize_without_current_plan_confirmation() -> None:
     journal, caused_by_event_id = _started_journal()
     backend = InMemoryDemoBackend()
@@ -582,7 +647,7 @@ def test_confirmation_required_manifest_authorizes_only_recorded_current_plan_co
             plan_version=1,
             current_plan_version=1,
             start_task_event_seq=8,
-            caused_by_event_id=str(confirmation["event_id"]),
+            caused_by_event_id=caused_by_event_id,
             event_id_prefix="evt_mvp2_slice2_confirmation_accepted_tool",
             created_monotonic_ms=370,
             created_wall_clock_ms=1700000040370,
@@ -609,6 +674,104 @@ def test_confirmation_required_manifest_authorizes_only_recorded_current_plan_co
     assert authorized["caused_by_event_id"] == confirmation["event_id"]
     assert "TOOL_EXECUTION_STARTED" in [event["event_name"] for event in result.produced_events]
     assert backend.executed_calls == (("weather", {"date": "2026-05-17", "location": "Testville"}),)
+
+
+def test_confirmation_required_manifest_rejects_confirmation_for_different_trigger() -> None:
+    journal, caused_by_event_id = _started_journal()
+    confirmation = _append_confirmation_chain(
+        journal,
+        caused_by_event_id=caused_by_event_id,
+        confirmation_id="confirmation_mvp2_slice2_weather_wrong_trigger",
+        confirmation_scope="FINAL_ARGUMENT_CONFIRMATION",
+        start_task_event_seq=3,
+        required_for_event_id="evt_mvp2_slice2_unrelated_tool_trigger",
+    )
+    backend = InMemoryDemoBackend()
+    executor = DemoToolExecutor(
+        journal=journal,
+        registry=ToolRegistry([_weather_manifest(confirmation_required=True)]),
+        backend=backend,
+    )
+
+    with pytest.raises(ToolExecutionPolicyError, match="current-plan CONFIRMATION_ACCEPTED"):
+        executor.execute(
+            ToolExecutionRequest(
+                tool_call_id="tool_call_mvp2_slice2_wrong_trigger_confirmation",
+                tool_name="weather",
+                task_id="task_mvp2_slice2",
+                plan_version=1,
+                current_plan_version=1,
+                start_task_event_seq=8,
+                caused_by_event_id=caused_by_event_id,
+                event_id_prefix="evt_mvp2_slice2_wrong_trigger_confirmation",
+                created_monotonic_ms=371,
+                created_wall_clock_ms=1700000040371,
+                idempotency_key="idem://synthetic/mvp2/slice2/wrong-trigger-confirmation",
+                arguments={"location": "Testville", "date": "2026-05-17"},
+                argument_provenance={
+                    "location": "evt_mvp2_slice2_arguments_resolved",
+                    "date": "evt_mvp2_slice2_arguments_resolved",
+                },
+                resolved_arguments_ref="args://synthetic/mvp2/slice2/wrong-trigger-confirmation/ready",
+                provenance_ref="provenance://synthetic/mvp2/slice2/wrong-trigger-confirmation/ready",
+                accepted_confirmation_event_id=str(confirmation["event_id"]),
+                accepted_confirmation_id="confirmation_mvp2_slice2_weather_wrong_trigger",
+                accepted_confirmation_scope="FINAL_ARGUMENT_CONFIRMATION",
+                accepted_confirmation_plan_version=1,
+            )
+        )
+
+    assert "TOOL_EXECUTION_STARTED" not in [event["event_name"] for event in journal.events()]
+    assert backend.executed_calls == ()
+
+
+def test_confirmation_required_manifest_rejects_broken_confirmation_causal_chain() -> None:
+    journal, caused_by_event_id = _started_journal()
+    confirmation = _append_confirmation_chain(
+        journal,
+        caused_by_event_id=caused_by_event_id,
+        confirmation_id="confirmation_mvp2_slice2_weather_broken_chain",
+        confirmation_scope="FINAL_ARGUMENT_CONFIRMATION",
+        start_task_event_seq=3,
+        patch_caused_by_event_id=caused_by_event_id,
+    )
+    backend = InMemoryDemoBackend()
+    executor = DemoToolExecutor(
+        journal=journal,
+        registry=ToolRegistry([_weather_manifest(confirmation_required=True)]),
+        backend=backend,
+    )
+
+    with pytest.raises(ToolExecutionPolicyError, match="current-plan CONFIRMATION_ACCEPTED"):
+        executor.execute(
+            ToolExecutionRequest(
+                tool_call_id="tool_call_mvp2_slice2_broken_chain_confirmation",
+                tool_name="weather",
+                task_id="task_mvp2_slice2",
+                plan_version=1,
+                current_plan_version=1,
+                start_task_event_seq=8,
+                caused_by_event_id=caused_by_event_id,
+                event_id_prefix="evt_mvp2_slice2_broken_chain_confirmation",
+                created_monotonic_ms=372,
+                created_wall_clock_ms=1700000040372,
+                idempotency_key="idem://synthetic/mvp2/slice2/broken-chain-confirmation",
+                arguments={"location": "Testville", "date": "2026-05-17"},
+                argument_provenance={
+                    "location": "evt_mvp2_slice2_arguments_resolved",
+                    "date": "evt_mvp2_slice2_arguments_resolved",
+                },
+                resolved_arguments_ref="args://synthetic/mvp2/slice2/broken-chain-confirmation/ready",
+                provenance_ref="provenance://synthetic/mvp2/slice2/broken-chain-confirmation/ready",
+                accepted_confirmation_event_id=str(confirmation["event_id"]),
+                accepted_confirmation_id="confirmation_mvp2_slice2_weather_broken_chain",
+                accepted_confirmation_scope="FINAL_ARGUMENT_CONFIRMATION",
+                accepted_confirmation_plan_version=1,
+            )
+        )
+
+    assert "TOOL_EXECUTION_STARTED" not in [event["event_name"] for event in journal.events()]
+    assert backend.executed_calls == ()
 
 
 def test_confirmation_required_manifest_rejects_standalone_wrong_scope_acceptance() -> None:
@@ -866,6 +1029,8 @@ def _append_confirmation_chain(
     confirmation_id: str,
     confirmation_scope: str,
     start_task_event_seq: int,
+    required_for_event_id: str | None = None,
+    patch_caused_by_event_id: str | None = None,
 ) -> dict[str, object]:
     required = journal.append(
         event_name="CONFIRMATION_REQUIRED",
@@ -880,14 +1045,14 @@ def _append_confirmation_chain(
         plan_version=1,
         task_event_seq=start_task_event_seq,
         confirmation_scope=confirmation_scope,
-        required_for_event_id=caused_by_event_id,
+        required_for_event_id=required_for_event_id or caused_by_event_id,
         prompt_ref=f"prompt://synthetic/mvp2/slice2/{confirmation_id}",
     )
     patch_received = journal.append(
         event_name="USER_PATCH_RECEIVED",
         event_id=f"evt_mvp2_slice2_{confirmation_id}_patch_received",
         source_module="user_patch_pipeline",
-        caused_by_event_id=str(required["event_id"]),
+        caused_by_event_id=patch_caused_by_event_id or str(required["event_id"]),
         created_monotonic_ms=51,
         created_wall_clock_ms=1700000040051,
         trace_redaction_level="metadata_only",
