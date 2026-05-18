@@ -57,13 +57,10 @@ class DemoUIState:
         )
         existing = self.patches_by_id.get(record.ui_patch_id)
         if existing is not None:
-            if (
-                existing.idempotency_key != record.idempotency_key
-                or existing.patch_ref != record.patch_ref
-                or existing.state_namespace != record.state_namespace
-                or existing.patch_operation != record.patch_operation
-            ):
-                raise DemoUIStateError("ui_patch_id cannot be reused for different patch metadata")
+            if existing != record:
+                raise DemoUIStateError(
+                    "ui_patch_id cannot be reused for different patch metadata or task binding"
+                )
             self.last_patch_event_id = record.event_id
             return True
 
@@ -102,7 +99,7 @@ def _parse_patch_ref(patch_ref: str) -> tuple[str, str]:
             return path_parts[1], path_parts[2]
     if parsed.scheme == "patch" and parsed.netloc == "synthetic" and len(path_parts) >= 2:
         return path_parts[-2], path_parts[-1]
-    return "unknown", "unknown"
+    raise DemoUIStateError("patch_ref must be a structured patch://synthetic ref")
 
 
 def _int_field(event: Mapping[str, Any], field: str) -> int:

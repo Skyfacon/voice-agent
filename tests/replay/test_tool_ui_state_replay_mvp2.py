@@ -8,6 +8,7 @@ import pytest
 from conftest import MVP2_REPLAY_FIXTURE_DIR, load_json_fixture
 from voice_agent.demo_backend.in_memory import InMemoryDemoBackend
 from voice_agent.replay.runner import ReplayValidationError, run_replay_fixture
+from voice_agent.state.demo_ui_state import DemoUIState, DemoUIStateError
 
 
 TOOL_UI_STATE_FIXTURE = MVP2_REPLAY_FIXTURE_DIR / "003-tool-ui-state-patch.fixture.json"
@@ -120,6 +121,46 @@ def test_replay_rejects_ui_patch_when_manifest_is_not_ui_capable() -> None:
         run_replay_fixture(deepcopy(fixture))
 
 
+def test_replay_validates_ui_patch_against_started_call_manifest_not_later_manifest() -> None:
+    fixture = load_json_fixture(TOOL_UI_STATE_FIXTURE)
+    original_manifest = _event_by_id(fixture["events"], "evt_mvp2_slice3_memo_manifest_loaded")
+    progress_event = _event_by_id(fixture["events"], "evt_mvp2_slice3_memo_progress_updated")
+    patch_event = _event_by_id(fixture["events"], "evt_mvp2_slice3_memo_ui_state_patched")
+    patch_event_seq = int(patch_event["event_seq"])
+    later_manifest = deepcopy(original_manifest)
+    later_manifest.update(
+        {
+            "event_id": "evt_mvp2_slice3_memo_later_manifest_loaded",
+            "event_seq": patch_event_seq,
+            "created_monotonic_ms": int(progress_event["created_monotonic_ms"]) + 1,
+            "created_wall_clock_ms": int(progress_event["created_wall_clock_ms"]) + 1,
+            "caused_by_event_id": progress_event["event_id"],
+            "tool_manifest_version": "2026-05-18.slice3-later-disabled",
+            "ui_patch_capable": False,
+            "sandbox_state_namespace": "alarm",
+        }
+    )
+    for event in fixture["events"]:
+        if int(event["event_seq"]) >= patch_event_seq:
+            event["event_seq"] = int(event["event_seq"]) + 1
+    patch_index = fixture["events"].index(patch_event)
+    fixture["events"].insert(patch_index, later_manifest)
+
+    result = run_replay_fixture(deepcopy(fixture))
+
+    assert result.result_status == "passed"
+    assert result.demo_ui_state.namespaces["memo"].operation_counts == {"create": 1}
+
+
+def test_replay_rejects_ui_patch_with_unparseable_patch_ref_when_manifest_requires_namespace() -> None:
+    fixture = load_json_fixture(TOOL_UI_STATE_FIXTURE)
+    patch_event = _event_by_id(fixture["events"], "evt_mvp2_slice3_memo_ui_state_patched")
+    patch_event["patch_ref"] = "patch://synthetic/garbage"
+
+    with pytest.raises(ReplayValidationError, match="patch_ref namespace must be parseable"):
+        run_replay_fixture(deepcopy(fixture))
+
+
 def test_replay_preserves_operation_from_legacy_synthetic_patch_ref() -> None:
     result = run_replay_fixture(load_json_fixture(TOOL_EXECUTION_FIXTURE))
 
@@ -129,6 +170,31 @@ def test_replay_preserves_operation_from_legacy_synthetic_patch_ref() -> None:
     assert patch.patch_ref == "patch://synthetic/mvp2/slice1/memo/create"
     assert patch.state_namespace == "memo"
     assert patch.patch_operation == "create"
+
+
+def test_demo_ui_state_rejects_duplicate_patch_id_with_different_task_binding() -> None:
+    state = DemoUIState()
+    first_event = {
+        "event_name": "TOOL_UI_STATE_PATCHED",
+        "event_id": "evt_mvp2_slice3_patch_first",
+        "tool_call_id": "tool_call_mvp2_slice3_memo",
+        "task_id": "task_mvp2_slice3",
+        "plan_version": 1,
+        "task_event_seq": 8,
+        "ui_patch_id": "ui_patch_memo_create_same",
+        "idempotency_key": "idem://synthetic/mvp2/slice3/memo-create",
+        "patch_ref": "patch://synthetic/demo_backend/memo/create/ui_patch_memo_create_same",
+    }
+    state.reduce_event(first_event)
+
+    second_event = {
+        **first_event,
+        "event_id": "evt_mvp2_slice3_patch_second",
+        "task_id": "task_mvp2_slice3_other",
+        "task_event_seq": 9,
+    }
+    with pytest.raises(DemoUIStateError, match="ui_patch_id cannot be reused"):
+        state.reduce_event(second_event)
 
 
 def _event_by_id(events: list[dict[str, object]], event_id: str) -> dict[str, object]:

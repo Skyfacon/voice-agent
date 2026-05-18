@@ -553,6 +553,7 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
     accepted_destructive_confirmations_by_id: dict[str, Mapping[str, Any]] = {}
     started_tool_calls_by_task: dict[tuple[str, str], Mapping[str, Any]] = {}
     started_tool_calls_by_plan: dict[tuple[str, str, int], Mapping[str, Any]] = {}
+    started_tool_manifests_by_plan: dict[tuple[str, str, int], Mapping[str, Any]] = {}
     cancel_requests_by_id: dict[str, Mapping[str, Any]] = {}
 
     for event in ordered_events:
@@ -592,10 +593,13 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
                 manifest=manifest,
                 accepted_confirmations_by_id=accepted_destructive_confirmations_by_id,
             )
+            tool_call_plan_key = _tool_call_plan_key(event)
             started_tool_calls_by_task[_tool_call_task_key(event)] = event
-            started_tool_calls_by_plan[_tool_call_plan_key(event)] = event
+            started_tool_calls_by_plan[tool_call_plan_key] = event
+            started_tool_manifests_by_plan[tool_call_plan_key] = manifest
         elif event_name == "TOOL_UI_STATE_PATCHED":
-            started_event = started_tool_calls_by_plan.get(_tool_call_plan_key(event))
+            tool_call_plan_key = _tool_call_plan_key(event)
+            started_event = started_tool_calls_by_plan.get(tool_call_plan_key)
             if started_event is None:
                 raise ReplayValidationError(
                     "TOOL_UI_STATE_PATCHED requires prior TOOL_EXECUTION_STARTED for the same "
@@ -603,10 +607,14 @@ def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, An
                 )
             if event.get("idempotency_key") != started_event.get("idempotency_key"):
                 raise ReplayValidationError("TOOL_UI_STATE_PATCHED idempotency_key must match TOOL_EXECUTION_STARTED")
+            patch_manifest = started_tool_manifests_by_plan.get(tool_call_plan_key)
+            if patch_manifest is None:
+                raise ReplayValidationError(
+                    "TOOL_UI_STATE_PATCHED requires manifest bound to prior TOOL_EXECUTION_STARTED"
+                )
             patch_manifest = _validate_tool_ui_patch_manifest_gate(
                 patch_event=event,
-                tool_names_by_call=tool_names_by_call,
-                tool_manifests_by_name=tool_manifests_by_name,
+                manifest=patch_manifest,
             )
             _validate_ui_patch_namespace_matches_manifest(
                 patch_event=event,
@@ -678,18 +686,11 @@ def _validate_tool_start_manifest_gate(
 def _validate_tool_ui_patch_manifest_gate(
     *,
     patch_event: Mapping[str, Any],
-    tool_names_by_call: Mapping[str, str],
-    tool_manifests_by_name: Mapping[str, Mapping[str, Any]],
+    manifest: Mapping[str, Any],
 ) -> Mapping[str, Any]:
-    tool_name = _tool_name_for_event(patch_event, tool_names_by_call)
-    if tool_name is None and len(tool_manifests_by_name) == 1:
-        manifest = next(iter(tool_manifests_by_name.values()))
-    else:
-        manifest = tool_manifests_by_name.get(tool_name) if tool_name is not None else None
-    if manifest is None:
-        raise ReplayValidationError(
-            "TOOL_UI_STATE_PATCHED requires recorded TOOL_MANIFEST_LOADED for the same tool_call_id"
-        )
+    tool_name = patch_event.get("tool_name")
+    if tool_name not in (None, "") and str(tool_name) != str(manifest["tool_name"]):
+        raise ReplayValidationError("TOOL_UI_STATE_PATCHED tool_name must match started tool manifest")
     _validate_tool_manifest_side_effect_allowed(manifest)
     if manifest.get("ui_patch_capable") is not True:
         raise ReplayValidationError("TOOL_UI_STATE_PATCHED requires ui_patch_capable manifest")
@@ -705,7 +706,11 @@ def _validate_ui_patch_namespace_matches_manifest(
     if manifest_namespace in (None, ""):
         return
     patch_namespace = _patch_ref_namespace(str(patch_event["patch_ref"]))
-    if patch_namespace is not None and patch_namespace != str(manifest_namespace):
+    if patch_namespace is None:
+        raise ReplayValidationError(
+            "TOOL_UI_STATE_PATCHED patch_ref namespace must be parseable when manifest declares sandbox_state_namespace"
+        )
+    if patch_namespace != str(manifest_namespace):
         raise ReplayValidationError("TOOL_UI_STATE_PATCHED patch_ref namespace must match manifest namespace")
 
 
