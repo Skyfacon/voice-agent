@@ -62,7 +62,7 @@ class MockCommitmentCoverageChecker:
             expected_event_name="SEMANTIC_COMMITMENT_EMITTED",
         )
         failure_reasons = _commitment_coverage_failure_reasons(spoken, source_commitment)
-        source_commitment_id = _safe_source_commitment_id(spoken, source_commitment)
+        source_commitment_id = _safe_source_commitment_id(spoken)
 
         if failure_reasons:
             return _append_check_event(
@@ -342,16 +342,10 @@ def _next_task_event_seq(journal: InMemoryEventJournal, task_id: str) -> int:
     return latest_task_event_seq + 1
 
 
-def _safe_source_commitment_id(
-    spoken: Mapping[str, Any],
-    source_commitment: Mapping[str, Any] | None,
-) -> str:
+def _safe_source_commitment_id(spoken: Mapping[str, Any]) -> str:
     spoken_commitment_id = _optional_string(spoken.get("source_commitment_id"))
     if spoken_commitment_id is not None:
         return spoken_commitment_id
-    source_commitment_id = _optional_string(source_commitment.get("commitment_id")) if source_commitment else None
-    if source_commitment_id is not None:
-        return source_commitment_id
     return "missing_source_commitment_id"
 
 

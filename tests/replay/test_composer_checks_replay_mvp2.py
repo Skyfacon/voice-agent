@@ -196,6 +196,29 @@ def test_replay_rejects_failed_coverage_check_with_wrong_source_commitment_id() 
         run_replay_fixture(deepcopy(fixture))
 
 
+def test_replay_accepts_coverage_failure_trace_for_missing_source_commitment_id() -> None:
+    fixture = load_json_fixture(COMPOSER_CHECK_FIXTURE)
+    spoken = _event_by_id(fixture["events"], "evt_mvp2_slice7_commitment_spoken")
+    spoken.pop("source_commitment_id")
+    coverage = _event_by_id(fixture["events"], "evt_mvp2_slice7_coverage_passed")
+    coverage["event_name"] = "COMMITMENT_COVERAGE_CHECK_FAILED"
+    coverage["source_commitment_id"] = "missing_source_commitment_id"
+    coverage["failure_reasons"] = ["missing_source_commitment_id"]
+    coverage.pop("checked_fields")
+    _remove_events(
+        fixture["events"],
+        {
+            "evt_mvp2_slice7_commitment_playback_started",
+        },
+    )
+
+    result = run_replay_fixture(deepcopy(fixture))
+
+    failed = result.spoken_plan_check_state.failed_checks["evt_mvp2_slice7_coverage_passed"]
+    assert failed.source_commitment_id == "missing_source_commitment_id"
+    assert failed.failure_reasons == ("missing_source_commitment_id",)
+
+
 def test_replay_accepts_truthfulness_failure_trace_for_unsupported_progress_level() -> None:
     fixture = load_json_fixture(COMPOSER_CHECK_FIXTURE)
     spoken = _event_by_id(fixture["events"], "evt_mvp2_slice7_progress_spoken")

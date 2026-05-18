@@ -107,6 +107,29 @@ def test_commitment_coverage_checker_records_output_mode_on_failure() -> None:
     assert check["failure_reasons"] == ["source_commitment_id_mismatch"]
 
 
+def test_commitment_coverage_checker_preserves_missing_source_commitment_id_on_failure() -> None:
+    journal, caused_by_event_id = _journal_with_session()
+    commitment = _append_commitment(journal, caused_by_event_id=caused_by_event_id, task_event_seq=1)
+    spoken = _append_commitment_spoken(
+        journal,
+        caused_by_event_id=commitment["event_id"],
+        task_event_seq=2,
+        source_commitment_id=None,
+    )
+
+    check = MockCommitmentCoverageChecker(journal).check(
+        spoken_plan_event=spoken,
+        event_id="evt_mvp2_slice7_coverage_failed_missing_commitment_id",
+        created_monotonic_ms=40,
+        created_wall_clock_ms=1700000070040,
+        check_result_ref="check://synthetic/mvp2/slice7/coverage/fail-missing-commitment-id",
+    )
+
+    assert check["event_name"] == "COMMITMENT_COVERAGE_CHECK_FAILED"
+    assert check["source_commitment_id"] == "missing_source_commitment_id"
+    assert check["failure_reasons"] == ["missing_source_commitment_id"]
+
+
 def test_commitment_coverage_checker_fails_unexpected_truthfulness_requirement() -> None:
     journal, caused_by_event_id = _journal_with_session()
     commitment = _append_commitment(journal, caused_by_event_id=caused_by_event_id, task_event_seq=1)
@@ -292,13 +315,16 @@ def _append_commitment_spoken(
     *,
     caused_by_event_id: str,
     task_event_seq: int,
-    source_commitment_id: str,
+    source_commitment_id: str | None,
     source_module: str = "composer",
     immutable_fields: list[str] | None = None,
     must_say_fields: list[str] | None = None,
     forbidden_rewrite_fields: list[str] | None = None,
     truthfulness_check_required: bool = False,
 ) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    if source_commitment_id is not None:
+        fields["source_commitment_id"] = source_commitment_id
     return journal.append(
         event_name="SPOKEN_PLAN_EMITTED",
         event_id=f"evt_mvp2_slice7_commitment_spoken_{task_event_seq}",
@@ -312,7 +338,6 @@ def _append_commitment_spoken(
         plan_version=1,
         task_event_seq=task_event_seq,
         source_events=[caused_by_event_id],
-        source_commitment_id=source_commitment_id,
         source_progress_event_ids=[],
         coverage_check_required=True,
         truthfulness_check_required=truthfulness_check_required,
@@ -326,6 +351,7 @@ def _append_commitment_spoken(
         immutable_fields=immutable_fields or [],
         must_say_fields=must_say_fields or [],
         forbidden_rewrite_fields=forbidden_rewrite_fields or [],
+        **fields,
     )
 
 
