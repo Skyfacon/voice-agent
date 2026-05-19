@@ -1,5 +1,7 @@
 #  MVP-1 to MVP-2 Handoff
 
+> Historical notice: 本文是 MVP-1 完成后、MVP-2 开工前的历史 handoff。MVP-2 现在已经完成 deterministic demo/replay acceptance；最新阶段状态以 `docs/implementation/mvp2-closeout.md` 和 `docs/implementation/mvp2-closeout.zh.md` 为准。本文中“MVP-2 runtime 尚未实现”等描述只反映当时语境。
+
 本文面向准备实现 MVP-2 的 human developer / coding agent。它不替代 ADR，不修改 ADR，也不授权扩大 MVP scope。实现 MVP-2 前仍需以 `AGENTS.md`、`stage_b_adr_register.md`、`docs/adr/*.md` 和 `docs/specs/*.md` 为准。
 
 ## 1. 当前阶段一句话结论

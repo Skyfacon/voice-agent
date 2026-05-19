@@ -528,6 +528,21 @@ def test_mvp2_manifest_index_is_acceptance_safety_skeleton() -> None:
             ),
         }
     ]
+    assert "planned_fixture_checks" not in manifest_index
+    assert manifest_index["historical_planned_fixture_checks_note"] == (
+        "Historical planning-only list retained for context; active acceptance gate uses fixture_checks."
+    )
+    assert [check["fixture"] for check in manifest_index["historical_planned_fixture_checks"]] == [
+        "000-empty-mvp2-session.fixture.json",
+        "001-tool-manifest.fixture.json",
+        "002-tool-arguments-blocked.fixture.json",
+        "003-demo-tools-ui-patch.fixture.json",
+        "004-websearch-untrusted-evidence.fixture.json",
+        "005-demo-destructive-confirmation.fixture.json",
+        "006-progressive-stale-tool-result.fixture.json",
+        "006-thinker-as-composer.fixture.json",
+        "007-composer-checks.fixture.json",
+    ]
     assert manifest_index["fixture_safety_flags"] == {
         "contains_raw_audio": False,
         "contains_raw_trace": False,
@@ -589,6 +604,18 @@ def test_mvp2_manifest_websearch_scope_is_untrusted_evidence_only() -> None:
     assert websearch["result_trust_level"] == "UNTRUSTED_WEB_EVIDENCE"
     assert websearch["first_pass_mode"] == "mock_or_synthetic_only"
     assert websearch["ui_patch_capable"] is False
+
+
+def test_mvp2_manifest_weather_scope_marks_display_patch_optional() -> None:
+    manifest_index = load_json_fixture(MVP2_MANIFEST_INDEX)
+
+    tools_by_name = {tool["tool_name"]: tool for tool in manifest_index["initial_tool_scope"]}
+    weather = tools_by_name["weather"]
+    assert weather["tool_category"] == "READ_ONLY_EXTERNAL"
+    assert weather["allowed_side_effect_classes"] == ["READ_ONLY"]
+    assert weather["result_trust_level"] == "EXTERNAL_READ_PROVIDER_RESULT"
+    assert weather["ui_patch_capable"] is False
+    assert weather["optional_display_patch_capable"] is True
 
 
 @pytest.mark.parametrize("fixture_path", sorted(MVP0_REPLAY_FIXTURE_DIR.glob("*.fixture.json")))

@@ -81,6 +81,13 @@ def test_mvp2_acceptance_scenarios_report_scope_assertion_summaries() -> None:
         "ui_patch_count": 0,
         "evidence_reviewed": True,
     }
+    assert scenarios["MVP2-WEATHER-READ-ONLY-001"].assertion_summary == {
+        "tool_call_id": "tool_call_mvp2_slice4_weather",
+        "tool_name": "weather",
+        "trust_level": "EXTERNAL_READ_PROVIDER_RESULT",
+        "source_type": "READ_ONLY_EXTERNAL",
+        "ui_patch_count": 0,
+    }
     assert scenarios["MVP2-DEMO-DESTRUCTIVE-CONFIRMATION-001"].assertion_summary == {
         "destructive_tool_calls": ["tool_call_mvp2_slice5_alarm_cancel", "tool_call_mvp2_slice5_memo_delete"],
         "accepted_confirmation_count": 2,

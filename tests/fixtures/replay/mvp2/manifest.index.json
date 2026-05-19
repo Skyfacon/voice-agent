@@ -65,7 +65,8 @@
         "READ_ONLY"
       ],
       "result_trust_level": "EXTERNAL_READ_PROVIDER_RESULT",
-      "ui_patch_capable": true
+      "ui_patch_capable": false,
+      "optional_display_patch_capable": true
     },
     {
       "tool_name": "webSearch",
@@ -208,7 +209,8 @@
       "assertion": "all MVP-2 fixtures are deterministic, GITHUB_ALLOWED, synthetic/redacted/minimal, and scope-safe"
     }
   ],
-  "planned_fixture_checks": [
+  "historical_planned_fixture_checks_note": "Historical planning-only list retained for context; active acceptance gate uses fixture_checks.",
+  "historical_planned_fixture_checks": [
     {
       "fixture": "000-empty-mvp2-session.fixture.json",
       "purpose": "empty MVP-2 replay safety skeleton"

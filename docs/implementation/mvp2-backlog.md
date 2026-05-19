@@ -1,5 +1,7 @@
 # MVP-2 Implementation Backlog
 
+> Historical notice: 本文是 MVP-2 实施前/实施中的 backlog 和切片计划。MVP-2 现在已经完成 deterministic demo/replay acceptance closeout；最新状态以 `docs/implementation/mvp2-closeout.md` 和 `docs/implementation/mvp2-closeout.zh.md` 为准。本文中“尚未实现”等描述只反映当时计划语境，不代表当前 main 状态。
+
 本文档是 MVP-2 的开工入口和实施 backlog。它不替代 ADR，不修改 ADR，也不授权扩大 MVP scope。实现时仍以 `AGENTS.md`、`stage_b_adr_register.md`、`docs/adr/*.md` 和 `docs/specs/*.md` 为准。
 
 ## 当前阶段一句话结论
