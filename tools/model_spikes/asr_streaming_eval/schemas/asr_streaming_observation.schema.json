@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "asr_streaming_observation.schema.json",
+  "title": "ASR Streaming Observation",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "contract_snapshot",
+    "observation_id",
+    "case_id",
+    "adapter_type",
+    "provider",
+    "model_name",
+    "deployment_mode",
+    "endpoint_ref",
+    "output_mode",
+    "input_fixture",
+    "request_observation",
+    "transcript_observation",
+    "streaming_observation",
+    "timestamp_observation",
+    "quality_flags",
+    "failure_observation",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "asr_streaming_timestamp_cancellation_observation_v1"
+    },
+    "adapter_type": {
+      "const": "asr"
+    },
+    "output_mode": {
+      "enum": ["mock", "real", "degraded", "fallback"]
+    },
+    "input_fixture": {
+      "type": "object",
+      "required": ["contains_real_user_input", "contains_audio_in_report"],
+      "properties": {
+        "contains_real_user_input": {
+          "const": false
+        },
+        "contains_audio_in_report": {
+          "const": false
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["stored_audio", "stored_provider_body", "stored_sensitive_access_material"],
+      "properties": {
+        "stored_audio": {
+          "const": false
+        },
+        "stored_provider_body": {
+          "const": false
+        },
+        "stored_sensitive_access_material": {
+          "const": false
+        }
+      }
+    }
+  }
+}

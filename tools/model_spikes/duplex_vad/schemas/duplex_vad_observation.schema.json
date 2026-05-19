@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "duplex_vad_observation.schema.json",
+  "title": "Duplex VAD Observation",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "observation_schema_version",
+    "observation_id",
+    "contract_snapshot",
+    "candidate",
+    "deployment_mode",
+    "output_mode",
+    "sample_rate_hz",
+    "frame_ms",
+    "mode",
+    "synthetic_case",
+    "synthetic_seed",
+    "raw_audio_committed",
+    "contains_real_user_input",
+    "contains_raw_trace",
+    "deterministic_replay_reruns_vad"
+  ],
+  "properties": {
+    "observation_schema_version": {
+      "const": "duplex_vad_observation.v1"
+    },
+    "observation_id": {
+      "type": "string",
+      "pattern": "^obs_duplex_vad_[a-z0-9]+$"
+    },
+    "contract_snapshot": {
+      "type": "string"
+    },
+    "candidate": {
+      "const": "webrtcvad"
+    },
+    "deployment_mode": {
+      "const": "local"
+    },
+    "output_mode": {
+      "enum": ["real", "degraded", "real_or_degraded"]
+    },
+    "sample_rate_hz": {
+      "type": "integer",
+      "enum": [8000, 16000, 32000, 48000]
+    },
+    "frame_ms": {
+      "type": ["integer", "null"],
+      "enum": [10, 20, 30, null]
+    },
+    "mode": {
+      "type": ["integer", "null"],
+      "enum": [0, 1, 2, 3, null]
+    },
+    "synthetic_case": {
+      "type": "string"
+    },
+    "synthetic_seed": {
+      "type": "integer"
+    },
+    "speech_start_ms": {
+      "type": ["integer", "null"]
+    },
+    "speech_start_emit_latency_ms": {
+      "type": ["integer", "null"]
+    },
+    "speech_end_ms": {
+      "type": ["integer", "null"]
+    },
+    "speech_end_hangover_ms": {
+      "type": ["integer", "null"]
+    },
+    "vad_confidence_summary": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "raw_vad_confidence_summary": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "echo_likelihood_mode": {
+      "type": "string"
+    },
+    "playback_reference_residual": {
+      "type": "string"
+    },
+    "raw_audio_committed": {
+      "const": false
+    },
+    "contains_real_user_input": {
+      "const": false
+    },
+    "contains_raw_trace": {
+      "const": false
+    },
+    "deterministic_replay_reruns_vad": {
+      "const": false
+    }
+  }
+}

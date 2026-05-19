@@ -1,0 +1,4 @@
+runs/*
+!runs/README.md
+*.pyc
+__pycache__/

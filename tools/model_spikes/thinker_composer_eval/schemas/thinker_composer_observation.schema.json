@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thinker Composer Boundary Observation",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract_snapshot",
+    "observation_id",
+    "case_id",
+    "candidate",
+    "input_fixture",
+    "request_observation",
+    "semantic_frame_observation",
+    "composer_observation",
+    "boundary_observation",
+    "streaming_observation",
+    "failure_observation",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "thinker_composer_boundary_observation.v1"
+    },
+    "contract_snapshot": {
+      "type": "string"
+    },
+    "observation_id": {
+      "type": "string"
+    },
+    "case_id": {
+      "type": "string"
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["adapter_type", "provider", "model_name", "deployment_mode", "endpoint_ref", "output_mode", "role_contract"],
+      "properties": {
+        "adapter_type": {
+          "enum": ["thinker", "thinker_as_composer"]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model_name": {
+          "type": "string"
+        },
+        "deployment_mode": {
+          "type": "string"
+        },
+        "endpoint_ref": {
+          "type": "string"
+        },
+        "output_mode": {
+          "enum": ["mock", "real", "degraded", "fallback"]
+        },
+        "role_contract": {
+          "type": "string"
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["stored_audio", "stored_provider_body", "stored_trace", "stored_secret_material", "deterministic_replay_reruns_provider"],
+      "properties": {
+        "stored_audio": {
+          "const": false
+        },
+        "stored_provider_body": {
+          "const": false
+        },
+        "stored_trace": {
+          "const": false
+        },
+        "stored_secret_material": {
+          "const": false
+        },
+        "deterministic_replay_reruns_provider": {
+          "const": false
+        }
+      }
+    }
+  }
+}

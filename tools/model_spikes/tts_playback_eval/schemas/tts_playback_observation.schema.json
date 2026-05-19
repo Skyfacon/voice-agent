@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tts_playback_observation.schema.json",
+  "title": "TTS Playback Observation",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "contract_snapshot",
+    "observation_id",
+    "case_id",
+    "observation_kind",
+    "output_mode",
+    "adapter_observation",
+    "request_metadata",
+    "stream_metadata",
+    "playback_metadata",
+    "control_metadata",
+    "privacy",
+    "boundary_assertions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "tts_playback_proof_observation.v1"
+    },
+    "output_mode": {
+      "enum": ["mock", "real", "degraded", "fallback"]
+    },
+    "adapter_observation": {
+      "type": "object",
+      "required": ["adapter_type"],
+      "properties": {
+        "adapter_type": {
+          "const": "tts_talker"
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "required": [
+        "generated_audio_stored",
+        "provider_response_body_stored",
+        "request_secret_material_stored",
+        "deterministic_replay_reruns_tts"
+      ],
+      "properties": {
+        "generated_audio_stored": {
+          "const": false
+        },
+        "provider_response_body_stored": {
+          "const": false
+        },
+        "request_secret_material_stored": {
+          "const": false
+        },
+        "deterministic_replay_reruns_tts": {
+          "const": false
+        }
+      }
+    }
+  }
+}

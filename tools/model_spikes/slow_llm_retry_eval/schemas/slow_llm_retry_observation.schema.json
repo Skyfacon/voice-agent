@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "slow_llm_retry_observation.schema.json",
+  "title": "Slow LLM Retry Observation",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "contract_snapshot",
+    "observation_id",
+    "case_id",
+    "observation_kind",
+    "candidate",
+    "task_binding",
+    "adapter_result",
+    "slowtask_effect",
+    "tool_boundary",
+    "privacy",
+    "boundary_assertions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "slow_llm_retry_cancellation_observation.v1"
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["adapter_type", "output_mode"],
+      "properties": {
+        "adapter_type": {
+          "const": "slow_llm"
+        },
+        "output_mode": {
+          "enum": ["mock", "real", "degraded", "fallback"]
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "required": [
+        "raw_trace_stored",
+        "real_user_input_stored",
+        "secret_material_stored",
+        "deterministic_replay_reruns_provider"
+      ],
+      "properties": {
+        "raw_trace_stored": {
+          "const": false
+        },
+        "real_user_input_stored": {
+          "const": false
+        },
+        "secret_material_stored": {
+          "const": false
+        },
+        "deterministic_replay_reruns_provider": {
+          "const": false
+        }
+      }
+    }
+  }
+}
