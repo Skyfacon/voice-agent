@@ -5,13 +5,15 @@
 ## 1. Closeout Snapshot
 
 - Prepared on: 2026-05-19
-- Scope of this closeout: documentation-only review and handoff. No ADR, code, runtime service, real model, real TTS, real tool, real frontend, or real external side effect was introduced by this closeout.
+- Original closeout scope: documentation-only review and handoff. No ADR, runtime service, real model, real TTS, real tool, real frontend, or real external side effect was introduced by the original closeout.
+- Follow-up cleanup scope: docs / fixture metadata / tests only. No ADR, runtime service, real model, real TTS, real tool, real frontend, real adapter, or real external side effect is introduced by the cleanup.
 - Local review base: `mvp2/slice8-acceptance-runner` at `9f47301` (`feat: add MVP2 acceptance runner`).
-- Remote-main note: remote refs were refreshed on 2026-05-19. `origin/main` is `671f7fc` (`Merge pull request #27 from Skyfacon/mvp2/slice8-acceptance-runner`) and includes the MVP-2 slice8 acceptance runner.
-- Initial local worktree status: clean before this document was added.
-- Recent feature diff versus local `main`: `src/voice_agent/replay/scenario_assertions.py`, `tests/acceptance/test_mvp2_acceptance_scenarios.py`, `tests/fixtures/replay/mvp2/008-tool-manifest-only.fixture.json`, `tests/fixtures/replay/mvp2/009-progressive-stale-tool-result.fixture.json`, `tests/fixtures/replay/mvp2/manifest.index.json`, and `tests/replay/test_fixture_safety.py`.
+- Remote-main note: remote refs were refreshed on 2026-05-19. `origin/main` is `d0019a4` (`Merge pull request #28 from Skyfacon/codex/mvp2-closeout-zh`) and includes the MVP-2 slice8 acceptance runner plus the closeout handoff docs.
+- Follow-up cleanup branch: `codex/mvp2-docs-handoff-fixes`, created from latest `main` for documentation/metadata/test cleanup only.
+- Original MVP-2 slice8 feature diff versus then-local `main`: `src/voice_agent/replay/scenario_assertions.py`, `tests/acceptance/test_mvp2_acceptance_scenarios.py`, `tests/fixtures/replay/mvp2/008-tool-manifest-only.fixture.json`, `tests/fixtures/replay/mvp2/009-progressive-stale-tool-result.fixture.json`, `tests/fixtures/replay/mvp2/manifest.index.json`, and `tests/replay/test_fixture_safety.py`.
+- This follow-up cleanup diff is docs/fixture-metadata/test-only and does not change ADRs or runtime adapter behavior.
 - Canonical test entrypoint: `./scripts/test -q`.
-- Closeout test status: `./scripts/test -q` passed locally with `665 passed`.
+- Closeout cleanup test status: `./scripts/test -q` passed locally with `666 passed`.
 
 ## 2. Sources Reviewed
 
@@ -31,7 +33,7 @@ MVP-2 is complete as a deterministic demo/replay acceptance slice. It adds demo 
 
 ## 4. MVP-2 Completed Capability Surface
 
-- Tool manifest and scope declarations for `memo`, `alarm`, `flashlight`, `weather`, and `webSearch`, including tool category, side-effect class, trust label, and UI patch capability.
+- Tool manifest and scope declarations for `memo`, `alarm`, `flashlight`, `weather`, and `webSearch`, including tool category, side-effect class, trust label, and UI patch capability. Weather defaults to read-only provider-style evidence without UI patch; weather display patch is optional only.
 - Progressive Tool Executor lifecycle coverage: manifest load, partial arguments, ready arguments, insufficient-argument blocking, preview, authorization, start, progress, UI patch, result, failure, retry, cancel request, and cancellation metadata.
 - Sandbox-only demo backend state for memo/alarm/flashlight style actions, with replayable UI state patches emitted only through `TOOL_UI_STATE_PATCHED`.
 - `DemoUIState` replay reconstruction from recorded patch refs only. Successful `TOOL_RESULT_RECEIVED` is not enough to infer frontend/demo state mutation.
@@ -114,8 +116,8 @@ An ADR update remains required before any future change that adds canonical even
 ## 10. Current Test Status
 
 - Required command: `./scripts/test -q`.
-- Status for this closeout document: passed locally with `665 passed`.
-- CI/remote status: remote `main` was refreshed locally and confirmed at `671f7fc`; GitHub CI status should still be checked on the docs-only PR.
+- Status for this closeout cleanup: passed locally with `666 passed`.
+- CI/remote status: remote `main` was refreshed locally and confirmed at `d0019a4`; GitHub CI status should still be checked on the docs/metadata PR.
 
 ## 11. MVP-3 Readiness
 
@@ -130,19 +132,20 @@ MVP-3 should be treated as adapter integration planning, not architecture expans
 
 ## 12. Remaining Risks and Technical Debt
 
-- Remote refs were refreshed during this closeout; `origin/main` was confirmed at `671f7fc`. CI should still be treated as the merge authority for the final docs-only PR.
-- `docs/implementation/mvp2-backlog.md` still contains historical language saying the MVP-2 runtime is not yet implemented. That backlog was accurate before slice completion, but it may confuse future readers unless a small documentation cleanup links to this closeout.
-- `tests/fixtures/replay/mvp2/manifest.index.json` still contains a historical `planned_fixture_checks` section in addition to the current `fixture_checks`. It is harmless but can confuse readers.
+- `docs/specs/adapter-capability-profiles.md` is not yet present. This blocks real adapter implementation, but it does not block MVP-3 planning or a Phase 0 contract PR.
+- The Event Journal has not yet proven serialization under real adapter concurrent or late callbacks. This blocks parallel adapter runtime implementation until a single append boundary or dispatcher contract is tested.
+- Runtime startup is still mock-oriented and does not yet have a real/fallback/degraded adapter assembly gate. This blocks real adapter runtime assembly, not planning.
 - `src/voice_agent/replay/scenario_assertions.py` now carries a large amount of MVP-0/MVP-1/MVP-2 acceptance logic. A future non-scope-changing cleanup could split runner helpers by MVP phase.
+- The historical `planned_fixture_checks` manifest section has been renamed to `historical_planned_fixture_checks`; the active gate remains `fixture_checks`.
+- Weather scope has been clarified: default weather execution is read-only provider-style evidence with no UI patch, and display patch is optional only.
 - MVP-2 validates replayed demo UI state, not a live product frontend. If a real frontend demo is needed before product demos, it should be planned explicitly and not backfilled into MVP-2.
-- MVP-3 real adapters will need credential-safe config refs, output-mode labeling, failure/degraded/fallback events, and replay fixtures before any provider endpoint is exercised.
 - The MVP-2 tests are intentionally synthetic. They are strong for control-plane invariants but do not evaluate real provider quality, latency, acoustic quality, TTS quality, or production tool behavior.
 
 ## 13. Recommended MVP-3 Entry Order
 
 Keep MVP-3 narrow: real adapter capability matrix, adapter mock/real/fallback/degraded labeling, deterministic replay that never reruns models/tools/network/clock/random, and no new architecture capability.
 
-1. Refresh local `main`, confirm the slice8 merge SHA, land this docs-only closeout, and verify `./scripts/test -q` plus CI.
+1. Refresh local `main`, confirm the closeout merge SHA, land this docs/metadata/test cleanup, and verify `./scripts/test -q` plus CI.
 2. Re-read ADR-011 and existing adapter capability code, then write the MVP-3 adapter capability matrix for ASR, Thinker, Slow LLM, and TTS.
 3. Add tests that enforce adapter output-mode labeling: `mock`, `real`, `fallback`, and `degraded` must be explicit and credential-safe.
 4. Add deterministic replay fixtures for adapter output/failure/degraded events using recorded refs only. Replay must not call providers, tools, network, clock, or random.
@@ -152,6 +155,6 @@ Keep MVP-3 narrow: real adapter capability matrix, adapter mock/real/fallback/de
 
 ## 14. Merge / Handoff Recommendation
 
-- Commit this closeout as a standalone docs-only change against refreshed remote `main`.
+- Commit this closeout cleanup as a standalone docs/metadata/test change against refreshed remote `main`.
 - A separate PR is recommended because the code feature branch has already been merged and this document is a stage closeout artifact rather than a runtime fix.
 - After this closeout lands and tests pass, the next work item should be MVP-3 planning, not more MVP-2 feature work.

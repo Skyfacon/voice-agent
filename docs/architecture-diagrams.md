@@ -1,15 +1,16 @@
 # Architecture Diagrams / 架构图示
 
-本文档是一份 diagram-as-code 辅助读本，用 Mermaid 汇总 `voice-agent` 的项目定位、架构边界、MVP-0 / MVP-1 当前实现观察，以及 MVP-2 / MVP-3 后续方向。
+本文档是一份 diagram-as-code 辅助读本，用 Mermaid 汇总 `voice-agent` 的项目定位、架构边界、MVP-0 / MVP-1 / MVP-2 当前实现观察，以及 MVP-3 后续方向。
 
 它不替代 ADR，也不修改 ADR。图中的 event name 使用 `docs/specs/event-registry.md` 的 canonical event names；RouterDecision、TaskFocus、SlowTask state 使用现有 spec / code 中的取值。
 
 ## 当前实现观察
 
 - 当前仓库不是产品 demo、服务入口或前端 demo，而是 live voice agent 的 architecture baseline、Python control-plane 和 replayable mock spine。
-- 当前源码、测试和 `tests/fixtures/replay/mvp1/manifest.index.json` 显示：MVP-0 walking skeleton 和 MVP-1 mock/replay spine 均已落地到当前工作区；`docs/project-overview.md` 与 `docs/planning/execution-roadmap.md` 应保持这一完成态描述。
+- 当前源码、测试和 `tests/fixtures/replay/mvp2/manifest.index.json` 显示：MVP-0 walking skeleton、MVP-1 mock/replay spine 和 MVP-2 deterministic demo/replay acceptance 均已落地到当前工作区；`docs/project-overview.md` 与 `docs/planning/execution-roadmap.md` 应保持这一完成态描述。
 - 已观察到的 MVP-1 范围包括 `MVP1Router`、`TaskFocusState`、`SlowTaskState`、`MockSlowTaskRuntime`、`UserPatchEvidencePackRuntime`、plan version advance、stale result policy、confirmation/cancel/switch-task fixtures、MVP-1 acceptance runner。
-- 未观察到 MVP-2 / MVP-3 runtime：没有 real Tool Executor、demo tool backend、frontend UI patching、Thinker-as-Composer、coverage/truthfulness checks、real ASR/Thinker/Slow LLM/TTS adapter integration。
+- 已观察到的 MVP-2 范围包括 `ToolExecutionState`、demo Tool Executor、demo backend state、`TOOL_UI_STATE_PATCHED` replay、demo destructive confirmation gates、webSearch evidence boundary、Thinker-as-Composer、coverage/truthfulness checks 和 MVP-2 acceptance runner。
+- 未观察到 MVP-3 real adapter runtime：没有 real ASR/Thinker/Slow LLM/TTS adapter integration、真实 frontend demo、真实外部 side effects、adapter capability profiles 或 runtime assembly gate。
 
 ## 维护规则
 
@@ -27,7 +28,7 @@ flowchart TB
     ControlPlane["Python control-plane\nexplicit async and replay boundaries"]
     MVP0["MVP-0 implemented\nlive-loop skeleton, mock adapters, interrupt/truncate, replay"]
     MVP1["MVP-1 implemented in current checkout\nSlowTask mock, UserPatch, plan_version, stale evidence, acceptance fixtures"]
-    MVP2["MVP-2 later\nDemo Sandbox tools, TOOL_UI_STATE_PATCHED, Composer, coverage/truthfulness"]
+    MVP2["MVP-2 implemented in deterministic demo/replay acceptance\nDemo Sandbox tools, TOOL_UI_STATE_PATCHED, Composer, coverage/truthfulness"]
     MVP3["MVP-3 later\nreal adapters replacing mocks without new architecture capability"]
     NotDemo["Not a product demo\nno service/frontend product surface observed"]
     SafeFixtures["Repo-safe replay fixtures\nsynthetic / redacted / minimal"]
@@ -47,15 +48,15 @@ flowchart TB
     classDef future fill:#fff8e1,stroke:#f9a825,color:#111;
     classDef boundary fill:#e3f2fd,stroke:#1565c0,color:#111;
     classDef warning fill:#ffebee,stroke:#c62828,color:#111;
-    class MVP0,MVP1,SafeFixtures implemented;
-    class MVP2,MVP3 future;
+    class MVP0,MVP1,MVP2,SafeFixtures implemented;
+    class MVP3 future;
     class Governance,Baseline,ControlPlane boundary;
     class NotDemo warning;
 ```
 
 **这张图说明什么**
 
-该仓库的核心价值是可回放、可治理的 live voice agent 架构骨架，不是一个可直接体验的产品 demo。当前工作区已经完成 MVP-0 walking skeleton 和 MVP-1 mock/replay spine，并在源码、fixtures 和 acceptance tests 中可观察。
+该仓库的核心价值是可回放、可治理的 live voice agent 架构骨架，不是一个可直接体验的产品 demo。当前工作区已经完成 MVP-0 walking skeleton、MVP-1 mock/replay spine 和 MVP-2 deterministic demo/replay acceptance，并在源码、fixtures 和 acceptance tests 中可观察。
 
 **关键 ADR/Spec 来源**
 
@@ -63,7 +64,7 @@ flowchart TB
 
 **当前实现状态**
 
-当前 checkout 观察到 MVP-0 与 MVP-1 mock/replay spine 已实现；MVP-2 / MVP-3 未观察到 runtime 实现。
+当前 checkout 观察到 MVP-0、MVP-1 和 MVP-2 deterministic demo/replay acceptance 已实现；MVP-3 real adapter runtime 未实现。
 
 **禁止误读**
 
@@ -123,11 +124,11 @@ ADR-001、ADR-002、ADR-003、ADR-006、ADR-008、ADR-009、ADR-011、ADR-013、
 
 **当前实现状态**
 
-当前实现已覆盖 Access Layer、mock Duplex、Interaction Controller、mock ASR/Thinker、Router、mock Talker/Playback、Event Journal、deterministic replay，以及 MVP-1 SlowTask/UserPatch mock/replay spine。Composer、coverage/truthfulness checks、real adapters 和 demo tools 仍未观察到 runtime。
+当前实现已覆盖 Access Layer、mock Duplex、Interaction Controller、mock ASR/Thinker、Router、mock Talker/Playback、Event Journal、deterministic replay、MVP-1 SlowTask/UserPatch mock/replay spine，以及 MVP-2 demo Tool Executor、demo backend state、UI patch replay、Composer 和 coverage/truthfulness checks acceptance。Real adapters、真实 frontend demo 和真实外部 side effects 未实现。
 
 **禁止误读**
 
-不要把 “Fast reply -> Composer” 读成当前已实现 Composer；这条是 MVP-2 目标边界。当前 fast path 仍是 mock/replay oriented。
+不要把 MVP-2 Composer/check acceptance 读成真实 provider-backed Composer 或 TTS playback 能力；当前路径仍是 mock/replay oriented。
 
 ## 3. 模块职责边界图
 
@@ -168,7 +169,7 @@ ADR-001、ADR-002、ADR-004、ADR-005、ADR-006、ADR-007、ADR-009、ADR-010、
 
 **当前实现状态**
 
-当前实现已观察到 Access、Duplex mock、Interaction Controller、Router MVP-0/MVP-1、UserPatch Pipeline、SlowTask mock runtime/state reducer、Talker mock、Replay Runtime。Tool Executor 和 Composer/checkers 未观察到 runtime。
+当前实现已观察到 Access、Duplex mock、Interaction Controller、Router MVP-0/MVP-1、UserPatch Pipeline、SlowTask mock runtime/state reducer、Talker mock、Replay Runtime、MVP-2 Tool Executor/demo backend state、Composer/checkers 和 `TOOL_UI_STATE_PATCHED` replay acceptance。
 
 **禁止误读**
 
@@ -485,7 +486,7 @@ ADR-002、ADR-010、ADR-012、`docs/specs/replay-spec.md`、`docs/specs/state-re
 
 **当前实现状态**
 
-当前 `run_replay_fixture` validates manifests/events, reduces InteractionState、TaskFocusState、SlowTaskState、PlaybackState、AdapterHealthState、TracePrivacyState, builds `REPLAY_STARTED` / `REPLAY_COMPLETED`, and computes state digest. MVP-0 and MVP-1 fixture manifests are GitHub-allowed deterministic fixtures。
+当前 `run_replay_fixture` validates manifests/events, reduces InteractionState、TaskFocusState、SlowTaskState、ToolExecutionState、DemoUIState、PlaybackState、AdapterHealthState、TracePrivacyState, builds `REPLAY_STARTED` / `REPLAY_COMPLETED`, and computes state digest. MVP-0、MVP-1 和 MVP-2 fixture manifests are GitHub-allowed deterministic fixtures。
 
 **禁止误读**
 
@@ -497,8 +498,8 @@ Replay success is not evidence that real models/tools work. It proves control-pl
 flowchart LR
     MVP0["MVP-0\nimplemented in current checkout\ntext/audio ingress, mock Duplex, Interaction Controller, mock ASR/Thinker, Router FAST_ONLY/IGNORE, mock playback, truncate, replay"]
     MVP1["MVP-1\nimplemented in current checkout\nsingle active SlowTask mock, TaskFocusState, UserPatch, plan_version, stale result, confirmation/cancel/switch, SemanticCommitment mock, acceptance fixtures"]
-    MVP2["MVP-2\nnot observed as runtime\nDemo Sandbox tools, progressive invocation, TOOL_UI_STATE_PATCHED, Thinker-as-Composer, coverage/truthfulness checks"]
-    MVP3["MVP-3\nnot observed as runtime\nreal ASR / Thinker / Slow LLM / TTS adapters via capability contract, no new architecture capability"]
+    MVP2["MVP-2\nimplemented as deterministic demo/replay acceptance\nDemo Sandbox tools, progressive invocation, TOOL_UI_STATE_PATCHED, Thinker-as-Composer, coverage/truthfulness checks"]
+    MVP3["MVP-3\nplanning next, real runtime not implemented\nreal ASR / Thinker / Slow LLM / TTS adapters via capability contract, no new architecture capability"]
     PostMVP["Post-MVP requires ADR\nmulti active SlowTask, pause/resume, real external side-effect tools, production privacy/auth"]
 
     MVP0 --> MVP1 --> MVP2 --> MVP3 --> PostMVP
@@ -506,8 +507,8 @@ flowchart LR
     classDef implemented fill:#e8f5e9,stroke:#2e7d32,color:#111;
     classDef future fill:#fff8e1,stroke:#f9a825,color:#111;
     classDef blocked fill:#ffebee,stroke:#c62828,color:#111;
-    class MVP0,MVP1 implemented;
-    class MVP2,MVP3 future;
+    class MVP0,MVP1,MVP2 implemented;
+    class MVP3 future;
     class PostMVP blocked;
 ```
 
@@ -521,8 +522,8 @@ ADR-005、ADR-009、ADR-011、ADR-012、ADR-013、ADR-014、ADR-016、`docs/plan
 
 **当前实现状态**
 
-Current checkout shows MVP-0 and MVP-1 mock/replay coverage implemented. MVP-2 and MVP-3 are directionally specified but not implemented as runtime modules in the observed source tree。
+Current checkout shows MVP-0, MVP-1, and MVP-2 deterministic demo/replay acceptance implemented. MVP-3 is directionally specified but real adapter runtime is not implemented in the observed source tree。
 
 **禁止误读**
 
-MVP-3 is not permission to add new architecture capability; it is adapter replacement only. MVP-2 demo tools must remain sandboxed and cannot perform real external side effects。
+MVP-3 is not permission to add new architecture capability; it is adapter replacement only. MVP-2 demo tools remain sandboxed and cannot perform real external side effects。

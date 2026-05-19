@@ -6,7 +6,7 @@ accepted planning baseline, updated with current implementation status。
 
 本文档是执行路线设计，不是新的架构决策，不替代 ADR，不授权扩大 MVP scope。实现时仍以 `AGENTS.md`、`stage_b_adr_register.md`、`docs/adr/*.md` 和 `docs/specs/*.md` 为准。
 
-历史说明：本文最初创建时只产出规划文档，不创建 `src/` 或 `tests/`。当前仓库已经按本文的 System Spine 路线完成 MVP-0 walking skeleton 和 MVP-1 SlowTask/UserPatch mock/replay spine；本文现在用于记录路线、当前进展和后续阶段边界。
+历史说明：本文最初创建时只产出规划文档，不创建 `src/` 或 `tests/`。当前仓库已经按本文的 System Spine 路线完成 MVP-0 walking skeleton、MVP-1 SlowTask/UserPatch mock/replay spine 和 MVP-2 deterministic demo/replay acceptance；本文现在用于记录路线、当前进展和后续阶段边界。
 
 ## Source of Truth
 
@@ -17,12 +17,15 @@ accepted planning baseline, updated with current implementation status。
 - `docs/adr-traceability-matrix.md`
 - `docs/implementation/mvp0-backlog.md`
 - `docs/implementation/mvp1-backlog.md`
+- `docs/implementation/mvp2-closeout.md`
+- `docs/implementation/mvp2-closeout.zh.md`
 - `docs/specs/event-registry.md`
 - `docs/specs/state-reducers.md`
 - `docs/specs/replay-spec.md`
 - `docs/specs/model-adapter-capabilities.md`
 - `docs/specs/mvp0-acceptance-scenarios.md`
 - `docs/specs/mvp1-acceptance-scenarios.md`
+- `docs/specs/mvp2-acceptance-scenarios.md`
 - `docs/adr/ADR-001 Duplex Boundary and Interaction Controller.md`
 - `docs/adr/ADR-002 Event Journal, Timing Model, and Replay Foundation.md`
 - `docs/adr/ADR-003 Barge-in and TTS Truncate Contract.md`
@@ -38,7 +41,7 @@ accepted planning baseline, updated with current implementation status。
 
 ## Context
 
-当前仓库是 live 态语音 Agent 的架构基线、Python control-plane、MVP-0 本地实现和 MVP-1 mock/replay 实现仓库。它已经有 accepted ADR、architecture book、event registry、state reducers、replay spec、model adapter capability spec、MVP-0 / MVP-1 backlog、MVP-0 / MVP-1 synthetic replay fixtures 和 acceptance runners。
+当前仓库是 live 态语音 Agent 的架构基线、Python control-plane、MVP-0 本地实现、MVP-1 mock/replay 实现和 MVP-2 deterministic demo/replay acceptance 仓库。它已经有 accepted ADR、architecture book、event registry、state reducers、replay spec、model adapter capability spec、MVP-0 / MVP-1 backlog、MVP-2 closeout、MVP-0 / MVP-1 / MVP-2 synthetic replay fixtures 和 acceptance runners。
 
 目标系统不是传统 `ASR -> LLM -> TTS` 级联，而是：
 
@@ -109,8 +112,8 @@ Model Spikes 保护能力事实：候选模型必须逐项回答 capability matr
 | Phase 2 | System Spine 继续按 MVP backlog 走 | ASR/Thinker/Slow LLM/TTS/VAD/RAG reports | 待推进 | 所有发现进入 capability/risk，不进入 runtime。 |
 | Phase 3 | adapter events、degradation、validation gate | 候选 capability profiles | 待推进 | 形成 `adapter-capability-profiles.md`。 |
 | Phase 4 | MVP-1 SlowTask mock + replay | Slow LLM structured JSON 风险 | System Spine 已完成；model spike 风险仍待实测 | 校验 plan_version/stale policy 是否能承受真实模型失败。 |
-| Phase 5 | MVP-2 tools/composer/checks + replay/eval | Thinker/Composer/web evidence 风险 | 未开始 | 校验 Composer 不改写事实，webSearch 只进 evidence。 |
-| Phase 6 | MVP-3 real adapter replacement | model selection shortlist | 未开始 | 只替换 adapter，不新增架构能力。 |
+| Phase 5 | MVP-2 tools/composer/checks + replay/eval | Thinker/Composer/web evidence 风险 | System Spine 已完成 deterministic demo/replay acceptance | 校验 Composer 不改写事实，webSearch 只进 evidence。 |
+| Phase 6 | MVP-3 real adapter replacement | model selection shortlist | planning next；real adapter runtime 未实现 | 只替换 adapter，不新增架构能力。 |
 
 ## Phase Roadmap
 
@@ -462,6 +465,10 @@ Access Layer
 
 ### Phase 5: MVP-2 demo tools and Composer coverage
 
+**当前状态**
+
+已完成 deterministic demo/replay acceptance。当前 main 已覆盖 demo sandbox tools、progressive Tool Executor events、`TOOL_UI_STATE_PATCHED` replay、demo destructive confirmation gates、webSearch evidence boundary、Thinker-as-Composer、CommitmentCoverageCheck、ProgressTruthfulnessCheck、MVP-2 fixtures 和 acceptance runner。该阶段仍不是产品服务、真实 frontend demo、真实 model adapter、真实 TTS、真实工具或真实外部 side-effect integration。
+
 **目标**
 
 证明 demo sandbox tool、progressive tool invocation、UI state patch、light confirmation、Thinker-as-Composer、CommitmentCoverageCheck、ProgressTruthfulnessCheck。
@@ -491,7 +498,7 @@ Access Layer
 - `docs/specs/event-registry.md`
 - `docs/specs/replay-spec.md`
 
-**预计文件或目录**
+**文件或目录状态**
 
 - `src/voice_agent/tools/`
 - `src/voice_agent/demo_backend/`
@@ -529,6 +536,10 @@ Access Layer
 - webSearch 污染 policy。
 
 ### Phase 6: MVP-3 real adapter integration
+
+**当前状态**
+
+可进入 Phase 0 planning / contract work，但不应直接接 provider endpoint。当前还缺 `docs/specs/adapter-capability-profiles.md`、真实 adapter output-mode contract tests、real/fallback/degraded replay gates、real adapter runtime assembly gate，以及真实 adapter 并发/迟到回调进入 Event Journal 的 serialization contract。
 
 **目标**
 
@@ -594,7 +605,7 @@ Access Layer
 
 ## First Tasks
 
-当前状态：ROAD-001 到 ROAD-004 已完成；MVP0-001 到 MVP0-010 已完成；MVP-1 mock/replay closeout 已完成。
+当前状态：ROAD-001 到 ROAD-004 已完成；MVP0-001 到 MVP0-010 已完成；MVP-1 mock/replay closeout 已完成；MVP-2 deterministic demo/replay acceptance 已完成。
 
 | task id range | 当前状态 | 证据 |
 | --- | --- | --- |
@@ -602,8 +613,9 @@ Access Layer
 | ROAD-005 | 可选/未单独落地 | 当前已有 `.gitignore`、`.worktrees/` exclusion 和 branch history；如需要更正式 workflow，可后续补 `docs/planning/development-workflow.md`。 |
 | MVP0-001..010 | 已完成 | `src/voice_agent/`、`tests/`、`tests/fixtures/replay/mvp0/manifest.index.json` 已存在；`./scripts/test -q` 通过。 |
 | MVP1-000..010 | 已完成 | `src/voice_agent/slowtask/`、`src/voice_agent/user_patch/`、`tests/slowtask/`、`tests/user_patch/`、`tests/fixtures/replay/mvp1/manifest.index.json` 和 `tests/acceptance/test_mvp1_acceptance_scenarios.py` 已存在。 |
+| MVP2-000..008 | 已完成 | `src/voice_agent/tools/`、`src/voice_agent/demo_backend/`、`src/voice_agent/composer/`、`src/voice_agent/checks/`、`tests/fixtures/replay/mvp2/manifest.index.json` 和 `tests/acceptance/test_mvp2_acceptance_scenarios.py` 已存在。 |
 
-后续优先任务应从 Phase 2 model capability spikes、Phase 3 adapter contract hardening，或 Phase 5 MVP-2 demo tools / Composer / checks 中选择。
+后续优先任务应从 Phase 2 model capability spikes、Phase 3 adapter contract hardening，或 Phase 6 MVP-3 Phase 0 planning / contract PR 中选择。不要在同一 PR 中直接接真实 provider endpoint。
 
 ## Directory and Document Recommendations
 
@@ -616,15 +628,20 @@ Access Layer
 - `tests/`
 - `tests/fixtures/replay/mvp0/`
 - `tests/fixtures/replay/mvp1/`
+- `tests/fixtures/replay/mvp2/`
 - `src/voice_agent/slowtask/`
 - `src/voice_agent/user_patch/`
+- `src/voice_agent/tools/`
+- `src/voice_agent/demo_backend/`
+- `src/voice_agent/composer/`
+- `src/voice_agent/checks/`
 
 后续建议创建：
 
 - `docs/research/model-selection.md`
 - `docs/research/spikes/`
 - `docs/specs/adapter-capability-profiles.md`
-- `tests/fixtures/replay/mvp2/` when MVP-2 begins。
+- `tests/fixtures/replay/mvp3/` for adapter output/failure/degraded replay once MVP-3 planning defines the contract。
 
 当前仍不应提交：
 
@@ -646,7 +663,7 @@ Access Layer
 | 是否允许模型绕过 adapter | 否。真实模型只能通过 adapter 进入 runtime。 |
 | 是否让 webSearch 进入 instruction 区 | 否。webSearch 只作为 `UNTRUSTED_WEB_EVIDENCE`。 |
 | 是否允许真实外部副作用工具 | 否。MVP 工具仅限 demo sandbox。 |
-| 当前是否已有实现代码 | 是。MVP-0 local walking skeleton 和 MVP-1 mock/replay spine 已实现；本文不把它升级为服务、真实工具或真实模型集成。 |
+| 当前是否已有实现代码 | 是。MVP-0 local walking skeleton、MVP-1 mock/replay spine 和 MVP-2 deterministic demo/replay acceptance 已实现；本文不把它升级为服务、真实 frontend、真实工具或真实模型集成。 |
 
 ## Consequences
 
@@ -665,8 +682,8 @@ Access Layer
 
 ## Open Questions
 
-- MVP-0 已优先完成 CLI/local replay 和 acceptance tests；是否追加极简 frontend demo 仍需后续明确。
-- MVP-2 首批 3 个 demo tool 选手电筒、备忘录、闹钟，还是加入天气？
-- webSearch 在 MVP-2 用 mock search result 还是真实 read-only API？
+- MVP-3 Phase 0 是否先以文档/spec PR 补 `adapter-capability-profiles.md`，再进入代码实现？
 - MVP-3 首批真实 adapter 是否允许用最容易接入的候选，而不是最理想候选？
-- MVP-2 是否先实现 demo Tool Executor / UI patch，还是先补 model spike 输出用于 adapter contract hardening？
+- 真实 adapter 并发/迟到回调是否通过单线程 dispatcher 进入 Event Journal，还是先补明确 async serialization boundary？
+- Runtime assembly gate 应先支持 mock/real/fallback/degraded profile injection，还是先只做配置和 contract tests？
+- 是否需要在真实 frontend demo 前先单独规划 frontend scope，而不是回填到 MVP-2 或 MVP-3？

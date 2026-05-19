@@ -5,14 +5,16 @@
 ## 1. 阶段快照
 
 - 编写日期：2026-05-19
-- 本次 closeout 范围：只新增文档总结。未修改 ADR，未修改代码，未启动服务，未接入真实模型、真实 TTS、真实工具、真实 frontend，也未产生真实外部副作用。
+- 原始 closeout 范围：只新增文档总结。未修改 ADR，未启动服务，未接入真实模型、真实 TTS、真实工具、真实 frontend，也未产生真实外部副作用。
+- 本次后续清理范围：只涉及 docs / fixture metadata / tests。未修改 ADR，未启动服务，未接入真实模型、真实 TTS、真实工具、真实 frontend、真实 adapter，也未产生真实外部副作用。
 - 本地审阅基线：`mvp2/slice8-acceptance-runner`，提交 `9f47301`（`feat: add MVP2 acceptance runner`）。
-- 远端 main 说明：2026-05-19 已刷新远端引用。`origin/main` 当前为 `671f7fc`（`Merge pull request #27 from Skyfacon/mvp2/slice8-acceptance-runner`），已包含 MVP-2 slice8 acceptance runner。
-- 本次新增前工作区状态：已有英文版 `docs/implementation/mvp2-closeout.md` 为未跟踪文档文件。
+- 远端 main 说明：2026-05-19 已刷新远端引用。`origin/main` 当前为 `d0019a4`（`Merge pull request #28 from Skyfacon/codex/mvp2-closeout-zh`），已包含 MVP-2 slice8 acceptance runner 和 closeout handoff 文档。
+- 后续清理分支：`codex/mvp2-docs-handoff-fixes`，基于最新 `main` 创建，仅做文档、metadata 和测试清理。
+- 本次后续清理 diff 只涉及 docs / fixture metadata / tests，不修改 ADR，也不改变 runtime adapter 行为。
 - 英文原版：`docs/implementation/mvp2-closeout.md`。
 - 中文对照版：`docs/implementation/mvp2-closeout.zh.md`。
 - 统一测试入口：`./scripts/test -q`。
-- 本文件测试状态：`./scripts/test -q` 已在本地通过，结果为 `665 passed`。
+- 本次 closeout cleanup 测试状态：`./scripts/test -q` 已在本地通过，结果为 `666 passed`。
 
 ## 2. 已审阅资料
 
@@ -32,7 +34,7 @@ MVP-2 已完成 deterministic demo/replay acceptance slice。它补齐 demo sand
 
 ## 4. MVP-2 已完成能力
 
-- 为 `memo`、`alarm`、`flashlight`、`weather`、`webSearch` 建立 tool manifest 和 scope 声明，包括 tool category、side-effect class、trust label 和 UI patch capability。
+- 为 `memo`、`alarm`、`flashlight`、`weather`、`webSearch` 建立 tool manifest 和 scope 声明，包括 tool category、side-effect class、trust label 和 UI patch capability。Weather 默认是 read-only provider-style evidence，不发 UI patch；weather display patch 只是 optional。
 - 覆盖 progressive Tool Executor lifecycle：manifest load、partial args、ready args、insufficient-argument blocked、preview、authorization、start、progress、UI patch、result、failure、retry、cancel request、cancel metadata。
 - 建立 sandbox-only demo backend state。memo/alarm/flashlight 等 demo action 只通过 Tool Executor 产生 replayable UI patch。
 - `DemoUIState` 只能从已记录的 `TOOL_UI_STATE_PATCHED` / synthetic `patch_ref` 重建。单独的 `TOOL_RESULT_RECEIVED` 不会被 replay 推断为 frontend/demo state mutation。
@@ -115,8 +117,8 @@ MVP-2 明确不包含：
 ## 10. 当前测试状态
 
 - 必需命令：`./scripts/test -q`。
-- 本中文对照文档测试状态：本地已通过，结果为 `665 passed`。
-- CI/remote 状态：本地已刷新 remote `main` 并确认其为 `671f7fc`；最终 GitHub CI 状态仍应在 docs-only PR 上确认。
+- 本次 closeout cleanup 测试状态：本地已通过，结果为 `666 passed`。
+- CI/remote 状态：本地已刷新 remote `main` 并确认其为 `d0019a4`；最终 GitHub CI 状态仍应在 docs/metadata PR 上确认。
 
 ## 11. MVP-3 Readiness
 
@@ -131,19 +133,20 @@ MVP-3 应该被视为 adapter integration planning，而不是架构扩张。它
 
 ## 12. 剩余风险和技术债
 
-- 当前沙箱中已刷新 remote refs，并确认 `origin/main` 为 `671f7fc`。最终 docs-only PR 是否可合入仍以 CI / GitHub merge gate 为准。
-- `docs/implementation/mvp2-backlog.md` 仍保留“当前 MVP-2 runtime 尚未实现”的历史语境。它在当时是准确的，但现在可能让后续读者困惑；后续可做一个小的文档清理，链接到 closeout。
-- `tests/fixtures/replay/mvp2/manifest.index.json` 仍同时包含当前 `fixture_checks` 和历史 `planned_fixture_checks`。这不影响测试，但阅读上容易造成歧义。
+- `docs/specs/adapter-capability-profiles.md` 尚未落地。它会阻塞真实 adapter implementation，但不阻塞 MVP-3 planning 或 Phase 0 contract PR。
+- Event Journal 尚未证明可以承受真实 adapter 并发或迟到回调的 serialization。进入 parallel adapter runtime implementation 前，需要单一 append boundary 或 dispatcher contract test。
+- runtime startup 仍是 mock-oriented，还没有 real/fallback/degraded adapter assembly gate。这会阻塞 real adapter runtime assembly，但不阻塞 planning。
 - `src/voice_agent/replay/scenario_assertions.py` 目前承载了 MVP-0/MVP-1/MVP-2 大量 acceptance logic。后续可以做不改变 scope 的小重构，按 MVP phase 拆分 helper。
+- manifest 中历史 `planned_fixture_checks` 已改名为 `historical_planned_fixture_checks`；active gate 仍然是 `fixture_checks`。
+- Weather 口径已统一：默认 weather execution 是 read-only provider-style evidence，不发 UI patch；display patch 只作为 optional path。
 - MVP-2 验证的是 replayed demo UI state，不是 live product frontend。如果产品 demo 前需要真实 frontend surface，应明确作为后续工作规划，不能回填到 MVP-2 scope。
-- MVP-3 接入真实 adapters 前，需要 credential-safe config refs、output-mode labeling、failure/degraded/fallback events 和 replay fixtures。
 - MVP-2 测试是 synthetic control-plane 测试。它对控制面 invariant 很强，但不评估真实 provider quality、latency、acoustic quality、TTS quality 或 production tool behavior。
 
 ## 13. MVP-3 建议切入顺序
 
 MVP-3 要保持窄范围：真实 adapter capability matrix、adapter mock/real/fallback/degraded 标注、deterministic replay 不重跑模型/工具/network/clock/random，并且不新增新架构能力。
 
-1. 刷新 local `main`，确认 slice8 merge SHA，合入 docs-only closeout，并运行 `./scripts/test -q` 与 CI。
+1. 刷新 local `main`，确认 closeout merge SHA，合入 docs/metadata/test cleanup，并运行 `./scripts/test -q` 与 CI。
 2. 重读 ADR-011 和现有 adapter capability code，为 ASR、Thinker、Slow LLM、TTS 编写 MVP-3 adapter capability matrix。
 3. 增加测试，强制 adapter output mode 显式标注：`mock`、`real`、`fallback`、`degraded` 都必须可区分且不泄露 credential。
 4. 为 adapter output/failure/degraded events 增加 deterministic replay fixtures，只使用 recorded refs。Replay 不得调用 provider、tool、network、clock 或 random。
@@ -153,6 +156,6 @@ MVP-3 要保持窄范围：真实 adapter capability matrix、adapter mock/real/
 
 ## 14. Merge / Handoff 建议
 
-- 保留英文版 closeout，同时提交这份中文对照版，作为 docs-only change。
-- 如果代码特性分支已经合入 main，建议单独开一个 closeout 文档 PR。
+- 保留英文版和中文版 closeout，同时提交本次 handoff cleanup，作为 docs/metadata/test change。
+- 如果代码特性分支已经合入 main，建议单独开一个 closeout/handoff cleanup PR。
 - closeout 合入并测试通过后，下一步建议进入 MVP-3 planning，而不是继续扩大 MVP-2 feature scope。

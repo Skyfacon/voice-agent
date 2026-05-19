@@ -87,7 +87,7 @@ All MVP-2 fixtures must be synthetic, redacted, and minimal.
 | purpose | Validate weather tool returns structured read-only mock/provider-style result. |
 | initial state | Active SlowTask has resolved location/date arguments with provenance. |
 | event chain | `TOOL_MANIFEST_LOADED(tool_name=weather)` -> `TOOL_ARGUMENTS_READY` -> `TOOL_EXECUTION_AUTHORIZED` -> `TOOL_EXECUTION_STARTED` -> optional `TOOL_PROGRESS_UPDATED` -> optional `TOOL_UI_STATE_PATCHED` for weather display -> `TOOL_RESULT_RECEIVED(source_type=READ_ONLY_EXTERNAL, trust_level=EXTERNAL_READ_PROVIDER_RESULT)`. |
-| required assertions | Weather output is structured normalized fields, not free-form instruction text. |
+| required assertions | Weather output is structured normalized fields, not free-form instruction text. Default weather execution returns read-only provider-style evidence without a UI patch; weather display patch is optional and must still use `TOOL_UI_STATE_PATCHED` if present. |
 | replay expectations | Replay reconstructs weather result refs and optional display patch. |
 | forbidden behavior | No external write, no untrusted free-form provider text entering instruction context. |
 | fixture privacy requirements | Weather data is synthetic/mock unless real read-only API is explicitly approved later. |
