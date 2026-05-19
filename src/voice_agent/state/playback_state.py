@@ -12,8 +12,6 @@ PLAYBACK_EVENT_NAMES = frozenset(
         "PLAYBACK_FINISHED",
         "TTS_TRUNCATE_REQUESTED",
         "TTS_TRUNCATED",
-        "COMMITMENT_COVERAGE_CHECK_PASSED",
-        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
     }
 )
 TERMINAL_PHASES = frozenset({"TRUNCATED", "FINISHED"})
@@ -25,6 +23,7 @@ class PlaybackState:
     phase: str = "NOT_PLAYING"
     latest_playback_offset_ms: int | None = None
     latest_committed_offset_ms: int | None = None
+    spoken_plan_id: str | None = None
     approved_check_event_id: str | None = None
     cutoff_playback_offset_ms: int | None = None
     actual_stop_offset_ms: int | None = None
@@ -41,6 +40,7 @@ class PlaybackState:
             self.phase = "PLAYING"
             self.latest_playback_offset_ms = None
             self.latest_committed_offset_ms = None
+            self.spoken_plan_id = _optional_str(event.get("spoken_plan_id"))
             self.approved_check_event_id = _optional_str(event.get("approved_check_event_id"))
             self.cutoff_playback_offset_ms = None
             self.actual_stop_offset_ms = None

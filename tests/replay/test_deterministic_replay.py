@@ -148,6 +148,67 @@ def test_replay_rejects_duplicate_event_seq_before_reducing() -> None:
         run_replay_fixture(fixture)
 
 
+def test_replay_accepts_mvp1_slowtask_created_after_slice3_reducer_is_wired() -> None:
+    fixture = {
+        "replay_manifest": {
+            "manifest_schema_version": "1.0",
+            "replay_id": "replay_mvp1_unreduced_slowtask_inline",
+            "source_trace_ref": "fixture://mvp1/unreduced-slowtask-inline",
+            "replay_mode": "deterministic",
+            "event_schema_version_range": ["1.0"],
+            "fixture_domain": "GITHUB_ALLOWED",
+            "generated_from": "synthetic",
+            "contains_raw_audio": False,
+            "contains_raw_trace": False,
+            "contains_real_user_input": False,
+            "contains_secrets": False,
+            "contains_unredacted_tool_result": False,
+            "contains_large_raw_web_content": False,
+            "allowed_re_eval_components": [],
+        },
+        "events": [
+            {
+                "event_name": "SESSION_STARTED",
+                "event_id": "evt_mvp1_unreduced_session_started",
+                "event_seq": 1,
+                "event_schema_version": "1.0",
+                "session_id": "sess_mvp1_unreduced_synthetic",
+                "conversation_id": "conv_mvp1_unreduced_synthetic",
+                "source_module": "session_runtime",
+                "created_monotonic_ms": 0,
+                "created_wall_clock_ms": 1700000000000,
+                "trace_redaction_level": "metadata_only",
+                "runtime_config_ref": "config://synthetic/mvp1/default",
+                "capability_snapshot_ref": "capability://synthetic/mvp1/mock-adapters-v1",
+            },
+            {
+                "event_name": "SLOWTASK_CREATED",
+                "event_id": "evt_mvp1_unreduced_slowtask_created",
+                "event_seq": 2,
+                "event_schema_version": "1.0",
+                "session_id": "sess_mvp1_unreduced_synthetic",
+                "conversation_id": "conv_mvp1_unreduced_synthetic",
+                "source_module": "slowtask_runtime",
+                "created_monotonic_ms": 10,
+                "created_wall_clock_ms": 1700000000010,
+                "caused_by_event_id": "evt_mvp1_unreduced_session_started",
+                "trace_redaction_level": "metadata_only",
+                "task_id": "task_mvp1_unreduced_001",
+                "plan_version": 1,
+                "task_event_seq": 1,
+                "initial_goal_ref": "goal://synthetic/mvp1/unreduced",
+            },
+        ],
+    }
+
+    result = run_replay_fixture(fixture)
+
+    task = result.slowtask_state.tasks["task_mvp1_unreduced_001"]
+    assert task.lifecycle_state == "CREATED"
+    assert task.current_plan_version == 1
+    assert result.state_digest["slowtask_state_hash"]
+
+
 def test_slice3_fixture_exists_in_expected_repo_safe_location() -> None:
     assert SLICE3_FIXTURE.parent == MVP0_REPLAY_FIXTURE_DIR
     assert SLICE3_FIXTURE.name == "003-replay-empty-and-startup.fixture.json"

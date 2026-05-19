@@ -220,9 +220,478 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
 
 MVP0_EVENT_NAMES = frozenset(MVP0_EVENT_DEFINITIONS)
 
+MVP1_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
+    "TASK_FOCUS_STATE_UPDATED": _definition(
+        "TASK_FOCUS_STATE_UPDATED",
+        required_fields=(
+            "foreground_mode",
+            "side_conversation_allowed",
+            "default_patch_policy",
+            "ambiguous_input_policy",
+            "last_focus_decision",
+            "last_focus_confidence",
+            "router_decision_event_id",
+        ),
+    ),
+    "SLOWTASK_CREATED": _definition(
+        "SLOWTASK_CREATED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "initial_goal_ref"),
+    ),
+    "SLOWTASK_STATE_CHANGED": _definition(
+        "SLOWTASK_STATE_CHANGED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "from_state", "to_state", "reason"),
+    ),
+    "USER_PATCH_RECEIVED": _definition(
+        "USER_PATCH_RECEIVED",
+        required_fields=(
+            "patch_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "observed_plan_version",
+            "evidence_ref",
+        ),
+    ),
+    "USER_PATCH_INTERPRETED": _definition(
+        "USER_PATCH_INTERPRETED",
+        required_fields=(
+            "patch_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "observed_plan_version",
+            "interpreted_against_plan_version",
+            "interpretation_type",
+            "materially_changes_task",
+        ),
+    ),
+    "PLAN_VERSION_ADVANCED": _definition(
+        "PLAN_VERSION_ADVANCED",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "from_plan_version",
+            "to_plan_version",
+            "planning_reason",
+        ),
+    ),
+    "TASK_REPLANNED": _definition(
+        "TASK_REPLANNED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "planning_reason"),
+    ),
+    "EVIDENCE_REVIEWED": _definition(
+        "EVIDENCE_REVIEWED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "evidence_refs", "review_result"),
+    ),
+    "AMBIGUITY_DETECTED": _definition(
+        "AMBIGUITY_DETECTED",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "ambiguous_fields",
+            "source_evidence_refs",
+        ),
+    ),
+    "AMBIGUITY_RESOLVED": _definition(
+        "AMBIGUITY_RESOLVED",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "resolved_fields",
+            "resolution_reason",
+            "source_evidence_refs",
+        ),
+    ),
+    "CLARIFICATION_REQUESTED": _definition(
+        "CLARIFICATION_REQUESTED",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "missing_or_ambiguous_fields",
+            "clarification_prompt_ref",
+        ),
+    ),
+    "ARGUMENTS_RESOLVED": _definition(
+        "ARGUMENTS_RESOLVED",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "resolved_arguments_ref",
+            "provenance_ref",
+        ),
+    ),
+    "ARGUMENT_RESOLUTION_PROVENANCE": _definition(
+        "ARGUMENT_RESOLUTION_PROVENANCE",
+        required_fields=("task_id", "plan_version", "task_event_seq", "field_provenance_refs"),
+    ),
+    "INSUFFICIENT_EVIDENCE_FOR_ACTION": _definition(
+        "INSUFFICIENT_EVIDENCE_FOR_ACTION",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "blocking_fields",
+            "source_evidence_refs",
+        ),
+    ),
+    "PLANNING_STARTED": _definition(
+        "PLANNING_STARTED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "planning_reason"),
+    ),
+    "PLANNING_RESTARTED": _definition(
+        "PLANNING_RESTARTED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "restart_reason"),
+    ),
+    "WAITING_FOR_SLOT": _definition(
+        "WAITING_FOR_SLOT",
+        required_fields=("task_id", "plan_version", "task_event_seq", "missing_fields"),
+    ),
+    "WAITING_FOR_USER_CONFIRMATION": _definition(
+        "WAITING_FOR_USER_CONFIRMATION",
+        required_fields=("task_id", "plan_version", "task_event_seq", "confirmation_id"),
+    ),
+    "FINALIZING": _definition(
+        "FINALIZING",
+        required_fields=("task_id", "plan_version", "task_event_seq", "source_events"),
+    ),
+    "SLOWTASK_DEGRADED": _definition(
+        "SLOWTASK_DEGRADED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "degraded_reason"),
+    ),
+    "SLOWTASK_FAILED": _definition(
+        "SLOWTASK_FAILED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "failure_reason"),
+    ),
+    "CONFIRMATION_REQUIRED": _definition(
+        "CONFIRMATION_REQUIRED",
+        required_fields=(
+            "confirmation_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "confirmation_scope",
+            "required_for_event_id",
+            "prompt_ref",
+        ),
+    ),
+    "USER_CONFIRMATION_RECEIVED": _definition(
+        "USER_CONFIRMATION_RECEIVED",
+        required_fields=(
+            "confirmation_id",
+            "patch_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "confirmation_signal",
+        ),
+    ),
+    "CONFIRMATION_ACCEPTED": _definition(
+        "CONFIRMATION_ACCEPTED",
+        required_fields=(
+            "confirmation_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "accepted_scope",
+            "authorization_ref",
+        ),
+    ),
+    "CONFIRMATION_REJECTED": _definition(
+        "CONFIRMATION_REJECTED",
+        required_fields=("confirmation_id", "task_id", "plan_version", "task_event_seq", "rejection_reason"),
+    ),
+    "SLOWTASK_CANCEL_REQUESTED": _definition(
+        "SLOWTASK_CANCEL_REQUESTED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "cancel_reason"),
+    ),
+    "SLOWTASK_CANCELLED": _definition(
+        "SLOWTASK_CANCELLED",
+        required_fields=("task_id", "plan_version", "task_event_seq", "cancel_reason", "inflight_tool_policy"),
+    ),
+    "TOOL_CALL_STARTED": _definition(
+        "TOOL_CALL_STARTED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "tool_name",
+            "idempotency_key",
+        ),
+    ),
+    "TOOL_RESULT_RECEIVED": _definition(
+        "TOOL_RESULT_RECEIVED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "result_status",
+            "result_ref",
+        ),
+    ),
+    "TOOL_RESULT_MARKED_STALE": _definition(
+        "TOOL_RESULT_MARKED_STALE",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "result_plan_version",
+            "current_plan_version",
+            "stale_reason",
+        ),
+    ),
+    "STALE_EVIDENCE_RECORDED": _definition(
+        "STALE_EVIDENCE_RECORDED",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "stale_evidence_ref",
+            "source_tool_result_event_id",
+        ),
+    ),
+    "STALE_EVIDENCE_ADOPTED": _definition(
+        "STALE_EVIDENCE_ADOPTED",
+        required_fields=(
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "stale_evidence_ref",
+            "source_tool_result_event_id",
+            "adopted_from_plan_version",
+            "adoption_reason",
+            "adopted_scope",
+            "adopted_by_event_id",
+        ),
+        literal_fields={"adoption_mode": "adopt_or_rebase"},
+    ),
+    "SEMANTIC_COMMITMENT_EMITTED": _definition(
+        "SEMANTIC_COMMITMENT_EMITTED",
+        required_fields=("commitment_id", "task_id", "plan_version", "task_event_seq", "source_events"),
+    ),
+}
+
+MVP1_EVENT_NAMES = frozenset(MVP1_EVENT_DEFINITIONS)
+MVP2_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
+    "TOOL_MANIFEST_LOADED": _definition(
+        "TOOL_MANIFEST_LOADED",
+        required_fields=("tool_name", "tool_adapter_id", "tool_manifest_version", "side_effect_class"),
+    ),
+    "TOOL_ARGUMENTS_PARTIAL": _definition(
+        "TOOL_ARGUMENTS_PARTIAL",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "partial_arguments_ref",
+            "missing_fields",
+        ),
+    ),
+    "TOOL_ARGUMENTS_READY": _definition(
+        "TOOL_ARGUMENTS_READY",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "resolved_arguments_ref",
+            "provenance_ref",
+        ),
+    ),
+    "TOOL_PREVIEW_AVAILABLE": _definition(
+        "TOOL_PREVIEW_AVAILABLE",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "preview_ref",
+            "requires_confirmation",
+        ),
+    ),
+    "TOOL_EXECUTION_AUTHORIZED": _definition(
+        "TOOL_EXECUTION_AUTHORIZED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "authorization_basis",
+        ),
+    ),
+    "TOOL_EXECUTION_STARTED": _definition(
+        "TOOL_EXECUTION_STARTED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "idempotency_key",
+        ),
+    ),
+    "WAITING_FOR_TOOL": _definition(
+        "WAITING_FOR_TOOL",
+        required_fields=("task_id", "plan_version", "task_event_seq", "tool_call_id"),
+    ),
+    "TOOL_PROGRESS_UPDATED": _definition(
+        "TOOL_PROGRESS_UPDATED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "progress_type",
+            "progress_ref",
+        ),
+    ),
+    "TOOL_UI_STATE_PATCHED": _definition(
+        "TOOL_UI_STATE_PATCHED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "ui_patch_id",
+            "idempotency_key",
+            "patch_ref",
+        ),
+    ),
+    "TOOL_EXECUTION_FAILED": _definition(
+        "TOOL_EXECUTION_FAILED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "failure_reason",
+            "retryable",
+        ),
+    ),
+    "TOOL_CALL_RETRYING": _definition(
+        "TOOL_CALL_RETRYING",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "retry_count",
+            "retry_reason",
+        ),
+    ),
+    "TOOL_EXECUTION_CANCEL_REQUESTED": _definition(
+        "TOOL_EXECUTION_CANCEL_REQUESTED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "cancel_reason",
+        ),
+    ),
+    "TOOL_EXECUTION_CANCELLED": _definition(
+        "TOOL_EXECUTION_CANCELLED",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "cancel_request_event_id",
+            "cancel_status",
+        ),
+    ),
+    "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS": _definition(
+        "TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS",
+        required_fields=(
+            "tool_call_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "blocking_fields",
+            "source_event_id",
+        ),
+    ),
+    "SPOKEN_PLAN_EMITTED": _definition(
+        "SPOKEN_PLAN_EMITTED",
+        required_fields=(
+            "spoken_plan_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "source_events",
+            "source_progress_event_ids",
+            "coverage_check_required",
+            "truthfulness_check_required",
+            "text_ref",
+            "emotion",
+            "speaking_style",
+            "interruptible",
+            "priority",
+            "source",
+            "output_mode",
+        ),
+    ),
+    "COMMITMENT_COVERAGE_CHECK_PASSED": _definition(
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_commitment_id",
+            "checked_fields",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
+    "COMMITMENT_COVERAGE_CHECK_FAILED": _definition(
+        "COMMITMENT_COVERAGE_CHECK_FAILED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_commitment_id",
+            "failure_reasons",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
+    "PROGRESS_TRUTHFULNESS_CHECK_PASSED": _definition(
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_progress_event_ids",
+            "truthfulness_level",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
+    "PROGRESS_TRUTHFULNESS_CHECK_FAILED": _definition(
+        "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+        required_fields=(
+            "spoken_plan_id",
+            "source_progress_event_ids",
+            "failure_reasons",
+            "check_result_ref",
+            "output_mode",
+        ),
+    ),
+}
+MVP2_EVENT_NAMES = frozenset(MVP2_EVENT_DEFINITIONS) | {
+    "TOOL_CALL_STARTED",
+    "TOOL_RESULT_RECEIVED",
+}
+EVENT_DEFINITIONS: dict[str, EventDefinition] = {
+    **MVP0_EVENT_DEFINITIONS,
+    **MVP1_EVENT_DEFINITIONS,
+    **MVP2_EVENT_DEFINITIONS,
+}
+
 
 def get_event_definition(event_name: str) -> EventDefinition:
     try:
-        return MVP0_EVENT_DEFINITIONS[event_name]
+        return EVENT_DEFINITIONS[event_name]
     except KeyError as exc:
         raise EventRegistryError(f"Unknown event_name: {event_name}") from exc

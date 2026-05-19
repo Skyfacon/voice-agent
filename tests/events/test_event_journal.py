@@ -71,6 +71,30 @@ def append_playback_span_started(
     return journal.append(**event_fields)
 
 
+def append_confirmation_accepted(
+    journal: InMemoryEventJournal,
+    caused_by_event_id: str,
+    **fields: object,
+) -> dict[str, object]:
+    event_fields: dict[str, object] = {
+        "event_name": "CONFIRMATION_ACCEPTED",
+        "event_id": "evt_mvp1_confirmation_accepted_001",
+        "source_module": "slowtask_runtime",
+        "caused_by_event_id": caused_by_event_id,
+        "created_monotonic_ms": 30,
+        "created_wall_clock_ms": 1700000000030,
+        "trace_redaction_level": "metadata_only",
+        "confirmation_id": "confirmation_mvp1_synthetic_001",
+        "task_id": "task_mvp1_synthetic_001",
+        "plan_version": 1,
+        "task_event_seq": 4,
+        "accepted_scope": "TASK_CANCEL",
+        "authorization_ref": "authorization://synthetic/mvp1/current-plan-confirmation",
+    }
+    event_fields.update(fields)
+    return journal.append(**event_fields)
+
+
 def test_journal_allocates_strictly_increasing_event_seq_per_session() -> None:
     journal = make_journal()
 
@@ -194,6 +218,97 @@ def test_journal_redacts_secret_like_payload_fields_before_append() -> None:
     assert journal.events()[1]["caused_by_event_id"] == event["event_id"]
     assert journal.events()[1]["payload_ref"] == "payload://redacted/evt_mvp0_session_started_001"
     assert journal.events()[1]["redacted_fields"] == ["api_key", "secret_key"]
+
+
+def test_journal_preserves_safe_authorization_ref_without_redaction_audit() -> None:
+    journal = make_journal()
+    root_event = append_session_started(journal)
+
+    event = append_confirmation_accepted(journal, caused_by_event_id=str(root_event["event_id"]))
+
+    assert event["authorization_ref"] == "authorization://synthetic/mvp1/current-plan-confirmation"
+    assert "redaction_metadata" not in event
+    assert [journal_event["event_name"] for journal_event in journal.events()] == [
+        "SESSION_STARTED",
+        "CONFIRMATION_ACCEPTED",
+    ]
+
+
+def test_journal_preserves_safe_tool_authorization_metadata_without_redaction_audit() -> None:
+    journal = make_journal()
+    root_event = append_session_started(journal)
+
+    authorized = journal.append(
+        event_name="TOOL_EXECUTION_AUTHORIZED",
+        event_id="evt_mvp2_tool_execution_authorized_001",
+        source_module="tool_executor",
+        caused_by_event_id=str(root_event["event_id"]),
+        created_monotonic_ms=40,
+        created_wall_clock_ms=1700000000040,
+        trace_redaction_level="metadata_only",
+        tool_call_id="tool_call_mvp2_synthetic_001",
+        task_id="task_mvp2_synthetic_001",
+        plan_version=1,
+        task_event_seq=5,
+        authorization_basis="current_plan_policy_allow",
+    )
+    started = journal.append(
+        event_name="TOOL_EXECUTION_STARTED",
+        event_id="evt_mvp2_tool_execution_started_001",
+        source_module="tool_executor",
+        caused_by_event_id=str(authorized["event_id"]),
+        created_monotonic_ms=41,
+        created_wall_clock_ms=1700000000041,
+        trace_redaction_level="metadata_only",
+        tool_call_id="tool_call_mvp2_synthetic_001",
+        task_id="task_mvp2_synthetic_001",
+        plan_version=1,
+        task_event_seq=6,
+        idempotency_key="idem://synthetic/mvp2/tool-execution",
+        authorization_event_id=str(authorized["event_id"]),
+    )
+
+    assert authorized["authorization_basis"] == "current_plan_policy_allow"
+    assert started["authorization_event_id"] == "evt_mvp2_tool_execution_authorized_001"
+    assert "redaction_metadata" not in authorized
+    assert "redaction_metadata" not in started
+    assert [event["event_name"] for event in journal.events()] == [
+        "SESSION_STARTED",
+        "TOOL_EXECUTION_AUTHORIZED",
+        "TOOL_EXECUTION_STARTED",
+    ]
+
+
+@pytest.mark.parametrize(
+    "authorization_ref",
+    [
+        "authorization://sk-live-secret",
+        "authorization://synthetic/mvp1/current?token=abc123",
+        "authorization://synthetic/mvp1/current?access_token=abc123",
+        "authorization://synthetic/mvp1/current#token=abc123",
+        "authorization://synthetic/mvp1/%3Faccess_token=abc123",
+        "authorization://synthetic/mvp1/%23token=abc123",
+        "authorization://synthetic/mvp1/%26token=abc123",
+        "authorization://synthetic/mvp1/bearer abc123",
+    ],
+)
+def test_journal_blocks_secret_like_authorization_ref_before_append(authorization_ref: str) -> None:
+    journal = make_journal()
+    root_event = append_session_started(journal)
+
+    with pytest.raises(PayloadBlockedError):
+        append_confirmation_accepted(
+            journal,
+            caused_by_event_id=str(root_event["event_id"]),
+            authorization_ref=authorization_ref,
+        )
+
+    events = journal.events()
+    assert [event["event_name"] for event in events] == [
+        "SESSION_STARTED",
+        "TRACE_WRITE_BLOCKED_SECRET_DETECTED",
+    ]
+    assert authorization_ref not in repr(events)
 
 
 def test_journal_redaction_audit_id_collision_does_not_make_append_partial() -> None:

@@ -96,6 +96,51 @@ Reducer 负责从 canonical event journal 重建运行状态。Reducer 是 deter
 | terminal_state_policy | `COMPLETED`, `CANCELLED`, `FAILED` sticky。 |
 | replay_validation | MVP-1 replay create、planning、waiting slot、replanning、stale result、completed/cancelled/failed；MVP-2 replay confirmation/tool authorization/cancel/retry。 |
 
+### ToolExecutionState
+
+| 字段 | 规格 |
+| --- | --- |
+| owned_by | Tool Executor。 |
+| input_events | `TOOL_MANIFEST_LOADED`, `TOOL_CALL_STARTED`, `TOOL_ARGUMENTS_PARTIAL`, `TOOL_ARGUMENTS_READY`, `TOOL_PREVIEW_AVAILABLE`, `TOOL_EXECUTION_AUTHORIZED`, `TOOL_EXECUTION_STARTED`, `TOOL_PROGRESS_UPDATED`, `TOOL_UI_STATE_PATCHED`, `TOOL_RESULT_RECEIVED`, `TOOL_EXECUTION_FAILED`, `TOOL_CALL_RETRYING`, `TOOL_EXECUTION_CANCEL_REQUESTED`, `TOOL_EXECUTION_CANCELLED`, `TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS`。 |
+| output_state | tool manifest metadata by `tool_name`; per-`tool_call_id` lifecycle status; task binding history (`task_id`, `plan_version`, `task_event_seq`); latest tool-owned `task_event_seq` by `task_id`; partial / ready argument refs; preview refs; authorization metadata; execution start metadata including explicit `authorization_event_id` or `caused_by_event_id` fallback; progress refs; UI patch refs; result refs; failure / retry / cancel / blocked metadata。 |
+| invariant_rules | Reducer 只 consume recorded journal events；不得执行工具、调用 demo backend、调用网络、读取 clock/random、应用 UI patch 或 fetch refs。所有带 `tool_call_id` 的 tool events 必须归档到对应 call record；task-bound events 必须保留原始 `task_id`、`plan_version`、`task_event_seq`，且 tool-owned events 在同一 `task_id` 内必须严格递增。`TOOL_UI_STATE_PATCHED` 只记录 `ui_patch_id`、`idempotency_key`、`patch_ref`；`TOOL_RESULT_RECEIVED` 只记录 `result_status`、`result_ref`、trust/source metadata。Replay validation 负责校验 `DEMO_DESTRUCTIVE_ACTION` start 有 current-plan `CONFIRMATION_ACCEPTED` 授权链；reducer 本身不执行授权决策。 |
+| stale_policy | `ToolExecutionState` 不判断 old-plan result 是否可推进 current plan，也不得更新 SlowTask current plan；旧 `TOOL_RESULT_RECEIVED` 的 stale / adopt / rebase policy 仍由 `SlowTaskState` 根据 `TOOL_RESULT_MARKED_STALE`, `STALE_EVIDENCE_RECORDED`, `STALE_EVIDENCE_ADOPTED` 处理。 |
+| late_event_policy | 同一 `tool_call_id` 的 recorded events 按 replay 顺序归档，并保留每个事件自己的 plan binding；plan advance 后的 cancel request 或 old-plan result 不会被 reducer 改写成 current-plan fact。 |
+| terminal_state_policy | `TOOL_RESULT_RECEIVED`, `TOOL_EXECUTION_FAILED`, `TOOL_EXECUTION_CANCELLED`, `TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS` 只更新该 call 的 recorded lifecycle status；本 slice 不实现 retry scheduler、cancel runtime 或 executor terminal enforcement。 |
+| replay_validation | MVP-2 Slice 1 replay 必须重建 manifest、partial args、blocked insufficient args、ready args、preview、authorization、started、progress、UI patch refs、result refs、failure、retry、cancel metadata，且 deterministic replay 不执行任何 tool/runtime。`TOOL_EXECUTION_STARTED` 必须能绑定 recorded `TOOL_MANIFEST_LOADED`，且不得用 started-event `tool_name` 覆盖既有 `TOOL_CALL_STARTED` binding；manifest `side_effect_class` 必须属于 MVP allowlist (`READ_ONLY`, `DRY_RUN`, `SANDBOX_WRITE`, `DEMO_DESTRUCTIVE_ACTION`)；真实外部副作用 class 必须拒绝。`TOOL_EXECUTION_CANCEL_REQUESTED` 必须晚于造成它的 SlowTask plan advance / cancel decision。 |
+
+### DemoUIState
+
+| 字段 | 规格 |
+| --- | --- |
+| owned_by | Tool Executor / Replay Runtime。 |
+| input_events | `TOOL_UI_STATE_PATCHED`。 |
+| output_state | frontend-visible demo backend namespaces；per-namespace applied `ui_patch_id` list；operation counts；latest patch id；per-patch `tool_call_id`, `task_id`, `plan_version`, `task_event_seq`, `idempotency_key`, `patch_ref`, parsed synthetic namespace / operation。 |
+| invariant_rules | 只 consume recorded `TOOL_UI_STATE_PATCHED` canonical fields；不得执行 demo backend、调用 frontend、调用网络、读取真实文件 payload、fetch `patch_ref`、读取 clock/random。`patch_ref` 只能作为 safe structured ref / synthetic substitute 解析为最小 replay state；不得从 `TOOL_RESULT_RECEIVED` 推断 demo UI mutation。重复 `ui_patch_id` 必须绑定同一 `idempotency_key` 和 `patch_ref`。 |
+| late_event_policy | Replay 按 `event_seq` 顺序应用 patch；同一 `ui_patch_id` 的重复幂等记录不重复计数。 |
+| terminal_state_policy | Demo UI replay state 不自行推断工具终态；工具终态仍由 `ToolExecutionState` 记录。 |
+| replay_validation | MVP-2 Slice 3 replay 必须从 `TOOL_UI_STATE_PATCHED.patch_ref` / synthetic substitute 重建最小 demo UI/backend state，且无 patch event 时即使有 successful `TOOL_RESULT_RECEIVED` 也不得产生 demo state mutation。 |
+
+### SpokenPlanState
+
+| 字段 | 规格 |
+| --- | --- |
+| owned_by | Composer / Replay Runtime。 |
+| input_events | `SPOKEN_PLAN_EMITTED`。 |
+| output_state | per-`spoken_plan_id` draft metadata；`task_id`, `plan_version`, `task_event_seq`; source commitment/progress ids；coverage/truthfulness required flags；synthetic/redacted `text_ref`; emotion/style/priority；`output_mode`; symbolic commitment metadata such as `immutable_fields`, `must_say_fields`, `forbidden_rewrite_fields`。 |
+| invariant_rules | Reducer 只 consume recorded journal events；不得调用 Composer runtime、模型、TTS、tool、网络、clock/random 或 fetch `text_ref`。Composer output 只是 unchecked draft；不得改变 SlowTask-owned facts、resolved arguments、tool status、risk warnings、confirmation state、stale/adopted evidence metadata。 |
+| replay_validation | Replay 必须验证 source commitment/progress event exists and precedes `SPOKEN_PLAN_EMITTED`；source event 必须来自 canonical owner (`SEMANTIC_COMMITMENT_EMITTED` / SlowTask progress from `slowtask_runtime`, Tool progress from `tool_executor`)；`task_id` / `plan_version` match；commitment-derived speech has matching `source_commitment_id`, `coverage_check_required=true`, and exact symbolic metadata preservation for `immutable_fields` / `must_say_fields` / `forbidden_rewrite_fields`；progress-derived speech has matching `source_progress_event_ids`, `truthfulness_check_required=true`, and MVP truthfulness level in `STATE_GROUNDED` / `STYLE_ONLY_ACK`。 |
+
+### SpokenPlanCheckState
+
+| 字段 | 规格 |
+| --- | --- |
+| owned_by | Coverage Checker / ProgressTruthfulnessCheck / Replay Runtime。 |
+| input_events | `COMMITMENT_COVERAGE_CHECK_PASSED`, `COMMITMENT_COVERAGE_CHECK_FAILED`, `PROGRESS_TRUTHFULNESS_CHECK_PASSED`, `PROGRESS_TRUTHFULNESS_CHECK_FAILED`。 |
+| output_state | per-check pass/fail metadata by check `event_id`; `spoken_plan_id`; source commitment/progress ids; `truthfulness_level`; checked fields or failure reasons; `check_result_ref`; `output_mode`; per-spoken-plan check event ids。 |
+| invariant_rules | Reducer 只 consume recorded check events；不得调用 checker runtime、Composer、模型、TTS、tool、网络、clock/random 或 fetch `check_result_ref`。Check pass/fail 是独立 checker event，不是 Composer self-attestation。 |
+| replay_validation | Replay 必须验证 check source `SPOKEN_PLAN_EMITTED` exists and precedes check；coverage check 只能用于 `source=semantic_commitment`; truthfulness check 只能用于 `source=grounded_progress`; check `output_mode` 必须为 `real` / `mock` / `fallback` / `degraded`; `PLAYBACK_SPAN_STARTED.approved_check_event_id` 必须引用 matching passed check；failed check 不得 authorize playback。 |
+
 ### PlaybackState
 
 | 字段 | 规格 |
@@ -140,6 +185,10 @@ State digest 至少包含：
 - `interaction_state_hash`
 - `task_focus_state_hash`
 - `slowtask_state_hash`
+- `tool_execution_state_hash`
+- `demo_ui_state_hash`
+- `spoken_plan_state_hash`
+- `spoken_plan_check_state_hash`
 - `playback_state_hash`
 - `adapter_health_state_hash`
 - `trace_privacy_state_hash`

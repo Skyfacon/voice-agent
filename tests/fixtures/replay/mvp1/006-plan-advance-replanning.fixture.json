@@ -1,0 +1,451 @@
+{
+  "replay_manifest": {
+    "manifest_schema_version": "1.0",
+    "replay_id": "replay_mvp1_plan_advance_replanning_006",
+    "source_trace_ref": "fixture://mvp1/006-plan-advance-replanning",
+    "replay_mode": "deterministic",
+    "event_schema_version_range": [
+      "1.0"
+    ],
+    "fixture_domain": "GITHUB_ALLOWED",
+    "generated_from": "hand_written_minimal",
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false,
+    "allowed_re_eval_components": []
+  },
+  "events": [
+    {
+      "event_name": "SESSION_STARTED",
+      "event_id": "evt_mvp1_slice6_session_started",
+      "event_seq": 1,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "session_runtime",
+      "created_monotonic_ms": 10,
+      "created_wall_clock_ms": 1700000006010,
+      "trace_redaction_level": "metadata_only",
+      "runtime_config_ref": "config://synthetic/mvp1/default",
+      "capability_snapshot_ref": "capability://synthetic/mvp1/mock-adapters-v1"
+    },
+    {
+      "event_name": "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED",
+      "event_id": "evt_mvp1_slice6_capability_snapshot",
+      "event_seq": 2,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "adapter_registry",
+      "created_monotonic_ms": 11,
+      "created_wall_clock_ms": 1700000006011,
+      "caused_by_event_id": "evt_mvp1_slice6_session_started",
+      "trace_redaction_level": "metadata_only",
+      "capability_snapshot_ref": "capability://synthetic/mvp1/mock-adapters-v1",
+      "adapter_ids": [
+        "mock_asr",
+        "mock_thinker"
+      ],
+      "adapter_types": [
+        "asr",
+        "thinker"
+      ],
+      "deployment_modes": [
+        "mock",
+        "mock"
+      ],
+      "output_modes": [
+        "mock",
+        "mock"
+      ]
+    },
+    {
+      "event_name": "SLOWTASK_CREATED",
+      "event_id": "evt_mvp1_slice6_slowtask_created",
+      "event_seq": 3,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 20,
+      "created_wall_clock_ms": 1700000006020,
+      "caused_by_event_id": "evt_mvp1_slice6_capability_snapshot",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 1,
+      "task_event_seq": 1,
+      "initial_goal_ref": "goal://synthetic/mvp1/slice6/initial",
+      "source_evidence_refs": [
+        "evidence://synthetic/mvp1/slice6/spawn"
+      ]
+    },
+    {
+      "event_name": "PLANNING_STARTED",
+      "event_id": "evt_mvp1_slice6_planning_started",
+      "event_seq": 4,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 21,
+      "created_wall_clock_ms": 1700000006021,
+      "caused_by_event_id": "evt_mvp1_slice6_slowtask_created",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 1,
+      "task_event_seq": 2,
+      "planning_reason": "initial_goal_accepted"
+    },
+    {
+      "event_name": "SLOWTASK_STATE_CHANGED",
+      "event_id": "evt_mvp1_slice6_state_planning",
+      "event_seq": 5,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 22,
+      "created_wall_clock_ms": 1700000006022,
+      "caused_by_event_id": "evt_mvp1_slice6_planning_started",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 1,
+      "task_event_seq": 3,
+      "from_state": "CREATED",
+      "to_state": "PLANNING",
+      "reason": "initial_planning_started"
+    },
+    {
+      "event_name": "TEXT_INPUT_RECEIVED",
+      "event_id": "evt_mvp1_slice6_patch_text",
+      "event_seq": 6,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "access_layer",
+      "created_monotonic_ms": 30,
+      "created_wall_clock_ms": 1700000006030,
+      "caused_by_event_id": "evt_mvp1_slice6_state_planning",
+      "trace_redaction_level": "redacted_fixture",
+      "input_span_id": "input_mvp1_slice6_patch",
+      "text_span_id": "text_mvp1_slice6_patch",
+      "audio_span_id": null,
+      "input_modality": "text",
+      "directedness": "ASSUMED_DIRECTED",
+      "semantic_close": "ASSUMED_CLOSED",
+      "redacted_text": "[synthetic mvp1 slice6 patch]",
+      "text_ref": "text://synthetic/mvp1/slice6/patch-redacted"
+    },
+    {
+      "event_name": "TURN_OPENED",
+      "event_id": "evt_mvp1_slice6_patch_turn_opened",
+      "event_seq": 7,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "interaction_controller",
+      "created_monotonic_ms": 31,
+      "created_wall_clock_ms": 1700000006031,
+      "caused_by_event_id": "evt_mvp1_slice6_patch_text",
+      "trace_redaction_level": "metadata_only",
+      "turn_id": "turn_mvp1_slice6_patch",
+      "input_span_id": "input_mvp1_slice6_patch",
+      "text_span_id": "text_mvp1_slice6_patch",
+      "turn_phase": "COLLECTING_INPUT",
+      "input_modality": "text"
+    },
+    {
+      "event_name": "TURN_INGRESS_ACCEPTED",
+      "event_id": "evt_mvp1_slice6_patch_turn_accepted",
+      "event_seq": 8,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "interaction_controller",
+      "created_monotonic_ms": 32,
+      "created_wall_clock_ms": 1700000006032,
+      "caused_by_event_id": "evt_mvp1_slice6_patch_turn_opened",
+      "trace_redaction_level": "metadata_only",
+      "turn_id": "turn_mvp1_slice6_patch",
+      "input_span_id": "input_mvp1_slice6_patch",
+      "text_span_id": "text_mvp1_slice6_patch",
+      "ingress_outcome": "ACCEPTED"
+    },
+    {
+      "event_name": "TURN_INGRESS_COMMITTED",
+      "event_id": "evt_mvp1_slice6_patch_turn_committed",
+      "event_seq": 9,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "interaction_controller",
+      "created_monotonic_ms": 33,
+      "created_wall_clock_ms": 1700000006033,
+      "caused_by_event_id": "evt_mvp1_slice6_patch_turn_accepted",
+      "trace_redaction_level": "metadata_only",
+      "turn_id": "turn_mvp1_slice6_patch",
+      "utterance_id": "utt_mvp1_slice6_patch",
+      "input_modality": "text",
+      "input_span_id": "input_mvp1_slice6_patch",
+      "text_span_id": "text_mvp1_slice6_patch",
+      "directedness": "ASSUMED_DIRECTED",
+      "semantic_close": "ASSUMED_CLOSED",
+      "ingress_outcome": "COMMITTED"
+    },
+    {
+      "event_name": "MOCK_ASR_FRAME_EMITTED",
+      "event_id": "evt_mvp1_slice6_patch_asr",
+      "event_seq": 10,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "asr_adapter",
+      "created_monotonic_ms": 34,
+      "created_wall_clock_ms": 1700000006034,
+      "caused_by_event_id": "evt_mvp1_slice6_patch_turn_committed",
+      "trace_redaction_level": "redacted_fixture",
+      "turn_id": "turn_mvp1_slice6_patch",
+      "utterance_id": "utt_mvp1_slice6_patch",
+      "input_modality": "text",
+      "text_span_id": "text_mvp1_slice6_patch",
+      "asr_frame_ref": "asr-frame://synthetic/mvp1/slice6/patch",
+      "output_mode": "mock"
+    },
+    {
+      "event_name": "MOCK_THINKER_FRAME_EMITTED",
+      "event_id": "evt_mvp1_slice6_patch_thinker",
+      "event_seq": 11,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "thinker_adapter",
+      "created_monotonic_ms": 35,
+      "created_wall_clock_ms": 1700000006035,
+      "caused_by_event_id": "evt_mvp1_slice6_patch_turn_committed",
+      "trace_redaction_level": "redacted_fixture",
+      "turn_id": "turn_mvp1_slice6_patch",
+      "utterance_id": "utt_mvp1_slice6_patch",
+      "input_modality": "text",
+      "semantic_frame_ref": "semantic-frame://synthetic/mvp1/slice6/patch",
+      "output_mode": "mock"
+    },
+    {
+      "event_name": "ROUTER_DECISION_EMITTED",
+      "event_id": "evt_mvp1_slice6_patch_router",
+      "event_seq": 12,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "router",
+      "created_monotonic_ms": 36,
+      "created_wall_clock_ms": 1700000006036,
+      "caused_by_event_id": "evt_mvp1_slice6_patch_turn_committed",
+      "trace_redaction_level": "metadata_only",
+      "turn_id": "turn_mvp1_slice6_patch",
+      "utterance_id": "utt_mvp1_slice6_patch",
+      "router_decision": "PATCH_ACTIVE_SLOW_TASK",
+      "task_focus": "ACTIVE_TASK_PATCH",
+      "active_task_id": "task_mvp1_slice6_active",
+      "confidence": 0.84,
+      "evidence_uncertainty": "medium",
+      "turn_committed_event_id": "evt_mvp1_slice6_patch_turn_committed",
+      "asr_frame_event_id": "evt_mvp1_slice6_patch_asr",
+      "thinker_frame_event_id": "evt_mvp1_slice6_patch_thinker"
+    },
+    {
+      "event_name": "USER_PATCH_RECEIVED",
+      "event_id": "evt_mvp1_slice6_user_patch_received",
+      "event_seq": 13,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "user_patch_pipeline",
+      "created_monotonic_ms": 37,
+      "created_wall_clock_ms": 1700000006037,
+      "caused_by_event_id": "evt_mvp1_slice6_patch_router",
+      "trace_redaction_level": "redacted_fixture",
+      "patch_id": "patch_mvp1_slice6_material",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 1,
+      "task_event_seq": 4,
+      "observed_plan_version": 1,
+      "turn_id": "turn_mvp1_slice6_patch",
+      "utterance_id": "utt_mvp1_slice6_patch",
+      "evidence_ref": "evidence://synthetic/mvp1/slice6/patch-pack",
+      "authoritative_evidence_refs": [
+        "text://synthetic/mvp1/slice6/patch-redacted"
+      ],
+      "non_authoritative_hypothesis_refs": [
+        "summary://synthetic/mvp1/slice6/thinker/seat-preference"
+      ],
+      "candidate_patch_types": [
+        "constraint_update_candidate"
+      ],
+      "evidence_pack": {
+        "evidence_ref": "evidence://synthetic/mvp1/slice6/patch-pack",
+        "authoritative_evidence": {
+          "turn_id": "turn_mvp1_slice6_patch",
+          "utterance_id": "utt_mvp1_slice6_patch",
+          "input_modality": "text",
+          "text_span_id": "text_mvp1_slice6_patch",
+          "text_ref": "text://synthetic/mvp1/slice6/patch-redacted",
+          "redacted_text": "[synthetic mvp1 slice6 patch]",
+          "asr_frame_ref": "asr-frame://synthetic/mvp1/slice6/patch",
+          "asr_nbest": [
+            {
+              "text_ref": "text://synthetic/mvp1/slice6/asr/seat-preference",
+              "confidence": 0.73,
+              "source_event_id": "evt_mvp1_slice6_patch_asr"
+            }
+          ],
+          "source_event_ids": [
+            "evt_mvp1_slice6_patch_text",
+            "evt_mvp1_slice6_patch_turn_committed",
+            "evt_mvp1_slice6_patch_asr"
+          ],
+          "provenance": {
+            "text_ref": {
+              "source": "user_text",
+              "source_event_id": "evt_mvp1_slice6_patch_text",
+              "evidence_ref": "text://synthetic/mvp1/slice6/patch-redacted"
+            },
+            "asr_nbest": [
+              {
+                "source": "asr",
+                "source_event_id": "evt_mvp1_slice6_patch_asr",
+                "evidence_ref": "asr-frame://synthetic/mvp1/slice6/patch",
+                "confidence": 0.73
+              }
+            ]
+          }
+        },
+        "non_authoritative_hypothesis": {
+          "task_focus": "ACTIVE_TASK_PATCH",
+          "task_focus_confidence": 0.84,
+          "confidence": 0.84,
+          "semantic_frame_ref": "semantic-frame://synthetic/mvp1/slice6/patch",
+          "semantic_summary_ref": "summary://synthetic/mvp1/slice6/thinker/seat-preference",
+          "candidate_patch_types": [
+            "constraint_update_candidate"
+          ],
+          "provenance": {
+            "task_focus": {
+              "source": "router",
+              "source_event_id": "evt_mvp1_slice6_patch_router",
+              "evidence_ref": "evt_mvp1_slice6_patch_router"
+            },
+            "semantic_summary_ref": {
+              "source": "thinker",
+              "source_event_id": "evt_mvp1_slice6_patch_thinker",
+              "evidence_ref": "semantic-frame://synthetic/mvp1/slice6/patch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "event_name": "USER_PATCH_INTERPRETED",
+      "event_id": "evt_mvp1_slice6_user_patch_interpreted",
+      "event_seq": 14,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 38,
+      "created_wall_clock_ms": 1700000006038,
+      "caused_by_event_id": "evt_mvp1_slice6_user_patch_received",
+      "trace_redaction_level": "metadata_only",
+      "patch_id": "patch_mvp1_slice6_material",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 1,
+      "task_event_seq": 5,
+      "observed_plan_version": 1,
+      "interpreted_against_plan_version": 1,
+      "interpretation_type": "constraint_update",
+      "materially_changes_task": true,
+      "interpretation_reason": "mock_constraint_update_candidate",
+      "source_evidence_refs": [
+        "evidence://synthetic/mvp1/slice6/patch-pack",
+        "text://synthetic/mvp1/slice6/patch-redacted",
+        "summary://synthetic/mvp1/slice6/thinker/seat-preference"
+      ]
+    },
+    {
+      "event_name": "PLAN_VERSION_ADVANCED",
+      "event_id": "evt_mvp1_slice6_plan_version_advanced",
+      "event_seq": 15,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 39,
+      "created_wall_clock_ms": 1700000006039,
+      "caused_by_event_id": "evt_mvp1_slice6_user_patch_interpreted",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 2,
+      "task_event_seq": 6,
+      "from_plan_version": 1,
+      "to_plan_version": 2,
+      "planning_reason": "material_user_patch:constraint_update",
+      "caused_by_user_patch_event_id": "evt_mvp1_slice6_user_patch_received"
+    },
+    {
+      "event_name": "PLANNING_RESTARTED",
+      "event_id": "evt_mvp1_slice6_planning_restarted",
+      "event_seq": 16,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 40,
+      "created_wall_clock_ms": 1700000006040,
+      "caused_by_event_id": "evt_mvp1_slice6_plan_version_advanced",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 2,
+      "task_event_seq": 7,
+      "restart_reason": "material_user_patch:constraint_update"
+    },
+    {
+      "event_name": "TASK_REPLANNED",
+      "event_id": "evt_mvp1_slice6_task_replanned",
+      "event_seq": 17,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 41,
+      "created_wall_clock_ms": 1700000006041,
+      "caused_by_event_id": "evt_mvp1_slice6_plan_version_advanced",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 2,
+      "task_event_seq": 8,
+      "planning_reason": "material_user_patch:constraint_update",
+      "superseded_plan_version": 1
+    },
+    {
+      "event_name": "SLOWTASK_STATE_CHANGED",
+      "event_id": "evt_mvp1_slice6_state_replanning",
+      "event_seq": 18,
+      "event_schema_version": "1.0",
+      "session_id": "sess_mvp1_slice6_plan_advance",
+      "conversation_id": "conv_mvp1_slice6_plan_advance",
+      "source_module": "slowtask_runtime",
+      "created_monotonic_ms": 42,
+      "created_wall_clock_ms": 1700000006042,
+      "caused_by_event_id": "evt_mvp1_slice6_task_replanned",
+      "trace_redaction_level": "metadata_only",
+      "task_id": "task_mvp1_slice6_active",
+      "plan_version": 2,
+      "task_event_seq": 9,
+      "from_state": "PLANNING",
+      "to_state": "PLANNING",
+      "reason": "material_user_patch_replanning"
+    }
+  ]
+}

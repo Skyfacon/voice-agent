@@ -4,6 +4,8 @@ Source of truth: frozen ADR Baseline v0.4。本文件承载 P1-B-001，是从 AD
 
 ADR-002 是 MVP event names 的 canonical source。实现新增 MVP-relevant event 前，必须先更新 ADR-002，并同步本文件。
 
+MVP-1 SlowTask / UserPatch / stale-result required field refinements come from ADR-004 and ADR-016. Where this derived registry requires additional binding fields beyond the ADR-002 canonical table, the refinement narrows the schema for implementation validation without creating a new journal event name.
+
 ## 1. Event Envelope Schema
 
 每个 event 必须包含 ADR-002 定义的 common envelope fields：
@@ -154,8 +156,8 @@ Context binding fields 按事件需要出现：
 | `SLOWTASK_CREATED` | SlowTask events | SlowTask Runtime | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `initial_goal_ref` | `source_evidence_refs` | `ROUTER_DECISION_EMITTED` spawn decision | SlowTaskState | false | true | goal refs redacted/synthetic in shareable fixtures |
 | `SLOWTASK_STATE_CHANGED` | SlowTask events | SlowTask Runtime | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `from_state`, `to_state`, `reason` | - | SlowTask transition input | SlowTaskState | false | true | metadata only |
 | `USER_PATCH_RECEIVED` | SlowTask events | UserPatch Pipeline | UserPatch Pipeline | `patch_id`, `task_id`, `plan_version`, `task_event_seq`, `observed_plan_version`, `evidence_ref` | `turn_id`, `utterance_id` | Router patch decision | SlowTaskState | false | true | evidence refs redacted/synthetic for shareable replay |
-| `USER_PATCH_INTERPRETED` | SlowTask events | SlowTask Runtime | SlowTask Runtime | `patch_id`, `task_id`, `interpreted_against_plan_version`, `interpretation_type`, `materially_changes_task` | `interpretation_reason`, `source_evidence_refs` | `USER_PATCH_RECEIVED` | SlowTaskState | false | true | no raw user text required |
-| `PLAN_VERSION_ADVANCED` | SlowTask events | SlowTask Runtime | SlowTask Runtime | `task_id`, `from_plan_version`, `to_plan_version`, `planning_reason` | `caused_by_user_patch_event_id` | material patch/tool/risk change | SlowTaskState | false | true | metadata only |
+| `USER_PATCH_INTERPRETED` | SlowTask events | SlowTask Runtime | SlowTask Runtime | `patch_id`, `task_id`, `plan_version`, `task_event_seq`, `observed_plan_version`, `interpreted_against_plan_version`, `interpretation_type`, `materially_changes_task` | `interpretation_reason`, `source_evidence_refs` | `USER_PATCH_RECEIVED` | SlowTaskState | false | true | no raw user text required |
+| `PLAN_VERSION_ADVANCED` | SlowTask events | SlowTask Runtime | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `from_plan_version`, `to_plan_version`, `planning_reason` | `caused_by_user_patch_event_id` | material patch/tool/risk change | SlowTaskState | false | true | metadata only |
 | `TASK_REPLANNED` | SlowTask events | SlowTask Runtime | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `planning_reason` | `superseded_plan_version` | `PLAN_VERSION_ADVANCED` or initial planning | SlowTaskState | false | true | metadata only |
 
 ### SlowTask evidence events
@@ -208,8 +210,8 @@ Context binding fields 按事件需要出现：
 | `TOOL_CALL_RETRYING` | Tool events | Tool Executor | Tool Executor | `tool_call_id`, `task_id`, `plan_version`, `task_event_seq`, `retry_count`, `retry_reason` | - | retryable tool failure | ToolExecutionState | false | true | metadata only |
 | `TOOL_EXECUTION_CANCELLED` | Tool events | Tool Executor | Tool Executor | `tool_call_id`, `task_id`, `plan_version`, `task_event_seq`, `cancel_request_event_id`, `cancel_status` | - | `TOOL_EXECUTION_CANCEL_REQUESTED` | ToolExecutionState | false | true | metadata only |
 | `TOOL_EXECUTION_BLOCKED_INSUFFICIENT_ARGUMENTS` | Tool events | Tool Executor | Tool Executor | `tool_call_id`, `task_id`, `plan_version`, `task_event_seq`, `blocking_fields`, `source_event_id` | - | missing resolved arguments/provenance | ToolExecutionState, SlowTaskState | false | true | metadata only |
-| `TOOL_RESULT_MARKED_STALE` | Tool events | SlowTask Runtime | SlowTask Runtime | `tool_call_id`, `task_id`, `result_plan_version`, `current_plan_version`, `stale_reason` | - | old-plan `TOOL_RESULT_RECEIVED` | SlowTaskState | false | true | metadata only |
-| `STALE_EVIDENCE_RECORDED` | Tool events | SlowTask Runtime | SlowTask Runtime | `task_id`, `stale_evidence_ref`, `source_tool_result_event_id` | - | `TOOL_RESULT_MARKED_STALE` | SlowTaskState | false | true | stale refs redacted/minimized |
+| `TOOL_RESULT_MARKED_STALE` | Tool events | SlowTask Runtime | SlowTask Runtime | `tool_call_id`, `task_id`, `plan_version`, `task_event_seq`, `result_plan_version`, `current_plan_version`, `stale_reason` | - | old-plan `TOOL_RESULT_RECEIVED` | SlowTaskState | false | true | metadata only |
+| `STALE_EVIDENCE_RECORDED` | Tool events | SlowTask Runtime | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `stale_evidence_ref`, `source_tool_result_event_id` | - | `TOOL_RESULT_MARKED_STALE` | SlowTaskState | false | true | stale refs redacted/minimized |
 | `STALE_EVIDENCE_ADOPTED` | Tool events | SlowTask Runtime | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `stale_evidence_ref`, `source_tool_result_event_id`, `adopted_from_plan_version`, `adoption_mode=adopt_or_rebase`, `adoption_reason`, `adopted_scope`, `adopted_by_event_id` | - | explicit SlowTask adoption/rebase | SlowTaskState | false | true | adopted refs redacted/minimized |
 
 ### Commitment / Composer events
@@ -217,11 +219,11 @@ Context binding fields 按事件需要出现：
 | event_name | event_family | source_module | payload_owner | required_fields | optional_fields | causal_links | state_reducer_target | required_in_mvp0 | replay_required | privacy_redaction_notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `SEMANTIC_COMMITMENT_EMITTED` | Commitment / Composer events | SlowTask Runtime | SlowTask Runtime | `commitment_id`, `task_id`, `plan_version`, `task_event_seq`, `source_events` | `commitment_ref` | current-plan completion/confirmation state | SlowTaskState | false | true | commitment refs redacted/minimized in shareable fixtures |
-| `SPOKEN_PLAN_EMITTED` | Commitment / Composer events | Composer | Composer | `spoken_plan_id`, `source_progress_event_ids`, `coverage_check_required` | `source_commitment_id`, `truthfulness_check_required` | SemanticCommitment, progress event, or fast output | none | false | true | spoken text redacted/synthetic as needed |
-| `COMMITMENT_COVERAGE_CHECK_PASSED` | Commitment / Composer events | Coverage Checker | Coverage Checker | `spoken_plan_id`, `source_commitment_id`, `checked_fields`, `check_result_ref` | - | `SPOKEN_PLAN_EMITTED` | none | false | true | check refs no raw secrets |
-| `COMMITMENT_COVERAGE_CHECK_FAILED` | Commitment / Composer events | Coverage Checker | Coverage Checker | `spoken_plan_id`, `source_commitment_id`, `failure_reasons` | - | `SPOKEN_PLAN_EMITTED` | none | false | true | failure refs no raw sensitive values in shareable fixtures |
-| `PROGRESS_TRUTHFULNESS_CHECK_PASSED` | Commitment / Composer events | Coverage Checker / ProgressTruthfulnessCheck | Truthfulness Checker | `spoken_plan_id`, `source_progress_event_ids`, `truthfulness_level`, `check_result_ref` | - | `SPOKEN_PLAN_EMITTED` for progress | none | false | true | no raw sensitive content |
-| `PROGRESS_TRUTHFULNESS_CHECK_FAILED` | Commitment / Composer events | Coverage Checker / ProgressTruthfulnessCheck | Truthfulness Checker | `spoken_plan_id`, `source_progress_event_ids`, `failure_reasons` | - | `SPOKEN_PLAN_EMITTED` for progress | none | false | true | no raw sensitive content |
+| `SPOKEN_PLAN_EMITTED` | Commitment / Composer events | Composer | Composer | `spoken_plan_id`, `task_id`, `plan_version`, `task_event_seq`, `source_events`, `source_progress_event_ids`, `coverage_check_required`, `truthfulness_check_required`, `text_ref`, `emotion`, `speaking_style`, `interruptible`, `priority`, `source`, `output_mode` | `source_commitment_id`, `truthfulness_level`, `immutable_fields`, `must_say_fields`, `forbidden_rewrite_fields` | SemanticCommitment or grounded progress event | SpokenPlanState | false | true | spoken text must be redacted/synthetic ref；no raw user text / secrets；`output_mode=real|mock|fallback|degraded` |
+| `COMMITMENT_COVERAGE_CHECK_PASSED` | Commitment / Composer events | Coverage Checker | Coverage Checker | `spoken_plan_id`, `source_commitment_id`, `checked_fields`, `check_result_ref`, `output_mode` | `task_id`, `plan_version`, `task_event_seq` | `SPOKEN_PLAN_EMITTED` | SpokenPlanCheckState | false | true | check refs no raw secrets；`output_mode=real|mock|fallback|degraded` |
+| `COMMITMENT_COVERAGE_CHECK_FAILED` | Commitment / Composer events | Coverage Checker | Coverage Checker | `spoken_plan_id`, `source_commitment_id`, `failure_reasons`, `check_result_ref`, `output_mode` | `task_id`, `plan_version`, `task_event_seq` | `SPOKEN_PLAN_EMITTED` | SpokenPlanCheckState | false | true | failure refs no raw sensitive values in shareable fixtures；`output_mode=real|mock|fallback|degraded` |
+| `PROGRESS_TRUTHFULNESS_CHECK_PASSED` | Commitment / Composer events | Coverage Checker / ProgressTruthfulnessCheck | Truthfulness Checker | `spoken_plan_id`, `source_progress_event_ids`, `truthfulness_level`, `check_result_ref`, `output_mode` | `task_id`, `plan_version`, `task_event_seq` | `SPOKEN_PLAN_EMITTED` for progress | SpokenPlanCheckState | false | true | no raw sensitive content；`output_mode=real|mock|fallback|degraded` |
+| `PROGRESS_TRUTHFULNESS_CHECK_FAILED` | Commitment / Composer events | Coverage Checker / ProgressTruthfulnessCheck | Truthfulness Checker | `spoken_plan_id`, `source_progress_event_ids`, `failure_reasons`, `check_result_ref`, `output_mode` | `task_id`, `plan_version`, `task_event_seq`, `truthfulness_level` | `SPOKEN_PLAN_EMITTED` for progress | SpokenPlanCheckState | false | true | no raw sensitive content；`output_mode=real|mock|fallback|degraded` |
 
 ### Trace / Replay events
 
@@ -245,9 +247,9 @@ Context binding fields 按事件需要出现：
 | `TURN_INGRESS_COMMITTED` | `TURN_INGRESS_COMMITTED` | 输入被系统接受为 turn，可进入 ASR/Thinker/Router。 |
 | `USER_PATCH_RECEIVED` | `USER_PATCH_RECEIVED` | UserPatch evidence pack 到达，并绑定 pre-advance plan_version。 |
 | `USER_PATCH_INTERPRETED` | `USER_PATCH_INTERPRETED` | SlowTask against observed plan_version 解释 patch。 |
-| `PLAN_VERSION_ADVANCED` | `PLAN_VERSION_ADVANCED` | SlowTask 因 material change 推进 plan_version。 |
+| `PLAN_VERSION_ADVANCED` | `PLAN_VERSION_ADVANCED` | SlowTask 因 material change 推进 plan_version；event `plan_version` 表示 advance 后 current plan，必须等于 `to_plan_version`。 |
 | `TOOL_RESULT_RECEIVED` | `TOOL_RESULT_RECEIVED` | Tool Executor 带原始 plan binding 报告 tool result。 |
-| `STALE_TOOL_RESULT_RECORDED` | `TOOL_RESULT_RECEIVED -> TOOL_RESULT_MARKED_STALE -> STALE_EVIDENCE_RECORDED` | 非 canonical label，对应 ADR-002/004 stale result chain。 |
+| `STALE_TOOL_RESULT_RECORDED` | `TOOL_RESULT_RECEIVED -> TOOL_RESULT_MARKED_STALE -> STALE_EVIDENCE_RECORDED` | 非 canonical label，对应 ADR-002/004 stale result chain；`TOOL_RESULT_MARKED_STALE.plan_version` 必须等于 `current_plan_version`。 |
 | `SEMANTIC_COMMITMENT_CREATED` | `SEMANTIC_COMMITMENT_EMITTED` | 非 canonical label，映射到 canonical commitment event。 |
 | `SPOKEN_PLAN_CREATED` | `SPOKEN_PLAN_EMITTED` | 非 canonical label，映射到 canonical composer event。 |
 

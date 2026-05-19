@@ -17,6 +17,8 @@ SAFE_SENSITIVE_METADATA_KEYS = frozenset(
         "contains_secrets",
         "contains_unredacted_tool_result",
         "contains_large_raw_web_content",
+        "authorization_basis",
+        "authorization_event_id",
         "secret_kind",
     }
 )
@@ -48,6 +50,10 @@ def state_digest(
     trace_privacy_state: Any,
     task_focus_state: Any | None = None,
     slowtask_state: Any | None = None,
+    tool_execution_state: Any | None = None,
+    demo_ui_state: Any | None = None,
+    spoken_plan_state: Any | None = None,
+    spoken_plan_check_state: Any | None = None,
 ) -> dict[str, Any]:
     digest_without_overall: dict[str, Any] = {
         "digest_schema_version": DIGEST_SCHEMA_VERSION,
@@ -57,6 +63,10 @@ def state_digest(
         "interaction_state_hash": stable_hash(interaction_state),
         "task_focus_state_hash": stable_hash(task_focus_state or {}),
         "slowtask_state_hash": stable_hash(slowtask_state or {}),
+        "tool_execution_state_hash": stable_hash(tool_execution_state or {}),
+        "demo_ui_state_hash": stable_hash(demo_ui_state or {}),
+        "spoken_plan_state_hash": stable_hash(spoken_plan_state or {}),
+        "spoken_plan_check_state_hash": stable_hash(spoken_plan_check_state or {}),
         "playback_state_hash": stable_hash(playback_state),
         "adapter_health_state_hash": stable_hash(adapter_health_state),
         "trace_privacy_state_hash": stable_hash(trace_privacy_state),

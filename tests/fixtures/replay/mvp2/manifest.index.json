@@ -1,0 +1,295 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP2-ACCEPTANCE",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "scope": "MVP-2 acceptance skeleton for demo sandbox tools, progressive Tool Executor events, UI state patch replay, webSearch untrusted evidence, demo destructive confirmation, Thinker-as-Composer, coverage checks, progress truthfulness, privacy, replay, and scope gates.",
+  "generated_fixtures_must_be": [
+    "synthetic",
+    "redacted",
+    "minimal"
+  ],
+  "required_scenarios": [
+    "MVP2-TOOL-MANIFEST-001",
+    "MVP2-TOOL-ARGS-PARTIAL-001",
+    "MVP2-TOOL-BLOCKED-INSUFFICIENT-ARGS-001",
+    "MVP2-MEMO-SANDBOX-WRITE-001",
+    "MVP2-ALARM-SANDBOX-SCHEDULE-001",
+    "MVP2-FLASHLIGHT-DEMO-DEVICE-ACTION-001",
+    "MVP2-WEATHER-READ-ONLY-001",
+    "MVP2-WEBSEARCH-UNTRUSTED-EVIDENCE-001",
+    "MVP2-UI-STATE-PATCHED-001",
+    "MVP2-DEMO-DESTRUCTIVE-CONFIRMATION-001",
+    "MVP2-STALE-TOOL-RESULT-PROGRESSIVE-001",
+    "MVP2-COMPOSER-SPOKEN-PLAN-001",
+    "MVP2-COMMITMENT-COVERAGE-001",
+    "MVP2-PROGRESS-TRUTHFULNESS-001",
+    "MVP2-ACCEPTANCE-SCOPE-SAFETY-001"
+  ],
+  "initial_tool_scope": [
+    {
+      "tool_name": "memo",
+      "tool_category": "DEMO_STATE_WRITE",
+      "allowed_side_effect_classes": [
+        "READ_ONLY",
+        "SANDBOX_WRITE",
+        "DEMO_DESTRUCTIVE_ACTION"
+      ],
+      "result_trust_level": "TRUSTED_DEMO_TOOL_RESULT",
+      "ui_patch_capable": true
+    },
+    {
+      "tool_name": "alarm",
+      "tool_category": "DEMO_SCHEDULE_ACTION",
+      "allowed_side_effect_classes": [
+        "READ_ONLY",
+        "SANDBOX_WRITE",
+        "DEMO_DESTRUCTIVE_ACTION"
+      ],
+      "result_trust_level": "TRUSTED_DEMO_TOOL_RESULT",
+      "ui_patch_capable": true
+    },
+    {
+      "tool_name": "flashlight",
+      "tool_category": "DEMO_DEVICE_ACTION",
+      "allowed_side_effect_classes": [
+        "SANDBOX_WRITE"
+      ],
+      "result_trust_level": "TRUSTED_DEMO_TOOL_RESULT",
+      "ui_patch_capable": true
+    },
+    {
+      "tool_name": "weather",
+      "tool_category": "READ_ONLY_EXTERNAL",
+      "allowed_side_effect_classes": [
+        "READ_ONLY"
+      ],
+      "result_trust_level": "EXTERNAL_READ_PROVIDER_RESULT",
+      "ui_patch_capable": false,
+      "optional_display_patch_capable": true
+    },
+    {
+      "tool_name": "webSearch",
+      "tool_category": "EXTERNAL_READ_UNTRUSTED",
+      "allowed_side_effect_classes": [
+        "READ_ONLY"
+      ],
+      "result_trust_level": "UNTRUSTED_WEB_EVIDENCE",
+      "ui_patch_capable": false,
+      "first_pass_mode": "mock_or_synthetic_only"
+    }
+  ],
+  "fixture_checks": [
+    {
+      "fixture": "000-empty-mvp2-session.fixture.json",
+      "purpose": "empty MVP-2 replay safety skeleton"
+    },
+    {
+      "fixture": "001-tool-execution-state.fixture.json",
+      "purpose": "ToolExecutionState deterministic reducer replay for manifest metadata, argument readiness, blocked execution, authorization, progress, UI patch refs, result refs, failure, retry, and cancellation metadata"
+    },
+    {
+      "fixture": "002-tool-executor-skeleton.fixture.json",
+      "purpose": "Demo Tool Executor skeleton replay for read-only sandbox execution and insufficient-provenance blocked execution without backend replay"
+    },
+    {
+      "fixture": "003-tool-ui-state-patch.fixture.json",
+      "purpose": "TOOL_UI_STATE_PATCHED replay reconstructs minimal demo UI/backend state from safe synthetic patch refs without backend execution"
+    },
+    {
+      "fixture": "004-demo-tools.fixture.json",
+      "purpose": "memo, alarm, flashlight, weather, and webSearch demo tool replay with UI patch reconstruction and UNTRUSTED_WEB_EVIDENCE webSearch result"
+    },
+    {
+      "fixture": "005-demo-destructive-confirmation.fixture.json",
+      "purpose": "DEMO_DESTRUCTIVE_ACTION current-plan confirmation gate for sandbox-only memo delete and alarm cancel"
+    },
+    {
+      "fixture": "006-thinker-as-composer.fixture.json",
+      "purpose": "Thinker-as-Composer emits SPOKEN_PLAN_EMITTED from current-plan SemanticCommitment and grounded progress without checks or playback"
+    },
+    {
+      "fixture": "007-composer-checks.fixture.json",
+      "purpose": "CommitmentCoverageCheck and ProgressTruthfulnessCheck pass events gate checked playback without TTS/audio/frontend execution"
+    },
+    {
+      "fixture": "008-tool-manifest-only.fixture.json",
+      "purpose": "Tool manifest loading for memo, alarm, flashlight, weather, and webSearch without execution"
+    },
+    {
+      "fixture": "009-progressive-stale-tool-result.fixture.json",
+      "purpose": "Progressive Tool Executor stale result policy with old-plan ToolResult recorded as stale evidence"
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "MVP2-TOOL-MANIFEST-001",
+      "fixture": "008-tool-manifest-only.fixture.json",
+      "assertion": "manifest loading for all MVP-2 tools without TOOL_EXECUTION_STARTED"
+    },
+    {
+      "scenario_id": "MVP2-TOOL-ARGS-PARTIAL-001",
+      "fixture": "002-tool-executor-skeleton.fixture.json",
+      "assertion": "partial arguments record missing fields and do not execute blocked call"
+    },
+    {
+      "scenario_id": "MVP2-TOOL-BLOCKED-INSUFFICIENT-ARGS-001",
+      "fixture": "002-tool-executor-skeleton.fixture.json",
+      "assertion": "blocked insufficient arguments preserve source event and do not execute"
+    },
+    {
+      "scenario_id": "MVP2-MEMO-SANDBOX-WRITE-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "memo sandbox write emits Tool Executor lifecycle, UI patch, and trusted demo result"
+    },
+    {
+      "scenario_id": "MVP2-ALARM-SANDBOX-SCHEDULE-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "alarm sandbox schedule emits Tool Executor lifecycle, UI patch, and trusted demo result"
+    },
+    {
+      "scenario_id": "MVP2-FLASHLIGHT-DEMO-DEVICE-ACTION-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "flashlight simulated device action mutates only replayed demo UI state"
+    },
+    {
+      "scenario_id": "MVP2-WEATHER-READ-ONLY-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "weather read-only result is structured provider-style evidence without external write"
+    },
+    {
+      "scenario_id": "MVP2-WEBSEARCH-UNTRUSTED-EVIDENCE-001",
+      "fixture": "004-demo-tools.fixture.json",
+      "assertion": "webSearch result is UNTRUSTED_WEB_EVIDENCE and evidence-only"
+    },
+    {
+      "scenario_id": "MVP2-UI-STATE-PATCHED-001",
+      "fixture": "003-tool-ui-state-patch.fixture.json",
+      "assertion": "demo UI/backend replay state is reconstructed only from TOOL_UI_STATE_PATCHED"
+    },
+    {
+      "scenario_id": "MVP2-DEMO-DESTRUCTIVE-CONFIRMATION-001",
+      "fixture": "005-demo-destructive-confirmation.fixture.json",
+      "assertion": "DEMO_DESTRUCTIVE_ACTION execution starts only after current-plan CONFIRMATION_ACCEPTED"
+    },
+    {
+      "scenario_id": "MVP2-STALE-TOOL-RESULT-PROGRESSIVE-001",
+      "fixture": "009-progressive-stale-tool-result.fixture.json",
+      "assertion": "old-plan progressive ToolResult is marked stale and cannot advance current task without adoption"
+    },
+    {
+      "scenario_id": "MVP2-COMPOSER-SPOKEN-PLAN-001",
+      "fixture": "006-thinker-as-composer.fixture.json",
+      "assertion": "Thinker-as-Composer emits unchecked SpokenPlan from current-plan commitment and grounded progress"
+    },
+    {
+      "scenario_id": "MVP2-COMMITMENT-COVERAGE-001",
+      "fixture": "007-composer-checks.fixture.json",
+      "assertion": "CommitmentCoverageCheck passed event gates semantic commitment playback and failed checks cannot authorize playback"
+    },
+    {
+      "scenario_id": "MVP2-PROGRESS-TRUTHFULNESS-001",
+      "fixture": "007-composer-checks.fixture.json",
+      "assertion": "ProgressTruthfulnessCheck passed event gates grounded progress playback and failed checks cannot authorize playback"
+    },
+    {
+      "scenario_id": "MVP2-ACCEPTANCE-SCOPE-SAFETY-001",
+      "fixtures": [
+        "000-empty-mvp2-session.fixture.json",
+        "001-tool-execution-state.fixture.json",
+        "002-tool-executor-skeleton.fixture.json",
+        "003-tool-ui-state-patch.fixture.json",
+        "004-demo-tools.fixture.json",
+        "005-demo-destructive-confirmation.fixture.json",
+        "006-thinker-as-composer.fixture.json",
+        "007-composer-checks.fixture.json",
+        "008-tool-manifest-only.fixture.json",
+        "009-progressive-stale-tool-result.fixture.json"
+      ],
+      "assertion": "all MVP-2 fixtures are deterministic, GITHUB_ALLOWED, synthetic/redacted/minimal, and scope-safe"
+    }
+  ],
+  "historical_planned_fixture_checks_note": "Historical planning-only list retained for context; active acceptance gate uses fixture_checks.",
+  "historical_planned_fixture_checks": [
+    {
+      "fixture": "000-empty-mvp2-session.fixture.json",
+      "purpose": "empty MVP-2 replay safety skeleton"
+    },
+    {
+      "fixture": "001-tool-manifest.fixture.json",
+      "purpose": "tool manifest loading for memo, alarm, flashlight, weather, and webSearch"
+    },
+    {
+      "fixture": "002-tool-arguments-blocked.fixture.json",
+      "purpose": "partial arguments and blocked insufficient arguments"
+    },
+    {
+      "fixture": "003-demo-tools-ui-patch.fixture.json",
+      "purpose": "memo, alarm, flashlight, and weather sandbox tool UI patches"
+    },
+    {
+      "fixture": "004-websearch-untrusted-evidence.fixture.json",
+      "purpose": "mock webSearch result marked UNTRUSTED_WEB_EVIDENCE"
+    },
+    {
+      "fixture": "005-demo-destructive-confirmation.fixture.json",
+      "purpose": "DEMO_DESTRUCTIVE_ACTION current-plan confirmation gate"
+    },
+    {
+      "fixture": "006-progressive-stale-tool-result.fixture.json",
+      "purpose": "progressive Tool Executor stale result policy"
+    },
+    {
+      "fixture": "006-thinker-as-composer.fixture.json",
+      "purpose": "SPOKEN_PLAN_EMITTED from current-plan SemanticCommitment and grounded progress"
+    },
+    {
+      "fixture": "007-composer-checks.fixture.json",
+      "purpose": "SPOKEN_PLAN_EMITTED, coverage check, progress truthfulness, and playback gating"
+    }
+  ],
+  "forbidden_behaviors": [
+    "real_external_write",
+    "real_external_communication",
+    "booking_or_payment",
+    "real_deletion",
+    "real_device_control",
+    "account_or_identity_mutation",
+    "credential_mutation",
+    "direct_frontend_mutation_by_model_text",
+    "websearch_as_instruction",
+    "websearch_direct_backend_action",
+    "composer_fact_rewrite",
+    "tool_executor_direct_slowtask_mutation",
+    "raw_text_confirmation_shortcut",
+    "fake_tool_cancellation_success",
+    "real_model_adapter_runtime_integration"
+  ],
+  "forbidden_source_modules": [
+    "direct_frontend_mutator",
+    "model_text_ui_driver",
+    "real_external_tool_adapter",
+    "external_write_adapter",
+    "external_communication_adapter",
+    "booking_or_payment_adapter",
+    "real_device_adapter",
+    "real_model_adapter",
+    "web_search_instruction_adapter"
+  ],
+  "fixture_safety_flags": {
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false
+  },
+  "required_replay_properties": [
+    "deterministic_replay_does_not_rerun_models_tools_network_clock_or_random",
+    "tool_ui_state_reconstructed_from_tool_ui_state_patched_events",
+    "websearch_content_replayed_as_untrusted_evidence_only",
+    "demo_destructive_action_requires_current_plan_confirmation",
+    "composer_output_requires_coverage_or_truthfulness_check_before_playback",
+    "old_plan_tool_result_requires_stale_evidence_chain_before_current_plan_use"
+  ]
+}

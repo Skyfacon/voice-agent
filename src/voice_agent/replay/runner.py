@@ -4,16 +4,33 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import unquote, urlparse
 
+from voice_agent.adapters.capabilities import OUTPUT_MODES
+from voice_agent.composer.constants import (
+    ALLOWED_PROGRESS_SOURCE_EVENTS,
+    ALLOWED_SOURCE_MODULES_BY_EVENT,
+    ALLOWED_TRUTHFULNESS_LEVELS,
+)
 from voice_agent.events.envelope import EventValidationError, validate_event_envelope
-from voice_agent.events.registry import get_event_definition
+from voice_agent.events.registry import MVP1_EVENT_NAMES, get_event_definition
 from voice_agent.replay.manifest import ReplayManifest, validate_replay_manifest
 from voice_agent.replay.state_digest import state_digest
-from voice_agent.router.router import MVP0_TASK_FOCUS_BY_DECISION
+from voice_agent.router.router import (
+    MVP0_TASK_FOCUS_BY_DECISION,
+    MVP1_PATCH_FOCUS_VALUES,
+    MVP1_ROUTER_DECISIONS,
+    MVP1_TASK_FOCUS_VALUES,
+)
 from voice_agent.state.adapter_health_state import AdapterHealthState
+from voice_agent.state.demo_ui_state import DemoUIState
 from voice_agent.state.interaction_state import InteractionState
 from voice_agent.state.playback_state import PlaybackState
+from voice_agent.state.spoken_plan_check_state import SpokenPlanCheckState
+from voice_agent.state.slowtask_state import SlowTaskState
+from voice_agent.state.spoken_plan_state import SpokenPlanState
 from voice_agent.state.task_focus_state import TaskFocusState
+from voice_agent.state.tool_execution_state import ToolExecutionState
 from voice_agent.state.trace_privacy_state import TracePrivacyState
 
 
@@ -33,6 +50,11 @@ class ReplayResult:
     playback_state: PlaybackState
     adapter_health_state: AdapterHealthState
     trace_privacy_state: TracePrivacyState
+    slowtask_state: SlowTaskState
+    tool_execution_state: ToolExecutionState
+    demo_ui_state: DemoUIState
+    spoken_plan_state: SpokenPlanState
+    spoken_plan_check_state: SpokenPlanCheckState
     diagnostics: dict[str, Any]
     state_digest: dict[str, Any]
     result_status: str
@@ -49,14 +71,61 @@ DATA_PLANE_REF_FIELDS = frozenset(
         "runtime_config_ref",
         "capability_snapshot_ref",
         "failure_summary_ref",
+        "partial_arguments_ref",
+        "resolved_arguments_ref",
+        "provenance_ref",
+        "preview_ref",
+        "progress_ref",
+        "patch_ref",
+        "result_ref",
+        "commitment_ref",
+        "check_result_ref",
     }
 )
+MVP_ALLOWED_TOOL_SIDE_EFFECT_CLASSES = frozenset(
+    {
+        "READ_ONLY",
+        "DRY_RUN",
+        "SANDBOX_WRITE",
+        "DEMO_DESTRUCTIVE_ACTION",
+    }
+)
+COMMITMENT_SYMBOLIC_METADATA_FIELDS = (
+    "immutable_fields",
+    "must_say_fields",
+    "forbidden_rewrite_fields",
+)
+COMMITMENT_CHECK_EVENT_NAMES = frozenset(
+    {
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        "COMMITMENT_COVERAGE_CHECK_FAILED",
+    }
+)
+PROGRESS_CHECK_EVENT_NAMES = frozenset(
+    {
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+        "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+    }
+)
+PASSED_CHECK_EVENT_NAMES = frozenset(
+    {
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+    }
+)
+FAILED_CHECK_EVENT_NAMES = frozenset(
+    {
+        "COMMITMENT_COVERAGE_CHECK_FAILED",
+        "PROGRESS_TRUTHFULNESS_CHECK_FAILED",
+    }
+)
+CHECK_EVENT_NAMES = COMMITMENT_CHECK_EVENT_NAMES | PROGRESS_CHECK_EVENT_NAMES
 
 
 def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     manifest = validate_replay_manifest(_required_mapping(fixture, "replay_manifest"))
     raw_events = _required_sequence(fixture, "events")
-    ordered_events = _validate_and_order_events(raw_events)
+    ordered_events = _validate_and_order_events(raw_events, manifest=manifest)
 
     diagnostics: dict[str, Any] = {
         "ignored_events": [],
@@ -64,20 +133,37 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     }
     interaction_state = InteractionState()
     task_focus_state = TaskFocusState()
+    slowtask_state = SlowTaskState()
     playback_state = PlaybackState()
     adapter_health_state = AdapterHealthState()
     trace_privacy_state = TracePrivacyState.from_manifest(manifest.to_dict())
+    tool_execution_state = ToolExecutionState()
+    demo_ui_state = DemoUIState()
+    spoken_plan_state = SpokenPlanState()
+    spoken_plan_check_state = SpokenPlanCheckState()
 
     for event in ordered_events:
         diagnostics["data_plane_refs"].extend(_unavailable_data_plane_refs(event))
-        handled = [
-            interaction_state.reduce_event(event),
-            task_focus_state.reduce_event(event),
-            playback_state.reduce_event(event),
-            adapter_health_state.reduce_event(event),
-            trace_privacy_state.reduce_event(event),
-        ]
+        try:
+            handled = [
+                interaction_state.reduce_event(event),
+                task_focus_state.reduce_event(event),
+                slowtask_state.reduce_event(event),
+                tool_execution_state.reduce_event(event),
+                demo_ui_state.reduce_event(event),
+                spoken_plan_state.reduce_event(event),
+                spoken_plan_check_state.reduce_event(event),
+                playback_state.reduce_event(event),
+                adapter_health_state.reduce_event(event),
+                trace_privacy_state.reduce_event(event),
+            ]
+        except ValueError as exc:
+            raise ReplayValidationError(str(exc)) from exc
         if not any(handled):
+            if event["event_name"] in MVP1_EVENT_NAMES:
+                raise ReplayValidationError(
+                    f"MVP-1 event requires reducer support before replay can pass: {event['event_name']}"
+                )
             diagnostics["ignored_events"].append(
                 {
                     "event_id": event["event_id"],
@@ -85,6 +171,11 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
                     "reason": "no_slice3_reducer_owner",
                 }
             )
+
+    try:
+        slowtask_state.validate_replay_complete()
+    except ValueError as exc:
+        raise ReplayValidationError(str(exc)) from exc
 
     result_status = "degraded" if manifest.replay_mode == "degraded" else "passed"
     trace_privacy_state.mark_replay_completed(result_status=result_status)
@@ -97,6 +188,11 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
+        slowtask_state=slowtask_state,
+        tool_execution_state=tool_execution_state,
+        demo_ui_state=demo_ui_state,
+        spoken_plan_state=spoken_plan_state,
+        spoken_plan_check_state=spoken_plan_check_state,
     )
     replay_events = _build_replay_marker_events(
         manifest=manifest,
@@ -113,6 +209,11 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         replay_events=replay_events,
         interaction_state=interaction_state,
         task_focus_state=task_focus_state,
+        slowtask_state=slowtask_state,
+        tool_execution_state=tool_execution_state,
+        demo_ui_state=demo_ui_state,
+        spoken_plan_state=spoken_plan_state,
+        spoken_plan_check_state=spoken_plan_check_state,
         playback_state=playback_state,
         adapter_health_state=adapter_health_state,
         trace_privacy_state=trace_privacy_state,
@@ -122,7 +223,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     )
 
 
-def _validate_and_order_events(raw_events: Sequence[object]) -> list[dict[str, Any]]:
+def _validate_and_order_events(raw_events: Sequence[object], *, manifest: ReplayManifest) -> list[dict[str, Any]]:
     validated_events: list[dict[str, Any]] = []
     for raw_event in raw_events:
         if not isinstance(raw_event, Mapping):
@@ -136,9 +237,16 @@ def _validate_and_order_events(raw_events: Sequence[object]) -> list[dict[str, A
     _validate_unique_event_seq(ordered_events)
     _validate_single_session(ordered_events)
     _validate_causal_links_after_sort(ordered_events)
+    _validate_task_event_seq_monotonicity(ordered_events)
     _validate_audio_turn_opened_before_commit(ordered_events)
-    _validate_mvp0_router_decision_scope(ordered_events)
+    _validate_router_decision_scope(ordered_events, manifest=manifest)
+    _validate_task_focus_state_update_causality(ordered_events)
+    _validate_task_focus_active_task_creation_order(ordered_events)
     _validate_post_commit_understanding_and_router_order(ordered_events)
+    _validate_user_patch_evidence_pack_source_links(ordered_events)
+    _validate_tool_execution_gate_links(ordered_events)
+    _validate_spoken_plan_source_links(ordered_events)
+    _validate_composer_check_and_playback_links(ordered_events)
     return ordered_events
 
 
@@ -260,6 +368,21 @@ def _validate_causal_links_after_sort(ordered_events: Sequence[Mapping[str, Any]
         seen_event_ids.add(event_id)
 
 
+def _validate_task_event_seq_monotonicity(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    latest_seq_by_task_id: dict[str, int] = {}
+    for event in ordered_events:
+        if event.get("task_id") in (None, "") or event.get("task_event_seq") in (None, ""):
+            continue
+        task_id = str(event["task_id"])
+        task_event_seq = int(event["task_event_seq"])
+        latest_seq = latest_seq_by_task_id.get(task_id)
+        if latest_seq is not None and task_event_seq <= latest_seq:
+            raise ReplayValidationError(
+                f"{event['event_name']} task_event_seq must increase monotonically per task_id"
+            )
+        latest_seq_by_task_id[task_id] = task_event_seq
+
+
 def _validate_audio_turn_opened_before_commit(ordered_events: Sequence[Mapping[str, Any]]) -> None:
     opened_audio_turns: set[tuple[str, str]] = set()
     for event in ordered_events:
@@ -276,19 +399,93 @@ def _validate_audio_turn_opened_before_commit(ordered_events: Sequence[Mapping[s
                 raise ReplayValidationError(f"{event_name} requires prior matching audio TURN_OPENED")
 
 
-def _validate_mvp0_router_decision_scope(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+def _validate_router_decision_scope(
+    ordered_events: Sequence[Mapping[str, Any]],
+    *,
+    manifest: ReplayManifest,
+) -> None:
     for event in ordered_events:
         if event["event_name"] != "ROUTER_DECISION_EMITTED":
             continue
 
         router_decision = str(event["router_decision"])
-        expected_task_focus = MVP0_TASK_FOCUS_BY_DECISION.get(router_decision)
-        if expected_task_focus is None:
-            raise ReplayValidationError("MVP0 router_decision must be FAST_ONLY or IGNORE")
+        if _is_mvp0_fixture(manifest):
+            expected_task_focus = MVP0_TASK_FOCUS_BY_DECISION.get(router_decision)
+            if expected_task_focus is None:
+                raise ReplayValidationError("MVP0 router_decision must be FAST_ONLY or IGNORE")
+
+            task_focus = event.get("task_focus")
+            if task_focus is not None and str(task_focus) != expected_task_focus:
+                raise ReplayValidationError("MVP0 task_focus must match FAST_ONLY/IGNORE skeleton labels")
+            continue
+
+        if router_decision not in MVP1_ROUTER_DECISIONS:
+            raise ReplayValidationError("MVP-1 router_decision must be a canonical RouterDecision")
 
         task_focus = event.get("task_focus")
-        if task_focus is not None and str(task_focus) != expected_task_focus:
-            raise ReplayValidationError("MVP0 task_focus must match FAST_ONLY/IGNORE skeleton labels")
+        if task_focus in (None, ""):
+            raise ReplayValidationError("MVP-1 router_decision requires task_focus")
+        task_focus = str(task_focus)
+        if task_focus not in MVP1_TASK_FOCUS_VALUES:
+            raise ReplayValidationError("MVP-1 task_focus must be an ADR-006 focus value")
+        if router_decision == "PATCH_ACTIVE_SLOW_TASK":
+            if task_focus not in MVP1_PATCH_FOCUS_VALUES:
+                raise ReplayValidationError("PATCH_ACTIVE_SLOW_TASK requires active-task task_focus")
+            if event.get("active_task_id") in (None, ""):
+                raise ReplayValidationError("PATCH_ACTIVE_SLOW_TASK requires active_task_id")
+
+
+def _is_mvp0_fixture(manifest: ReplayManifest) -> bool:
+    return manifest.source_trace_ref.startswith("fixture://mvp0/")
+
+
+def _validate_task_focus_state_update_causality(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    seen_router_decision_event_ids: set[str] = set()
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+        if event_name == "ROUTER_DECISION_EMITTED":
+            seen_router_decision_event_ids.add(event_id)
+            continue
+        if event_name != "TASK_FOCUS_STATE_UPDATED":
+            continue
+
+        router_decision_event_id = str(event["router_decision_event_id"])
+        if router_decision_event_id not in seen_router_decision_event_ids:
+            raise ReplayValidationError(
+                "TASK_FOCUS_STATE_UPDATED router_decision_event_id must reference an earlier "
+                "ROUTER_DECISION_EMITTED"
+            )
+        if event.get("caused_by_event_id") != router_decision_event_id:
+            raise ReplayValidationError(
+                "TASK_FOCUS_STATE_UPDATED caused_by_event_id must match router_decision_event_id"
+            )
+
+        last_focus_event_id = event.get("last_focus_event_id")
+        if last_focus_event_id not in (None, "", router_decision_event_id):
+            raise ReplayValidationError(
+                "TASK_FOCUS_STATE_UPDATED last_focus_event_id must match router_decision_event_id"
+            )
+
+
+def _validate_task_focus_active_task_creation_order(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    seen_created_task_ids: set[str] = set()
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "SLOWTASK_CREATED":
+            seen_created_task_ids.add(str(event["task_id"]))
+            continue
+        if event_name not in {"ROUTER_DECISION_EMITTED", "TASK_FOCUS_STATE_UPDATED"}:
+            continue
+
+        active_task_id = event.get("active_task_id")
+        if active_task_id in (None, ""):
+            continue
+        if str(active_task_id) not in seen_created_task_ids:
+            raise ReplayValidationError(
+                f"{event_name} active_task_id must not be exposed before "
+                f"corresponding SLOWTASK_CREATED exists: {active_task_id}"
+            )
 
 
 def _is_audio_ingress_event(event: Mapping[str, Any]) -> bool:
@@ -344,6 +541,1079 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED thinker_frame_event_id must reference prior mock Thinker"
                 )
+
+
+def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id = {str(event["event_id"]): event for event in ordered_events}
+    for event in ordered_events:
+        if event["event_name"] != "USER_PATCH_RECEIVED" or "evidence_pack" not in event:
+            continue
+
+        caused_by_event_id = str(event["caused_by_event_id"])
+        router_event = events_by_id.get(caused_by_event_id)
+        if router_event is None or router_event["event_name"] != "ROUTER_DECISION_EMITTED":
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack must be caused by ROUTER_DECISION_EMITTED")
+        if router_event.get("router_decision") != "PATCH_ACTIVE_SLOW_TASK":
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack requires PATCH_ACTIVE_SLOW_TASK router decision")
+        if router_event.get("active_task_id") != event.get("task_id"):
+            raise ReplayValidationError("USER_PATCH_RECEIVED task_id must match router active_task_id")
+        for field in ("turn_id", "utterance_id"):
+            if event.get(field) != router_event.get(field):
+                raise ReplayValidationError(f"USER_PATCH_RECEIVED {field} must match router decision")
+
+        evidence_pack = event["evidence_pack"]
+        if not isinstance(evidence_pack, Mapping):
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack must be an object")
+        authoritative = evidence_pack.get("authoritative_evidence", {})
+        hypothesis = evidence_pack.get("non_authoritative_hypothesis", {})
+        if not isinstance(authoritative, Mapping) or not isinstance(hypothesis, Mapping):
+            raise ReplayValidationError("USER_PATCH_RECEIVED evidence_pack sections must be objects")
+
+        source_event_ids = _string_set(authoritative.get("source_event_ids", ()))
+        _require_source_id_in_refs(
+            router_event,
+            source_id_field="turn_committed_event_id",
+            source_event_ids=source_event_ids,
+        )
+        if authoritative.get("asr_frame_ref") not in (None, "") or authoritative.get("asr_nbest"):
+            _require_source_id_in_refs(
+                router_event,
+                source_id_field="asr_frame_event_id",
+                source_event_ids=source_event_ids,
+            )
+
+        if hypothesis.get("semantic_frame_ref") not in (None, "") or hypothesis.get("semantic_summary_ref") not in (None, ""):
+            provenance = hypothesis.get("provenance", {})
+            if not isinstance(provenance, Mapping):
+                raise ReplayValidationError("USER_PATCH_RECEIVED hypothesis provenance must be an object")
+            semantic_summary_provenance = provenance.get("semantic_summary_ref", {})
+            if not isinstance(semantic_summary_provenance, Mapping):
+                raise ReplayValidationError("USER_PATCH_RECEIVED semantic summary provenance must be an object")
+            expected_thinker_event_id = router_event.get("thinker_frame_event_id")
+            actual_thinker_event_id = semantic_summary_provenance.get("source_event_id")
+            if expected_thinker_event_id in (None, "") or actual_thinker_event_id != expected_thinker_event_id:
+                raise ReplayValidationError(
+                    "USER_PATCH_RECEIVED thinker evidence must match router thinker_frame_event_id"
+                )
+
+
+def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    authorizations_by_call_plan: dict[tuple[str, str, int], dict[str, Mapping[str, Any]]] = {}
+    tool_manifests_by_name: dict[str, Mapping[str, Any]] = {}
+    tool_names_by_call: dict[str, str] = {}
+    accepted_destructive_confirmations_by_id: dict[str, Mapping[str, Any]] = {}
+    started_tool_calls_by_task: dict[tuple[str, str], Mapping[str, Any]] = {}
+    started_tool_calls_by_plan: dict[tuple[str, str, int], Mapping[str, Any]] = {}
+    started_tool_manifests_by_plan: dict[tuple[str, str, int], Mapping[str, Any]] = {}
+    cancel_requests_by_id: dict[str, Mapping[str, Any]] = {}
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+        if event_name == "TOOL_MANIFEST_LOADED":
+            _validate_tool_manifest_side_effect_allowed(event)
+            tool_manifests_by_name[str(event["tool_name"])] = event
+        elif event_name == "CONFIRMATION_ACCEPTED" and event.get("accepted_scope") == "DEMO_DESTRUCTIVE_ACTION":
+            accepted_destructive_confirmations_by_id[event_id] = event
+        elif event_name == "TOOL_CALL_STARTED":
+            tool_names_by_call[str(event["tool_call_id"])] = str(event["tool_name"])
+        elif "tool_call_id" in event and event.get("tool_name") not in (None, ""):
+            tool_names_by_call.setdefault(str(event["tool_call_id"]), str(event["tool_name"]))
+
+        if event_name == "TOOL_EXECUTION_AUTHORIZED":
+            authorizations_by_call_plan.setdefault(_tool_call_plan_key(event), {})[event_id] = event
+        elif event_name == "TOOL_EXECUTION_STARTED":
+            authorization_events = authorizations_by_call_plan.get(_tool_call_plan_key(event), {})
+            authorization_event_id = event.get("authorization_event_id")
+            if authorization_event_id in (None, ""):
+                authorization_event_id = event.get("caused_by_event_id")
+            authorization_event = authorization_events.get(str(authorization_event_id))
+            if authorization_event is None:
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_STARTED requires prior TOOL_EXECUTION_AUTHORIZED for the same "
+                    "tool_call_id, task_id, and plan_version"
+                )
+            manifest = _validate_tool_start_manifest_gate(
+                start_event=event,
+                tool_names_by_call=tool_names_by_call,
+                tool_manifests_by_name=tool_manifests_by_name,
+            )
+            _validate_destructive_tool_confirmation_gate(
+                start_event=event,
+                authorization_event=authorization_event,
+                manifest=manifest,
+                accepted_confirmations_by_id=accepted_destructive_confirmations_by_id,
+                events_by_id=events_by_id,
+            )
+            tool_call_plan_key = _tool_call_plan_key(event)
+            started_tool_calls_by_task[_tool_call_task_key(event)] = event
+            started_tool_calls_by_plan[tool_call_plan_key] = event
+            started_tool_manifests_by_plan[tool_call_plan_key] = manifest
+        elif event_name == "TOOL_UI_STATE_PATCHED":
+            tool_call_plan_key = _tool_call_plan_key(event)
+            started_event = started_tool_calls_by_plan.get(tool_call_plan_key)
+            if started_event is None:
+                raise ReplayValidationError(
+                    "TOOL_UI_STATE_PATCHED requires prior TOOL_EXECUTION_STARTED for the same "
+                    "tool_call_id, task_id, and plan_version"
+                )
+            if event.get("idempotency_key") != started_event.get("idempotency_key"):
+                raise ReplayValidationError("TOOL_UI_STATE_PATCHED idempotency_key must match TOOL_EXECUTION_STARTED")
+            patch_manifest = started_tool_manifests_by_plan.get(tool_call_plan_key)
+            if patch_manifest is None:
+                raise ReplayValidationError(
+                    "TOOL_UI_STATE_PATCHED requires manifest bound to prior TOOL_EXECUTION_STARTED"
+                )
+            patch_manifest = _validate_tool_ui_patch_manifest_gate(
+                patch_event=event,
+                manifest=patch_manifest,
+            )
+            _validate_ui_patch_namespace_matches_manifest(
+                patch_event=event,
+                manifest=patch_manifest,
+            )
+        elif event_name == "TOOL_EXECUTION_CANCEL_REQUESTED":
+            caused_by_event = events_by_id.get(str(event["caused_by_event_id"]))
+            if caused_by_event is None or caused_by_event["event_name"] not in {
+                "PLAN_VERSION_ADVANCED",
+                "SLOWTASK_CANCEL_REQUESTED",
+                "SLOWTASK_CANCELLED",
+            }:
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_CANCEL_REQUESTED requires prior SlowTask plan advance or cancel decision"
+                )
+            if caused_by_event.get("task_id") != event.get("task_id"):
+                raise ReplayValidationError("TOOL_EXECUTION_CANCEL_REQUESTED task_id must match SlowTask decision")
+            if caused_by_event.get("plan_version") != event.get("plan_version"):
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_CANCEL_REQUESTED plan_version must match SlowTask decision"
+                )
+            if int(event["task_event_seq"]) <= int(caused_by_event["task_event_seq"]):
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_CANCEL_REQUESTED task_event_seq must follow SlowTask decision"
+                )
+            if _tool_call_task_key(event) not in started_tool_calls_by_task:
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_CANCEL_REQUESTED requires prior TOOL_EXECUTION_STARTED for the same "
+                    "tool_call_id and task_id"
+                )
+            cancel_requests_by_id[event_id] = event
+        elif event_name == "TOOL_EXECUTION_CANCELLED":
+            cancel_request_event_id = str(event["cancel_request_event_id"])
+            cancel_request_event = cancel_requests_by_id.get(cancel_request_event_id)
+            if cancel_request_event is None:
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_CANCELLED requires prior TOOL_EXECUTION_CANCEL_REQUESTED"
+                )
+            if event.get("caused_by_event_id") != cancel_request_event_id:
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_CANCELLED caused_by_event_id must match cancel_request_event_id"
+                )
+            if _tool_call_plan_key(event) != _tool_call_plan_key(cancel_request_event):
+                raise ReplayValidationError(
+                    "TOOL_EXECUTION_CANCELLED binding must match TOOL_EXECUTION_CANCEL_REQUESTED"
+                )
+        events_by_id[event_id] = event
+
+
+def _validate_spoken_plan_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    latest_plan_version_by_task_id: dict[str, int] = {}
+    failed_check_event_names_by_spoken_plan_id = _failed_check_event_names_by_spoken_plan_id(ordered_events)
+    passed_check_event_names_by_spoken_plan_id = _passed_check_event_names_by_spoken_plan_id(ordered_events)
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "SPOKEN_PLAN_EMITTED":
+            _validate_spoken_plan_event(
+                event,
+                events_by_id=events_by_id,
+                latest_plan_version_by_task_id=latest_plan_version_by_task_id,
+                failed_check_event_names_by_spoken_plan_id=failed_check_event_names_by_spoken_plan_id,
+                passed_check_event_names_by_spoken_plan_id=passed_check_event_names_by_spoken_plan_id,
+            )
+        _record_latest_task_plan(event, latest_plan_version_by_task_id)
+        events_by_id[str(event["event_id"])] = event
+
+
+def _failed_check_event_names_by_spoken_plan_id(
+    ordered_events: Sequence[Mapping[str, Any]],
+) -> dict[str, frozenset[str]]:
+    return _check_event_names_by_spoken_plan_id(ordered_events, event_names=FAILED_CHECK_EVENT_NAMES)
+
+
+def _passed_check_event_names_by_spoken_plan_id(
+    ordered_events: Sequence[Mapping[str, Any]],
+) -> dict[str, frozenset[str]]:
+    return _check_event_names_by_spoken_plan_id(ordered_events, event_names=PASSED_CHECK_EVENT_NAMES)
+
+
+def _check_event_names_by_spoken_plan_id(
+    ordered_events: Sequence[Mapping[str, Any]],
+    *,
+    event_names: frozenset[str],
+) -> dict[str, frozenset[str]]:
+    names_by_spoken_plan_id: dict[str, set[str]] = {}
+    for event in ordered_events:
+        if event["event_name"] not in event_names:
+            continue
+        spoken_plan_id = event.get("spoken_plan_id")
+        if spoken_plan_id in (None, ""):
+            continue
+        names_by_spoken_plan_id.setdefault(str(spoken_plan_id), set()).add(str(event["event_name"]))
+    return {
+        spoken_plan_id: frozenset(event_names)
+        for spoken_plan_id, event_names in names_by_spoken_plan_id.items()
+    }
+
+
+def _validate_composer_check_and_playback_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    spoken_plans_by_id: dict[str, Mapping[str, Any]] = {}
+    passed_checks_by_id: dict[str, Mapping[str, Any]] = {}
+    failed_checks_by_id: dict[str, Mapping[str, Any]] = {}
+    latest_plan_version_by_task_id: dict[str, int] = {}
+    spoken_plan_event_ids: set[str] = set()
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "SPOKEN_PLAN_EMITTED":
+            spoken_plans_by_id[str(event["spoken_plan_id"])] = event
+            spoken_plan_event_ids.add(str(event["event_id"]))
+            _record_latest_task_plan(event, latest_plan_version_by_task_id)
+            continue
+
+        if event_name in CHECK_EVENT_NAMES:
+            _validate_composer_check_event(
+                event,
+                spoken_plans_by_id=spoken_plans_by_id,
+                latest_plan_version_by_task_id=latest_plan_version_by_task_id,
+            )
+            if event_name in PASSED_CHECK_EVENT_NAMES:
+                passed_checks_by_id[str(event["event_id"])] = event
+            else:
+                failed_checks_by_id[str(event["event_id"])] = event
+            _record_latest_task_plan(event, latest_plan_version_by_task_id)
+            continue
+
+        if event_name == "PLAYBACK_SPAN_STARTED":
+            _validate_checked_playback_event(
+                event,
+                spoken_plans_by_id=spoken_plans_by_id,
+                passed_checks_by_id=passed_checks_by_id,
+                failed_checks_by_id=failed_checks_by_id,
+                latest_plan_version_by_task_id=latest_plan_version_by_task_id,
+                spoken_plan_event_ids=spoken_plan_event_ids,
+            )
+        _record_latest_task_plan(event, latest_plan_version_by_task_id)
+
+
+def _validate_composer_check_event(
+    event: Mapping[str, Any],
+    *,
+    spoken_plans_by_id: Mapping[str, Mapping[str, Any]],
+    latest_plan_version_by_task_id: Mapping[str, int],
+) -> None:
+    if event.get("output_mode") not in OUTPUT_MODES:
+        raise ReplayValidationError("checker event output_mode must be real, mock, fallback, or degraded")
+
+    spoken_plan_id = str(event["spoken_plan_id"])
+    spoken_plan = spoken_plans_by_id.get(spoken_plan_id)
+    if spoken_plan is None:
+        raise ReplayValidationError("checker event source spoken plan must exist and precede check")
+    if event.get("caused_by_event_id") != spoken_plan.get("event_id"):
+        raise ReplayValidationError("checker event caused_by_event_id must match source spoken plan")
+    if event.get("task_id") != spoken_plan.get("task_id"):
+        raise ReplayValidationError("checker event task_id must match source spoken plan")
+    if event.get("plan_version") != spoken_plan.get("plan_version"):
+        raise ReplayValidationError("checker event plan_version must match source spoken plan")
+
+    latest_plan_version = latest_plan_version_by_task_id.get(str(spoken_plan["task_id"]))
+    if latest_plan_version is not None and int(spoken_plan["plan_version"]) != latest_plan_version:
+        raise ReplayValidationError("stale SpokenPlan cannot be checked after plan advance")
+
+    event_name = str(event["event_name"])
+    if event_name in COMMITMENT_CHECK_EVENT_NAMES:
+        _validate_commitment_check_event(event, spoken_plan=spoken_plan)
+    elif event_name in PROGRESS_CHECK_EVENT_NAMES:
+        _validate_progress_check_event(event, spoken_plan=spoken_plan)
+
+
+def _validate_commitment_check_event(
+    event: Mapping[str, Any],
+    *,
+    spoken_plan: Mapping[str, Any],
+) -> None:
+    if event.get("source_module") != "coverage_checker":
+        raise ReplayValidationError("commitment coverage check source_module must be coverage_checker")
+    if spoken_plan.get("source") != "semantic_commitment":
+        raise ReplayValidationError("coverage check requires semantic_commitment SpokenPlan source")
+    expected_source_commitment_id = _check_source_commitment_id(spoken_plan)
+    if event.get("source_commitment_id") != expected_source_commitment_id:
+        raise ReplayValidationError("coverage check source_commitment_id must match SpokenPlan")
+    if event["event_name"] == "COMMITMENT_COVERAGE_CHECK_PASSED":
+        if not _string_list_for_replay(event.get("checked_fields")):
+            raise ReplayValidationError("COMMITMENT_COVERAGE_CHECK_PASSED requires checked_fields")
+        if event.get("check_result_ref") in (None, ""):
+            raise ReplayValidationError("COMMITMENT_COVERAGE_CHECK_PASSED requires check_result_ref")
+    else:
+        if not _string_list_for_replay(event.get("failure_reasons")):
+            raise ReplayValidationError("COMMITMENT_COVERAGE_CHECK_FAILED requires failure_reasons")
+
+
+def _check_source_commitment_id(spoken_plan: Mapping[str, Any]) -> str:
+    source_commitment_id = _optional_string_for_replay(spoken_plan.get("source_commitment_id"))
+    if source_commitment_id is not None:
+        return source_commitment_id
+    return "missing_source_commitment_id"
+
+
+def _validate_progress_check_event(
+    event: Mapping[str, Any],
+    *,
+    spoken_plan: Mapping[str, Any],
+) -> None:
+    if event.get("source_module") != "truthfulness_checker":
+        raise ReplayValidationError("progress truthfulness check source_module must be truthfulness_checker")
+    if spoken_plan.get("source") != "grounded_progress":
+        raise ReplayValidationError("truthfulness check requires grounded_progress SpokenPlan source")
+
+    event_source_progress_ids = _string_list_for_replay(event.get("source_progress_event_ids"))
+    spoken_source_progress_ids = _string_list_for_replay(spoken_plan.get("source_progress_event_ids"))
+    if event_source_progress_ids != spoken_source_progress_ids:
+        raise ReplayValidationError("truthfulness check source_progress_event_ids must match SpokenPlan")
+
+    event_truthfulness_level = _optional_string_for_replay(event.get("truthfulness_level"))
+    spoken_truthfulness_level = _optional_string_for_replay(spoken_plan.get("truthfulness_level"))
+    if event_truthfulness_level != spoken_truthfulness_level:
+        raise ReplayValidationError("truthfulness check truthfulness_level must match SpokenPlan")
+    if event["event_name"] == "PROGRESS_TRUTHFULNESS_CHECK_PASSED":
+        if event_truthfulness_level not in ALLOWED_TRUTHFULNESS_LEVELS:
+            raise ReplayValidationError("truthfulness check truthfulness_level must be STATE_GROUNDED or STYLE_ONLY_ACK")
+        if event.get("check_result_ref") in (None, ""):
+            raise ReplayValidationError("PROGRESS_TRUTHFULNESS_CHECK_PASSED requires check_result_ref")
+    else:
+        if not _string_list_for_replay(event.get("failure_reasons")):
+            raise ReplayValidationError("PROGRESS_TRUTHFULNESS_CHECK_FAILED requires failure_reasons")
+
+
+def _validate_checked_playback_event(
+    event: Mapping[str, Any],
+    *,
+    spoken_plans_by_id: Mapping[str, Mapping[str, Any]],
+    passed_checks_by_id: Mapping[str, Mapping[str, Any]],
+    failed_checks_by_id: Mapping[str, Mapping[str, Any]],
+    latest_plan_version_by_task_id: Mapping[str, int],
+    spoken_plan_event_ids: set[str],
+) -> None:
+    spoken_plan_id = event.get("spoken_plan_id")
+    approved_check_event_id = event.get("approved_check_event_id")
+    if spoken_plan_id in (None, ""):
+        if approved_check_event_id not in (None, ""):
+            raise ReplayValidationError("PLAYBACK_SPAN_STARTED approved_check_event_id requires spoken_plan_id")
+        caused_by_event_id = event.get("caused_by_event_id")
+        if (
+            caused_by_event_id in spoken_plan_event_ids
+            or caused_by_event_id in passed_checks_by_id
+            or caused_by_event_id in failed_checks_by_id
+        ):
+            raise ReplayValidationError(
+                "PLAYBACK_SPAN_STARTED requires spoken_plan_id and approved_check_event_id for SpokenPlan playback"
+            )
+        return
+
+    spoken_plan_id = str(spoken_plan_id)
+    spoken_plan = spoken_plans_by_id.get(spoken_plan_id)
+    if spoken_plan is None:
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED spoken_plan_id must reference a prior SpokenPlan")
+    latest_plan_version = latest_plan_version_by_task_id.get(str(spoken_plan["task_id"]))
+    if latest_plan_version is not None and int(spoken_plan["plan_version"]) != latest_plan_version:
+        raise ReplayValidationError("stale SpokenPlan cannot authorize playback after plan advance")
+    if approved_check_event_id in (None, ""):
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED requires approved_check_event_id for SpokenPlan playback")
+    approved_check_event_id = str(approved_check_event_id)
+    if approved_check_event_id in failed_checks_by_id:
+        raise ReplayValidationError("failed checker event cannot authorize playback")
+
+    approved_check = passed_checks_by_id.get(approved_check_event_id)
+    if approved_check is None:
+        raise ReplayValidationError("approved_check_event_id must reference a passed checker event")
+    if event.get("caused_by_event_id") != approved_check_event_id:
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED caused_by_event_id must match approved_check_event_id")
+    if approved_check.get("spoken_plan_id") != spoken_plan_id:
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED spoken_plan_id must match approved checker event")
+
+    spoken_source = spoken_plan.get("source")
+    approved_event_name = approved_check.get("event_name")
+    if spoken_source == "semantic_commitment" and approved_event_name != "COMMITMENT_COVERAGE_CHECK_PASSED":
+        raise ReplayValidationError("commitment-derived playback requires COMMITMENT_COVERAGE_CHECK_PASSED")
+    if spoken_source == "grounded_progress" and approved_event_name != "PROGRESS_TRUTHFULNESS_CHECK_PASSED":
+        raise ReplayValidationError("progress-derived playback requires PROGRESS_TRUTHFULNESS_CHECK_PASSED")
+
+
+def _validate_spoken_plan_event(
+    event: Mapping[str, Any],
+    *,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+    latest_plan_version_by_task_id: Mapping[str, int],
+    failed_check_event_names_by_spoken_plan_id: Mapping[str, frozenset[str]],
+    passed_check_event_names_by_spoken_plan_id: Mapping[str, frozenset[str]],
+) -> None:
+    if event.get("source_module") != "composer":
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED source_module must be composer")
+    if event.get("output_mode") not in OUTPUT_MODES:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED output_mode must be real, mock, fallback, or degraded")
+
+    source_event_ids = _string_list_for_replay(event.get("source_events"))
+    if not source_event_ids:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED source_events are required")
+    source_events = []
+    for source_event_id in source_event_ids:
+        source_event = events_by_id.get(source_event_id)
+        if source_event is None:
+            raise ReplayValidationError("SPOKEN_PLAN_EMITTED source event must exist and precede spoken plan")
+        source_events.append(source_event)
+
+    if event.get("caused_by_event_id") not in source_event_ids:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED caused_by_event_id must reference a source event")
+
+    task_id = str(event["task_id"])
+    plan_version = int(event["plan_version"])
+    latest_plan_version = latest_plan_version_by_task_id.get(task_id)
+    if latest_plan_version is not None and plan_version != latest_plan_version:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED plan_version must match current source plan_version")
+
+    for source_event in source_events:
+        if source_event.get("task_id") != task_id:
+            raise ReplayValidationError("SPOKEN_PLAN_EMITTED task_id must match source event task_id")
+        if source_event.get("plan_version") != plan_version:
+            raise ReplayValidationError("SPOKEN_PLAN_EMITTED plan_version must match source event plan_version")
+
+    source = event.get("source")
+    spoken_plan_id = str(event["spoken_plan_id"])
+    failure_check_names = failed_check_event_names_by_spoken_plan_id.get(spoken_plan_id, frozenset())
+    passed_check_names = passed_check_event_names_by_spoken_plan_id.get(spoken_plan_id, frozenset())
+    if source == "semantic_commitment":
+        _validate_commitment_spoken_plan(
+            event,
+            source_events,
+            allow_check_failure=(
+                "COMMITMENT_COVERAGE_CHECK_FAILED" in failure_check_names
+                and "COMMITMENT_COVERAGE_CHECK_PASSED" not in passed_check_names
+            ),
+        )
+    elif source == "grounded_progress":
+        _validate_progress_spoken_plan(
+            event,
+            source_event_ids,
+            source_events,
+            allow_check_failure=(
+                "PROGRESS_TRUTHFULNESS_CHECK_FAILED" in failure_check_names
+                and "PROGRESS_TRUTHFULNESS_CHECK_PASSED" not in passed_check_names
+            ),
+        )
+    else:
+        raise ReplayValidationError("SPOKEN_PLAN_EMITTED source must be semantic_commitment or grounded_progress")
+
+
+def _validate_commitment_spoken_plan(
+    event: Mapping[str, Any],
+    source_events: Sequence[Mapping[str, Any]],
+    *,
+    allow_check_failure: bool,
+) -> None:
+    if len(source_events) != 1 or source_events[0].get("event_name") != "SEMANTIC_COMMITMENT_EMITTED":
+        raise ReplayValidationError("commitment-derived SPOKEN_PLAN_EMITTED requires source commitment event")
+    _validate_spoken_plan_source_event_module(source_events[0])
+    source_commitment_id = event.get("source_commitment_id")
+    violations: list[str] = []
+    if source_commitment_id in (None, ""):
+        violations.append("commitment-derived SPOKEN_PLAN_EMITTED requires source_commitment_id")
+    elif source_commitment_id != source_events[0].get("commitment_id"):
+        violations.append("SPOKEN_PLAN_EMITTED source_commitment_id must match commitment_id")
+    if event.get("coverage_check_required") is not True:
+        violations.append("commitment-derived SPOKEN_PLAN_EMITTED requires coverage_check_required=true")
+    if event.get("truthfulness_check_required") is not False:
+        violations.append("commitment-derived SPOKEN_PLAN_EMITTED must not require progress truthfulness")
+    if _string_list_for_replay(event.get("source_progress_event_ids")):
+        violations.append("commitment-derived SPOKEN_PLAN_EMITTED must not claim progress source ids")
+    violations.extend(_commitment_symbolic_metadata_violations(event, source_events[0]))
+    if violations and not allow_check_failure:
+        raise ReplayValidationError(violations[0])
+
+
+def _commitment_symbolic_metadata_violations(
+    event: Mapping[str, Any],
+    source_commitment: Mapping[str, Any],
+) -> list[str]:
+    violations: list[str] = []
+    for field in COMMITMENT_SYMBOLIC_METADATA_FIELDS:
+        spoken_values = _string_list_for_replay(event.get(field))
+        commitment_values = _string_list_for_replay(source_commitment.get(field))
+        if spoken_values != commitment_values:
+            violations.append(
+                f"commitment-derived SPOKEN_PLAN_EMITTED {field} must match source commitment"
+            )
+    return violations
+
+
+def _validate_progress_spoken_plan(
+    event: Mapping[str, Any],
+    source_event_ids: Sequence[str],
+    source_events: Sequence[Mapping[str, Any]],
+    *,
+    allow_check_failure: bool,
+) -> None:
+    violations: list[str] = []
+    source_progress_event_ids = _string_list_for_replay(event.get("source_progress_event_ids"))
+    if not source_progress_event_ids:
+        violations.append("progress-derived SPOKEN_PLAN_EMITTED requires source_progress_event_ids")
+    if list(source_progress_event_ids) != list(source_event_ids):
+        violations.append("source_progress_event_ids must match SPOKEN_PLAN source_events")
+    unsupported_sources = sorted(
+        str(source_event["event_name"])
+        for source_event in source_events
+        if source_event["event_name"] not in ALLOWED_PROGRESS_SOURCE_EVENTS
+    )
+    if unsupported_sources:
+        violations.append(f"unsupported progress source event for SPOKEN_PLAN_EMITTED: {unsupported_sources}")
+    for source_event in source_events:
+        try:
+            _validate_spoken_plan_source_event_module(source_event)
+        except ReplayValidationError as exc:
+            violations.append(str(exc))
+    if event.get("truthfulness_check_required") is not True:
+        violations.append("progress-derived SPOKEN_PLAN_EMITTED requires truthfulness_check_required=true")
+    if event.get("coverage_check_required") is not False:
+        violations.append("progress-derived SPOKEN_PLAN_EMITTED must not require commitment coverage")
+    truthfulness_level = event.get("truthfulness_level")
+    if truthfulness_level not in ALLOWED_TRUTHFULNESS_LEVELS:
+        violations.append("truthfulness_level must be STATE_GROUNDED or STYLE_ONLY_ACK")
+    if event.get("source_commitment_id") not in (None, ""):
+        violations.append("progress-derived SPOKEN_PLAN_EMITTED must not claim source_commitment_id")
+    if violations and not allow_check_failure:
+        raise ReplayValidationError(violations[0])
+
+
+def _validate_spoken_plan_source_event_module(source_event: Mapping[str, Any]) -> None:
+    event_name = str(source_event["event_name"])
+    source_module = source_event.get("source_module")
+    allowed_source_modules = ALLOWED_SOURCE_MODULES_BY_EVENT.get(event_name)
+    if allowed_source_modules is None:
+        raise ReplayValidationError(f"SPOKEN_PLAN source event {event_name} has no canonical source_module owner")
+    if source_module not in allowed_source_modules:
+        allowed = ", ".join(sorted(allowed_source_modules))
+        raise ReplayValidationError(
+            f"SPOKEN_PLAN source event {event_name} source_module must be {allowed}"
+        )
+
+
+def _record_latest_task_plan(
+    event: Mapping[str, Any],
+    latest_plan_version_by_task_id: dict[str, int],
+) -> None:
+    task_id = event.get("task_id")
+    plan_version = event.get("plan_version")
+    if task_id in (None, "") or not isinstance(plan_version, int) or isinstance(plan_version, bool):
+        return
+    previous_plan_version = latest_plan_version_by_task_id.get(str(task_id))
+    if previous_plan_version is None or plan_version > previous_plan_version:
+        latest_plan_version_by_task_id[str(task_id)] = plan_version
+
+
+def _validate_tool_start_manifest_gate(
+    *,
+    start_event: Mapping[str, Any],
+    tool_names_by_call: Mapping[str, str],
+    tool_manifests_by_name: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    tool_name = _tool_name_for_event(start_event, tool_names_by_call)
+    if tool_name is None and len(tool_manifests_by_name) == 1:
+        manifest = next(iter(tool_manifests_by_name.values()))
+    else:
+        manifest = tool_manifests_by_name.get(tool_name) if tool_name is not None else None
+    if manifest is None:
+        raise ReplayValidationError(
+            "TOOL_EXECUTION_STARTED requires recorded TOOL_MANIFEST_LOADED for the same tool_call_id"
+        )
+    _validate_tool_manifest_side_effect_allowed(manifest)
+    return manifest
+
+
+def _validate_tool_ui_patch_manifest_gate(
+    *,
+    patch_event: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    tool_name = patch_event.get("tool_name")
+    if tool_name not in (None, "") and str(tool_name) != str(manifest["tool_name"]):
+        raise ReplayValidationError("TOOL_UI_STATE_PATCHED tool_name must match started tool manifest")
+    _validate_tool_manifest_side_effect_allowed(manifest)
+    if manifest.get("ui_patch_capable") is not True:
+        raise ReplayValidationError("TOOL_UI_STATE_PATCHED requires ui_patch_capable manifest")
+    return manifest
+
+
+def _validate_ui_patch_namespace_matches_manifest(
+    *,
+    patch_event: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> None:
+    manifest_namespace = manifest.get("sandbox_state_namespace")
+    if manifest_namespace in (None, ""):
+        return
+    patch_namespace = _patch_ref_namespace(str(patch_event["patch_ref"]))
+    if patch_namespace is None:
+        raise ReplayValidationError(
+            "TOOL_UI_STATE_PATCHED patch_ref namespace must be parseable when manifest declares sandbox_state_namespace"
+        )
+    if patch_namespace != str(manifest_namespace):
+        raise ReplayValidationError("TOOL_UI_STATE_PATCHED patch_ref namespace must match manifest namespace")
+
+
+def _patch_ref_namespace(patch_ref: str) -> str | None:
+    parsed = urlparse(patch_ref)
+    if parsed.scheme != "patch" or parsed.netloc != "synthetic":
+        return None
+    path_parts = tuple(unquote(part) for part in parsed.path.split("/") if part)
+    if len(path_parts) >= 4 and path_parts[0] == "demo_backend":
+        return path_parts[1]
+    if len(path_parts) >= 2:
+        return path_parts[-2]
+    return None
+
+
+def _validate_tool_manifest_side_effect_allowed(manifest: Mapping[str, Any]) -> None:
+    side_effect_class = str(manifest["side_effect_class"])
+    if side_effect_class not in MVP_ALLOWED_TOOL_SIDE_EFFECT_CLASSES:
+        raise ReplayValidationError(
+            f"TOOL_MANIFEST_LOADED side_effect_class is not allowed in MVP replay: {side_effect_class}"
+        )
+
+
+def _validate_destructive_tool_confirmation_gate(
+    *,
+    start_event: Mapping[str, Any],
+    authorization_event: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    accepted_confirmations_by_id: Mapping[str, Mapping[str, Any]],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if manifest.get("side_effect_class") != "DEMO_DESTRUCTIVE_ACTION":
+        return
+    confirmation_event = accepted_confirmations_by_id.get(str(authorization_event.get("caused_by_event_id")))
+    confirmation_id = authorization_event.get("confirmation_id")
+    if (
+        confirmation_event is None
+        or authorization_event.get("authorization_basis") != "current_plan_confirmation_acceptance"
+        or confirmation_id in (None, "")
+        or confirmation_event.get("confirmation_id") != confirmation_id
+        or confirmation_event.get("task_id") != start_event.get("task_id")
+        or confirmation_event.get("plan_version") != start_event.get("plan_version")
+    ):
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION requires current-plan CONFIRMATION_ACCEPTED before TOOL_EXECUTION_STARTED"
+        )
+    received = events_by_id.get(str(confirmation_event.get("caused_by_event_id")))
+    interpreted = events_by_id.get(str(received.get("caused_by_event_id"))) if received else None
+    patch_received = events_by_id.get(str(interpreted.get("caused_by_event_id"))) if interpreted else None
+    required = _matching_destructive_confirmation_required(
+        events_by_id.values(),
+        accepted=confirmation_event,
+        start=start_event,
+    )
+    waiting = _matching_destructive_waiting_for_confirmation(
+        events_by_id.values(),
+        required=required,
+        start=start_event,
+        before_event=patch_received,
+    )
+    if not _matches_destructive_confirmation_chain(
+        required=required,
+        waiting=waiting,
+        patch_received=patch_received,
+        interpreted=interpreted,
+        received=received,
+        accepted=confirmation_event,
+        authorization=authorization_event,
+        start=start_event,
+        events_by_id=events_by_id,
+    ):
+        raise ReplayValidationError("DEMO_DESTRUCTIVE_ACTION confirmation causal chain is broken")
+    _validate_destructive_confirmation_required_for_event(
+        required=required,
+        start_event=start_event,
+        events_by_id=events_by_id,
+    )
+
+
+def _matching_destructive_confirmation_required(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    accepted: Mapping[str, Any],
+    start: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    matching_required: Mapping[str, Any] | None = None
+    for event in events:
+        if (
+            _event_matches(
+                event,
+                event_name="CONFIRMATION_REQUIRED",
+                task_id=start.get("task_id"),
+                plan_version=start.get("plan_version"),
+                confirmation_id=accepted.get("confirmation_id"),
+                confirmation_scope="DEMO_DESTRUCTIVE_ACTION",
+            )
+            and _event_seq_before(event, accepted)
+        ):
+            matching_required = event
+    return matching_required
+
+
+def _matching_destructive_waiting_for_confirmation(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    required: Mapping[str, Any] | None,
+    start: Mapping[str, Any],
+    before_event: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if required is None or before_event is None:
+        return None
+    matching_waiting: Mapping[str, Any] | None = None
+    for event in events:
+        if (
+            _event_matches(
+                event,
+                event_name="WAITING_FOR_USER_CONFIRMATION",
+                task_id=start.get("task_id"),
+                plan_version=start.get("plan_version"),
+                confirmation_id=required.get("confirmation_id"),
+            )
+            and event.get("caused_by_event_id") == required.get("event_id")
+            and _event_seq_strictly_increases(required, event)
+            and _event_seq_before(event, before_event)
+        ):
+            matching_waiting = event
+    return matching_waiting
+
+
+def _matches_destructive_confirmation_chain(
+    *,
+    required: Mapping[str, Any] | None,
+    waiting: Mapping[str, Any] | None,
+    patch_received: Mapping[str, Any] | None,
+    interpreted: Mapping[str, Any] | None,
+    received: Mapping[str, Any] | None,
+    accepted: Mapping[str, Any],
+    authorization: Mapping[str, Any],
+    start: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    patch_id = received.get("patch_id") if received is not None else None
+    confirmation_id = accepted.get("confirmation_id")
+    chain = (required, waiting, patch_received, interpreted, received, accepted, authorization, start)
+    return bool(
+        _event_matches(
+            required,
+            event_name="CONFIRMATION_REQUIRED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+            confirmation_scope="DEMO_DESTRUCTIVE_ACTION",
+        )
+        and _event_matches(
+            waiting,
+            event_name="WAITING_FOR_USER_CONFIRMATION",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+        )
+        and _event_matches(
+            patch_received,
+            event_name="USER_PATCH_RECEIVED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            patch_id=patch_id,
+            observed_plan_version=start.get("plan_version"),
+        )
+        and _event_matches(
+            interpreted,
+            event_name="USER_PATCH_INTERPRETED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            patch_id=patch_id,
+            observed_plan_version=start.get("plan_version"),
+            interpreted_against_plan_version=start.get("plan_version"),
+            interpretation_type="confirmation",
+        )
+        and _event_matches(
+            received,
+            event_name="USER_CONFIRMATION_RECEIVED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+            patch_id=patch_id,
+            confirmation_signal="accepted",
+        )
+        and _event_matches(
+            accepted,
+            event_name="CONFIRMATION_ACCEPTED",
+            task_id=start.get("task_id"),
+            plan_version=start.get("plan_version"),
+            confirmation_id=confirmation_id,
+            accepted_scope="DEMO_DESTRUCTIVE_ACTION",
+        )
+        and _causal_chain_matches(required, waiting)
+        and _patch_received_is_caused_by_confirmation_path(
+            patch_received,
+            waiting=waiting,
+            start=start,
+            events_by_id=events_by_id,
+        )
+        and _causal_chain_matches(patch_received, interpreted, received, accepted, authorization, start)
+        and _event_seq_strictly_increases(*chain)
+    )
+
+
+def _patch_received_is_caused_by_confirmation_path(
+    patch_received: Mapping[str, Any] | None,
+    *,
+    waiting: Mapping[str, Any] | None,
+    start: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if patch_received is None or waiting is None:
+        return False
+    caused_by_event_id = patch_received.get("caused_by_event_id")
+    router_event = events_by_id.get(str(caused_by_event_id))
+    return bool(
+        _event_matches(
+            router_event,
+            event_name="ROUTER_DECISION_EMITTED",
+            router_decision="PATCH_ACTIVE_SLOW_TASK",
+            task_focus="ACTIVE_TASK_PATCH",
+            active_task_id=start.get("task_id"),
+        )
+        and _confirmation_router_has_turn_evidence(
+            router_event,
+            waiting=waiting,
+            events_by_id=events_by_id,
+        )
+        and _event_seq_strictly_increases(waiting, router_event, patch_received)
+    )
+
+
+def _validate_destructive_confirmation_required_for_event(
+    *,
+    required: Mapping[str, Any] | None,
+    start_event: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if required is None:
+        raise ReplayValidationError("DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id is missing")
+    required_for_event_id = required.get("required_for_event_id")
+    if required_for_event_id in (None, "") or required.get("caused_by_event_id") != required_for_event_id:
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must match caused_by_event_id"
+        )
+    required_for_event = events_by_id.get(str(required_for_event_id))
+    if (
+        required_for_event is None
+        or required_for_event.get("event_name") != "TOOL_PREVIEW_AVAILABLE"
+        or required_for_event.get("task_id") != start_event.get("task_id")
+        or required_for_event.get("plan_version") != start_event.get("plan_version")
+        or required_for_event.get("tool_call_id") != start_event.get("tool_call_id")
+        or required_for_event.get("tool_name") != start_event.get("tool_name")
+    ):
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the pending tool request"
+        )
+    preview_arguments = events_by_id.get(str(required_for_event.get("caused_by_event_id")))
+    if not _matches_tool_arguments_ready(
+        preview_arguments,
+        required_for_event=required_for_event,
+    ):
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the previewed arguments"
+        )
+    preview_fingerprint = preview_arguments.get("argument_fingerprint")
+    if (
+        preview_fingerprint in (None, "")
+        or required_for_event.get("argument_fingerprint") != preview_fingerprint
+    ):
+        raise ReplayValidationError(
+            "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the previewed arguments"
+        )
+    for event in events_by_id.values():
+        if (
+            event.get("event_name") == "TOOL_ARGUMENTS_READY"
+            and event.get("task_id") == start_event.get("task_id")
+            and event.get("plan_version") == start_event.get("plan_version")
+            and event.get("tool_call_id") == start_event.get("tool_call_id")
+            and event.get("tool_name") == start_event.get("tool_name")
+            and _event_seq_before(required_for_event, event)
+            and _event_seq_before(event, start_event)
+            and (
+                event.get("resolved_arguments_ref") != preview_arguments.get("resolved_arguments_ref")
+                or event.get("provenance_ref") != preview_arguments.get("provenance_ref")
+                or event.get("argument_fingerprint") != preview_fingerprint
+            )
+        ):
+            raise ReplayValidationError(
+                "DEMO_DESTRUCTIVE_ACTION confirmation required_for_event_id must bind the previewed arguments"
+    )
+
+
+def _confirmation_router_has_turn_evidence(
+    router_event: Mapping[str, Any] | None,
+    *,
+    waiting: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if router_event is None:
+        return False
+    turn_event = events_by_id.get(str(router_event.get("turn_committed_event_id")))
+    thinker_event = events_by_id.get(str(router_event.get("thinker_frame_event_id")))
+    return bool(
+        _event_matches(
+            turn_event,
+            event_name="TURN_INGRESS_COMMITTED",
+            turn_id=router_event.get("turn_id"),
+            utterance_id=router_event.get("utterance_id"),
+        )
+        and _event_matches(
+            thinker_event,
+            event_name="MOCK_THINKER_FRAME_EMITTED",
+            turn_id=router_event.get("turn_id"),
+            utterance_id=router_event.get("utterance_id"),
+        )
+        and turn_event.get("caused_by_event_id") == waiting.get("event_id")
+        and thinker_event.get("caused_by_event_id") == turn_event.get("event_id")
+        and router_event.get("caused_by_event_id") == thinker_event.get("event_id")
+        and _event_seq_strictly_increases(waiting, turn_event, thinker_event, router_event)
+    )
+
+
+def _matches_tool_arguments_ready(
+    event: Mapping[str, Any] | None,
+    *,
+    required_for_event: Mapping[str, Any],
+) -> bool:
+    return bool(
+        event is not None
+        and event.get("event_name") == "TOOL_ARGUMENTS_READY"
+        and event.get("task_id") == required_for_event.get("task_id")
+        and event.get("plan_version") == required_for_event.get("plan_version")
+        and event.get("tool_call_id") == required_for_event.get("tool_call_id")
+        and event.get("tool_name") == required_for_event.get("tool_name")
+        and event.get("resolved_arguments_ref") not in (None, "")
+        and event.get("provenance_ref") not in (None, "")
+        and event.get("argument_fingerprint") not in (None, "")
+    )
+
+
+def _event_seq_before(event: Mapping[str, Any] | None, before_event: Mapping[str, Any] | None) -> bool:
+    if event is None or before_event is None:
+        return False
+    event_seq = event.get("event_seq")
+    before_event_seq = before_event.get("event_seq")
+    return (
+        isinstance(event_seq, int)
+        and not isinstance(event_seq, bool)
+        and isinstance(before_event_seq, int)
+        and not isinstance(before_event_seq, bool)
+        and event_seq < before_event_seq
+    )
+
+
+def _event_matches(event: Mapping[str, Any] | None, /, **expected_fields: object) -> bool:
+    if event is None:
+        return False
+    return all(event.get(field_name) == expected_value for field_name, expected_value in expected_fields.items())
+
+
+def _causal_chain_matches(*events: Mapping[str, Any] | None) -> bool:
+    previous_event_id: object | None = None
+    for event in events:
+        if event is None:
+            return False
+        if previous_event_id is not None and event.get("caused_by_event_id") != previous_event_id:
+            return False
+        previous_event_id = event.get("event_id")
+        if previous_event_id in (None, ""):
+            return False
+    return True
+
+
+def _event_seq_strictly_increases(*events: Mapping[str, Any] | None) -> bool:
+    previous_event_seq: int | None = None
+    for event in events:
+        if event is None:
+            return False
+        event_seq = event.get("event_seq")
+        if not isinstance(event_seq, int) or isinstance(event_seq, bool):
+            return False
+        if previous_event_seq is not None and event_seq <= previous_event_seq:
+            return False
+        previous_event_seq = event_seq
+    return True
+
+
+def _tool_name_for_event(event: Mapping[str, Any], tool_names_by_call: Mapping[str, str]) -> str | None:
+    bound_tool_name = tool_names_by_call.get(str(event["tool_call_id"]))
+    tool_name = event.get("tool_name")
+    if bound_tool_name is not None:
+        if tool_name not in (None, "") and str(tool_name) != bound_tool_name:
+            raise ReplayValidationError("TOOL_EXECUTION_STARTED tool_name must match TOOL_CALL_STARTED")
+        return bound_tool_name
+    if tool_name not in (None, ""):
+        return str(tool_name)
+    return None
+
+
+def _tool_call_plan_key(event: Mapping[str, Any]) -> tuple[str, str, int]:
+    return str(event["tool_call_id"]), str(event["task_id"]), int(event["plan_version"])
+
+
+def _tool_call_task_key(event: Mapping[str, Any]) -> tuple[str, str]:
+    return str(event["tool_call_id"]), str(event["task_id"])
+
+
+def _require_source_id_in_refs(
+    router_event: Mapping[str, Any],
+    *,
+    source_id_field: str,
+    source_event_ids: set[str],
+) -> None:
+    expected_event_id = router_event.get(source_id_field)
+    if expected_event_id in (None, "") or str(expected_event_id) not in source_event_ids:
+        raise ReplayValidationError(f"USER_PATCH_RECEIVED evidence_pack must include router {source_id_field}")
+
+
+def _string_list_for_replay(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        return [str(value)]
+    if not isinstance(value, Sequence):
+        raise ReplayValidationError("event ids must be a list")
+    return [str(item) for item in value]
+
+
+def _optional_string_for_replay(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _string_set(value: object) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, (str, bytes)):
+        return {str(value)}
+    if not isinstance(value, Sequence):
+        raise ReplayValidationError("USER_PATCH_RECEIVED source_event_ids must be a list")
+    return {str(item) for item in value}
 
 
 def _turn_key(event: Mapping[str, Any]) -> tuple[str, str]:

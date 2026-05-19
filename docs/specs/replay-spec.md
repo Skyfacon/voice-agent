@@ -156,19 +156,44 @@ Shareable 和 GitHub-allowed fixtures 必须：
 - shareable fixture 中 ToolResult refs 必须 redacted/minimized/synthetic。
 - old-plan ToolResult replay 必须遵守 stale policy。
 
-## 12. Stale ToolResult Replay Case
+## 12. Stale ToolResult Replay Cases
+
+Stale ToolResult replay has two variants because MVP-1 does not implement the progressive Tool Executor.
+
+### MVP-1 minimal marker variant
+
+MVP-1 uses only synthetic fixture events or a fixture/mock tool event emitter. It must not emit `TOOL_EXECUTION_STARTED`, `TOOL_PROGRESS_UPDATED`, `TOOL_UI_STATE_PATCHED`, manifest events, authorization events, retry execution events, or cancellation execution events.
 
 Required causal pattern:
 
-1. `TOOL_EXECUTION_STARTED(task_id=T, plan_version=N, task_event_seq=A)`。
-2. `USER_PATCH_RECEIVED(task_id=T, plan_version=N, observed_plan_version=N)`。
-3. `USER_PATCH_INTERPRETED(interpreted_against_plan_version=N, materially_changes_task=true)`。
-4. `PLAN_VERSION_ADVANCED(from_plan_version=N, to_plan_version=N+1)`。
-5. 如果支持 cancellation，可选 `TOOL_EXECUTION_CANCEL_REQUESTED`。
-6. `TOOL_RESULT_RECEIVED(task_id=T, plan_version=N, task_event_seq=A)`。
-7. `TOOL_RESULT_MARKED_STALE(result_plan_version=N, current_plan_version=N+1)`。
-8. `STALE_EVIDENCE_RECORDED(source_tool_result_event_id=...)`。
-9. 若显式复用，才可有 `STALE_EVIDENCE_ADOPTED(plan_version=N+1, adopted_from_plan_version=N)`。
+1. `TOOL_CALL_STARTED(tool_call_id=C1, task_id=T, plan_version=N, task_event_seq=A)`。
+2. `USER_PATCH_RECEIVED(task_id=T, plan_version=N, task_event_seq=B, observed_plan_version=N)` where `B > A`。
+3. `USER_PATCH_INTERPRETED(task_id=T, plan_version=N, task_event_seq=B+1, observed_plan_version=N, interpreted_against_plan_version=N, materially_changes_task=true)`。
+4. `PLAN_VERSION_ADVANCED(task_id=T, plan_version=N+1, task_event_seq=B+2, from_plan_version=N, to_plan_version=N+1)`。
+5. `TOOL_RESULT_RECEIVED(tool_call_id=C1, task_id=T, plan_version=N, task_event_seq=R)` where `R > B+2`。
+6. `TOOL_RESULT_MARKED_STALE(tool_call_id=C1, task_id=T, plan_version=N+1, task_event_seq=R+1, result_plan_version=N, current_plan_version=N+1)`。
+7. `STALE_EVIDENCE_RECORDED(task_id=T, plan_version=N+1, task_event_seq=R+2, source_tool_result_event_id=...)`。
+8. 若显式复用，才可有 `STALE_EVIDENCE_ADOPTED(task_id=T, plan_version=N+1, task_event_seq=R+3, source_tool_result_event_id=..., adopted_from_plan_version=N)`。
+
+In this variant, `tool_call_id` links the late result to the original old-plan marker. `task_event_seq` always records the order in which SlowTask-relevant events are appended or accepted and must not be reused from the original tool call.
+
+### MVP-2 progressive executor variant
+
+MVP-2 may use progressive Tool Executor events after ADR-005/016 tool authorization and side-effect gates are implemented.
+
+Required causal pattern:
+
+1. `TOOL_EXECUTION_STARTED(tool_call_id=C1, task_id=T, plan_version=N, task_event_seq=A)`。
+2. `USER_PATCH_RECEIVED(task_id=T, plan_version=N, task_event_seq=B, observed_plan_version=N)` where `B > A`。
+3. `USER_PATCH_INTERPRETED(task_id=T, plan_version=N, task_event_seq=B+1, observed_plan_version=N, interpreted_against_plan_version=N, materially_changes_task=true)`。
+4. `PLAN_VERSION_ADVANCED(task_id=T, plan_version=N+1, task_event_seq=B+2, from_plan_version=N, to_plan_version=N+1)`。
+5. 如果 adapter 支持 cancellation，可选 `TOOL_EXECUTION_CANCEL_REQUESTED(tool_call_id=C1, task_id=T, plan_version=N+1, task_event_seq=B+3)`；不支持 cancellation 时不得伪造 cancellation success。
+6. `TOOL_RESULT_RECEIVED(tool_call_id=C1, task_id=T, plan_version=N, task_event_seq=R)` where `R` is greater than the preceding SlowTask-relevant event sequence。
+7. `TOOL_RESULT_MARKED_STALE(tool_call_id=C1, task_id=T, plan_version=N+1, task_event_seq=R+1, result_plan_version=N, current_plan_version=N+1)`。
+8. `STALE_EVIDENCE_RECORDED(task_id=T, plan_version=N+1, task_event_seq=R+2, source_tool_result_event_id=...)`。
+9. 若显式复用，才可有 `STALE_EVIDENCE_ADOPTED(task_id=T, plan_version=N+1, task_event_seq=R+3, source_tool_result_event_id=..., adopted_from_plan_version=N)`。
+
+The MVP-2 variant follows the same sequencing rule: `tool_call_id` links result to execution, while `task_event_seq` remains a monotonic append/accept sequence and is never reused from `TOOL_EXECUTION_STARTED`.
 
 Replay assertions:
 

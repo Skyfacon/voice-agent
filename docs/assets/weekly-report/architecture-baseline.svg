@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#061015"/>
+      <stop offset="55%" stop-color="#0b1219"/>
+      <stop offset="100%" stop-color="#111922"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14232b"/>
+      <stop offset="100%" stop-color="#0c151c"/>
+    </linearGradient>
+    <linearGradient id="card2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#172832"/>
+      <stop offset="100%" stop-color="#101821"/>
+    </linearGradient>
+    <linearGradient id="future" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#151b23"/>
+      <stop offset="100%" stop-color="#0b1118"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#22313a" stroke-width="1" opacity="0.22"/>
+    </pattern>
+    <marker id="arrowTeal" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#42d6c9"/>
+    </marker>
+    <marker id="arrowAmber" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#f2b84b"/>
+    </marker>
+    <marker id="arrowMuted" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7d919b"/>
+    </marker>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#grid)" opacity="0.55"/>
+  <circle cx="1560" cy="-140" r="560" fill="#1e766e" opacity="0.12"/>
+  <circle cx="-140" cy="960" r="480" fill="#f2b84b" opacity="0.07"/>
+  <text x="72" y="82" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="40" font-weight="750" fill="#f4f7f8">Voice Agent Architecture Baseline</text>
+  <text x="72" y="122" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" fill="#9eb5bc">Target chain with current mock/replay spine and future extension points</text>
+  <g filter="url(#shadow)">
+    <rect x="78" y="225" width="205" height="160" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="100" y1="283" x2="261" y2="283" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="102" y="263" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Access Layer</text>
+    <g>
+    <rect x="155" y="341" width="110" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="210" y="360" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">implemented</text>
+  </g>
+    <text x="102" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Text/audio ingress</text>
+<text x="102" y="327" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Span metadata</text>
+  </g><g filter="url(#shadow)">
+    <rect x="330" y="225" width="225" height="160" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="352" y1="283" x2="533" y2="283" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="354" y="263" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Duplex Gate</text>
+    <g>
+    <rect x="445" y="341" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="488" y="360" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">mock</text>
+  </g>
+    <text x="354" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Realtime audio</text>
+<text x="354" y="327" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">candidates</text>
+<text x="354" y="351" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Barge-in evidence</text>
+  </g><g filter="url(#shadow)">
+    <rect x="610" y="225" width="245" height="160" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="632" y1="283" x2="833" y2="283" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="634" y="263" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Interaction Controller</text>
+    <g>
+    <rect x="727" y="341" width="110" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="782" y="360" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">implemented</text>
+  </g>
+    <text x="634" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Owns turn ingress commit</text>
+<text x="634" y="327" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Deterministic policy</text>
+  </g><g filter="url(#shadow)">
+    <rect x="910" y="225" width="245" height="160" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="932" y1="283" x2="1133" y2="283" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="934" y="263" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">ASR + Thinker</text>
+    <g>
+    <rect x="1045" y="341" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="1088" y="360" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">mock</text>
+  </g>
+    <text x="934" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Adapter-mediated</text>
+<text x="934" y="327" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">understanding</text>
+<text x="934" y="351" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">mock output frames</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1210" y="225" width="205" height="160" rx="18" fill="url(#card)" stroke="#2d8f8a" stroke-width="2" />
+    <line x1="1232" y1="283" x2="1393" y2="283" stroke="#2d8f8a" stroke-width="1" opacity="0.35"/>
+    <text x="1234" y="263" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Router</text>
+    <g>
+    <rect x="1305" y="341" width="86" height="28" rx="14" fill="#2d8f8a" opacity="0.17" stroke="#2d8f8a" stroke-width="1.4"/>
+    <text x="1348" y="360" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#2d8f8a">replayed</text>
+  </g>
+    <text x="1234" y="303" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Post-commit gate</text>
+<text x="1234" y="327" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">TaskFocusState</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1505" y="125" width="300" height="145" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="1527" y1="183" x2="1783" y2="183" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="1529" y="163" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Fast Reply</text>
+    <g>
+    <rect x="1695" y="226" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1738" y="245" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">MVP-0/1</text>
+  </g>
+    <text x="1529" y="203" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Foreground response path</text>
+<text x="1529" y="227" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">No task mutation</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1505" y="350" width="300" height="185" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="1527" y1="408" x2="1783" y2="408" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="1529" y="388" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">SlowTask Runtime</text>
+    <g>
+    <rect x="1695" y="491" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1738" y="510" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">MVP-1</text>
+  </g>
+    <text x="1529" y="428" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Complex task facts</text>
+<text x="1529" y="452" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">plan_version, stale evidence</text>
+<text x="1529" y="476" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">SemanticCommitment</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1040" y="585" width="250" height="150" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="1062" y1="643" x2="1268" y2="643" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="1064" y="623" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">SemanticCommitment</text>
+    <g>
+    <rect x="1180" y="691" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1223" y="710" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">MVP-1</text>
+  </g>
+    <text x="1064" y="663" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Current-plan task facts</text>
+<text x="1064" y="687" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">SlowTask-owned</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1340" y="585" width="240" height="150" rx="18" fill="url(#future)" stroke="#f2b84b" stroke-width="2" stroke-dasharray="10 8"/>
+    <line x1="1362" y1="643" x2="1558" y2="643" stroke="#f2b84b" stroke-width="1" opacity="0.35"/>
+    <text x="1364" y="623" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Composer</text>
+    <g>
+    <rect x="1444" y="691" width="118" height="28" rx="14" fill="#f2b84b" opacity="0.17" stroke="#f2b84b" stroke-width="1.4"/>
+    <text x="1503" y="710" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#f2b84b">MVP-2 target</text>
+  </g>
+    <text x="1364" y="663" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">SpokenPlan realization</text>
+<text x="1364" y="687" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Cannot rewrite facts</text>
+  </g><g filter="url(#shadow)">
+    <rect x="1630" y="585" width="220" height="150" rx="18" fill="url(#card)" stroke="#42d6c9" stroke-width="2" />
+    <line x1="1652" y1="643" x2="1828" y2="643" stroke="#42d6c9" stroke-width="1" opacity="0.35"/>
+    <text x="1654" y="623" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="760" fill="#ffffff">Talker / Playback</text>
+    <g>
+    <rect x="1740" y="691" width="86" height="28" rx="14" fill="#42d6c9" opacity="0.17" stroke="#42d6c9" stroke-width="1.4"/>
+    <text x="1783" y="710" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#42d6c9">mock</text>
+  </g>
+    <text x="1654" y="663" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Playback progress</text>
+<text x="1654" y="687" text-anchor="start" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="430" fill="#bdd0d4">Truncate execution</text>
+  </g><path d="M283,305 L330,305" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M555,305 L610,305" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M855,305 L910,305" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1155,305 L1210,305" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1415,305 C1455,305 1452,198 1505,198" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1415,315 C1455,315 1452,438 1505,438" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1505,452 C1430,520 1360,590 1290,650" fill="none" stroke="#f2b84b" stroke-width="3"  marker-end="url(#arrowAmber)" opacity="0.92"/><path d="M1290,660 L1340,660" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><path d="M1580,660 L1630,660" fill="none" stroke="#42d6c9" stroke-width="3"  marker-end="url(#arrowTeal)" opacity="0.92"/><g>
+    <rect x="720" y="174" width="206" height="30" rx="15" fill="#0b151b" stroke="#25424a" stroke-width="1" opacity="0.95"/>
+    <text x="823" y="195" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="650" fill="#cde4e4">TURN_INGRESS_COMMITTED</text>
+  </g><g>
+    <rect x="1230" y="174" width="214" height="30" rx="15" fill="#0b151b" stroke="#25424a" stroke-width="1" opacity="0.95"/>
+    <text x="1337" y="195" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="650" fill="#cde4e4">ROUTER_DECISION_EMITTED</text>
+  </g><g>
+    <rect x="1084" y="534" width="246" height="30" rx="15" fill="#0b151b" stroke="#25424a" stroke-width="1" opacity="0.95"/>
+    <text x="1207" y="555" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="650" fill="#cde4e4">SEMANTIC_COMMITMENT_EMITTED</text>
+  </g><g filter="url(#shadow)">
+    <rect x="94" y="835" width="1725" height="110" rx="24" fill="#11151b" stroke="#f2b84b" stroke-width="2"/>
+    <text x="126" y="878" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="760" fill="#ffe0a1">Event Journal</text>
+    <text x="126" y="914" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" fill="#d8c7a3">Per-session append-only source of truth for replay, state digest, SLOs, and privacy audit</text>
+  </g><path d="M180.5,385 L180.5,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M442.5,385 L442.5,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M732.5,385 L732.5,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M1032.5,385 L1032.5,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M1312.5,385 L1312.5,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M1655,270 L1655,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M1655,535 L1655,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M1165,735 L1165,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M1460,735 L1460,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/><path d="M1740,735 L1740,835" fill="none" stroke="#f2b84b" stroke-width="1.8" stroke-dasharray="5 7" opacity="0.45"/>
+</svg>
