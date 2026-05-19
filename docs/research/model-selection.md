@@ -62,6 +62,8 @@ webSearch/RAG 与 model-card content 都是 untrusted evidence。它们可以帮
 
 第一批先做 Slow LLM JSON probe，因为它不涉及 raw audio，最容易验证 schema、timeout、retry、provider error 与 redaction policy。TTS、ASR、Thinker、Duplex 的顺序应跟随 `docs/research/model-spike-execution-plan.md`，逐步进入 audio-heavy experiments。
 
+这组 probe 能降低 operational complexity，同时保留 adapter boundaries。它提供 Qwen text 与 omni models 的 same-platform path，但不允许单个模型拥有整个系统。
+
 ## DashScope / Bailian Considerations
 
 Aliyun documentation 描述了 Qwen models 的多个 API surfaces：OpenAI-compatible Chat Completions、OpenAI Responses-style API 与 native DashScope APIs。Adapter 应为每个 capability 选择一个 surface，并记录 exact model id、endpoint surface、streaming support、JSON support、tool-call format、timeout behavior 与 output mode。
