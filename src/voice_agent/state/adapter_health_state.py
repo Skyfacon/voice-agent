@@ -14,6 +14,7 @@ ADAPTER_HEALTH_EVENT_NAMES = frozenset(
         "ADAPTER_OUTPUT_VALIDATION_FAILED",
         "ADAPTER_OUTPUT_DEGRADED",
         "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
         "MOCK_ASR_FRAME_EMITTED",
         "MOCK_THINKER_FRAME_EMITTED",
     }
@@ -69,6 +70,7 @@ class AdapterHealthState:
                 )
         elif event_name in {
             "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+            "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
             "MOCK_ASR_FRAME_EMITTED",
             "MOCK_THINKER_FRAME_EMITTED",
         }:

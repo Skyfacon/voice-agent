@@ -69,6 +69,12 @@ DATA_PLANE_REF_FIELDS = frozenset(
         "asr_frame_ref",
         "audio_timestamps_ref",
         "semantic_frame_ref",
+        "semantic_summary_ref",
+        "semantic_close_ref",
+        "assistant_directedness_ref",
+        "emotion_ref",
+        "audio_caption_ref",
+        "audio_summary_ref",
         "runtime_config_ref",
         "capability_snapshot_ref",
         "failure_summary_ref",
@@ -245,6 +251,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_task_focus_active_task_creation_order(ordered_events)
     _validate_post_commit_understanding_and_router_order(ordered_events)
     _validate_asr_transcript_output_contract(ordered_events)
+    _validate_thinker_semantic_frame_output_contract(ordered_events)
     _validate_user_patch_evidence_pack_source_links(ordered_events)
     _validate_tool_execution_gate_links(ordered_events)
     _validate_spoken_plan_source_links(ordered_events)
@@ -499,7 +506,7 @@ def _is_audio_ingress_event(event: Mapping[str, Any]) -> bool:
 def _validate_post_commit_understanding_and_router_order(ordered_events: Sequence[Mapping[str, Any]]) -> None:
     committed_turn_events: dict[tuple[str, str], str] = {}
     asr_events: dict[tuple[str, str], str] = {}
-    mock_thinker_events: dict[tuple[str, str], str] = {}
+    thinker_events: dict[tuple[str, str], str] = {}
 
     for event in ordered_events:
         event_name = str(event["event_name"])
@@ -513,24 +520,25 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
             if event.get("caused_by_event_id") != committed_event_id:
                 raise ReplayValidationError(f"{event_name} must be caused by TURN_INGRESS_COMMITTED")
             asr_events[key] = str(event["event_id"])
-        elif event_name == "MOCK_THINKER_FRAME_EMITTED":
+        elif event_name in {"MOCK_THINKER_FRAME_EMITTED", "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"}:
             key = _turn_key(event)
             committed_event_id = committed_turn_events.get(key)
             if committed_event_id is None:
-                raise ReplayValidationError("MOCK_THINKER_FRAME_EMITTED requires prior TURN_INGRESS_COMMITTED")
+                raise ReplayValidationError(f"{event_name} requires prior TURN_INGRESS_COMMITTED")
             if event.get("caused_by_event_id") != committed_event_id:
-                raise ReplayValidationError("MOCK_THINKER_FRAME_EMITTED must be caused by TURN_INGRESS_COMMITTED")
-            mock_thinker_events[key] = str(event["event_id"])
+                raise ReplayValidationError(f"{event_name} must be caused by TURN_INGRESS_COMMITTED")
+            thinker_events[key] = str(event["event_id"])
         elif event_name == "ROUTER_DECISION_EMITTED":
             key = _turn_key(event)
             if key not in committed_turn_events:
                 raise ReplayValidationError("ROUTER_DECISION_EMITTED requires prior TURN_INGRESS_COMMITTED")
             asr_event_id = asr_events.get(key)
-            mock_thinker_event_id = mock_thinker_events.get(key)
-            if asr_event_id is None and mock_thinker_event_id is None:
+            thinker_event_id = thinker_events.get(key)
+            if asr_event_id is None and thinker_event_id is None:
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED requires prior MOCK_ASR_FRAME_EMITTED or "
-                    "MOCK_THINKER_FRAME_EMITTED, or ASR_TRANSCRIPT_OUTPUT_EMITTED"
+                    "MOCK_THINKER_FRAME_EMITTED, ASR_TRANSCRIPT_OUTPUT_EMITTED, or "
+                    "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"
                 )
             if event.get("asr_frame_event_id") is not None and asr_event_id is None:
                 raise ReplayValidationError(
@@ -538,13 +546,13 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 )
             if event.get("asr_frame_event_id") not in (None, asr_event_id):
                 raise ReplayValidationError("ROUTER_DECISION_EMITTED asr_frame_event_id must reference prior ASR evidence")
-            if event.get("thinker_frame_event_id") is not None and mock_thinker_event_id is None:
+            if event.get("thinker_frame_event_id") is not None and thinker_event_id is None:
                 raise ReplayValidationError(
-                    "ROUTER_DECISION_EMITTED thinker_frame_event_id requires prior mock Thinker"
+                    "ROUTER_DECISION_EMITTED thinker_frame_event_id requires prior Thinker evidence"
                 )
-            if event.get("thinker_frame_event_id") not in (None, mock_thinker_event_id):
+            if event.get("thinker_frame_event_id") not in (None, thinker_event_id):
                 raise ReplayValidationError(
-                    "ROUTER_DECISION_EMITTED thinker_frame_event_id must reference prior mock Thinker"
+                    "ROUTER_DECISION_EMITTED thinker_frame_event_id must reference prior Thinker evidence"
                 )
 
 
@@ -658,6 +666,161 @@ def _validate_asr_missing_capability_degradation(
         )
 
 
+THINKER_OPTIONAL_STATUS_FIELDS = (
+    (
+        "semantic_close_status",
+        "semantic_close_ref",
+        "supports_semantic_close",
+    ),
+    (
+        "assistant_directedness_status",
+        "assistant_directedness_ref",
+        "supports_assistant_directedness",
+    ),
+    (
+        "emotion_status",
+        "emotion_ref",
+        "supports_emotion",
+    ),
+    (
+        "audio_caption_status",
+        "audio_caption_ref",
+        "supports_audio_caption",
+    ),
+)
+
+
+def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    degraded_by_request_capability: set[tuple[str, str, str]] = set()
+    forbidden_fields = {
+        "raw_audio",
+        "audio_bytes",
+        "audio_payload",
+        "raw_trace",
+        "raw_thinker_output",
+        "provider_response",
+        "provider_payload",
+        "provider_schema",
+        "provider_specific_schema",
+        "raw_semantic_frame",
+        "semantic_close",
+        "assistant_directedness",
+        "emotion",
+        "audio_caption",
+    }
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+        if event_name == "ADAPTER_OUTPUT_DEGRADED" and event.get("adapter_type") == "thinker":
+            request_id = event.get("adapter_request_id")
+            missing_capability = event.get("missing_capability")
+            if request_id not in (None, "") and missing_capability not in (None, ""):
+                degraded_by_request_capability.add(
+                    (str(event["adapter_id"]), str(request_id), str(missing_capability))
+                )
+
+        if event_name != "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED":
+            events_by_id[event_id] = event
+            continue
+
+        if forbidden_fields.intersection(event):
+            raise ReplayValidationError(
+                "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED must not contain provider-specific schema or raw payload"
+            )
+        output_mode = str(event["output_mode"])
+        if output_mode not in {"real", "fallback", "degraded"}:
+            raise ReplayValidationError(
+                "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED output_mode must be real, fallback, or degraded"
+            )
+
+        turn_event = events_by_id.get(str(event["caused_by_event_id"]))
+        if turn_event is None or turn_event["event_name"] != "TURN_INGRESS_COMMITTED":
+            raise ReplayValidationError(
+                "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED requires prior TURN_INGRESS_COMMITTED"
+            )
+        for field in ("turn_id", "utterance_id", "input_modality"):
+            if event.get(field) != turn_event.get(field):
+                raise ReplayValidationError(
+                    f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {field} must match committed turn"
+                )
+        for optional_turn_field in ("audio_span_id", "text_span_id"):
+            if event.get(optional_turn_field) not in (None, "") and event.get(optional_turn_field) != turn_event.get(
+                optional_turn_field
+            ):
+                raise ReplayValidationError(
+                    f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {optional_turn_field} must match committed turn"
+                )
+
+        for status_field, ref_field, missing_capability in THINKER_OPTIONAL_STATUS_FIELDS:
+            _validate_thinker_status_enum(event, status_field=status_field)
+            _validate_thinker_optional_ref_status(event, status_field=status_field, ref_field=ref_field)
+            _validate_thinker_missing_capability_degradation(
+                event,
+                output_mode=output_mode,
+                degraded_by_request_capability=degraded_by_request_capability,
+                status_field=status_field,
+                missing_capability=missing_capability,
+            )
+        events_by_id[event_id] = event
+
+
+def _validate_thinker_status_enum(
+    event: Mapping[str, Any],
+    *,
+    status_field: str,
+) -> None:
+    status = event.get(status_field)
+    if status not in {"available", "unavailable"}:
+        raise ReplayValidationError(
+            f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {status_field} must be available or unavailable"
+        )
+
+
+def _validate_thinker_optional_ref_status(
+    event: Mapping[str, Any],
+    *,
+    status_field: str,
+    ref_field: str,
+) -> None:
+    status = event.get(status_field)
+    ref_value = event.get(ref_field)
+    if status == "available" and ref_value in (None, ""):
+        raise ReplayValidationError(
+            f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {status_field}=available requires {ref_field}"
+        )
+    if status == "unavailable" and ref_value not in (None, ""):
+        raise ReplayValidationError(
+            f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {status_field}=unavailable must not include {ref_field}"
+        )
+
+
+def _validate_thinker_missing_capability_degradation(
+    event: Mapping[str, Any],
+    *,
+    output_mode: str,
+    degraded_by_request_capability: set[tuple[str, str, str]],
+    status_field: str,
+    missing_capability: str,
+) -> None:
+    if event.get(status_field) != "unavailable":
+        return
+    if output_mode != "degraded":
+        raise ReplayValidationError(
+            f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {status_field}=unavailable requires output_mode=degraded"
+        )
+    degradation_key = (
+        str(event["adapter_id"]),
+        str(event["adapter_request_id"]),
+        missing_capability,
+    )
+    if degradation_key not in degraded_by_request_capability:
+        raise ReplayValidationError(
+            f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED missing {missing_capability} requires prior ADAPTER_OUTPUT_DEGRADED"
+        )
+
+
 def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
     events_by_id = {str(event["event_id"]): event for event in ordered_events}
     for event in ordered_events:
@@ -710,6 +873,12 @@ def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Map
                 raise ReplayValidationError(
                     "USER_PATCH_RECEIVED thinker evidence must match router thinker_frame_event_id"
                 )
+            thinker_event = events_by_id.get(str(expected_thinker_event_id))
+            if thinker_event is not None and thinker_event["event_name"] == "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED":
+                if hypothesis.get("semantic_summary_ref") != thinker_event.get("semantic_summary_ref"):
+                    raise ReplayValidationError(
+                        "USER_PATCH_RECEIVED semantic_summary_ref must match referenced Thinker output"
+                    )
 
 
 def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
