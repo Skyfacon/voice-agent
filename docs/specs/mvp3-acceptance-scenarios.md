@@ -36,8 +36,8 @@ All MVP-3 fixtures must be synthetic, redacted, and minimal.
 | --- | --- |
 | purpose | Validate fake-real adapter health/error/degraded event production. |
 | initial state | Session started with MVP-3 capability snapshot. |
-| event chain | adapter healthcheck failed / retrying / failed / validation failed / degraded events. |
-| required assertions | Events validate through canonical registry and enter journal through adapter callback append boundary. |
+| event chain | `ADAPTER_HEALTHCHECK_FAILED` / `ADAPTER_REQUEST_RETRYING` / `ADAPTER_REQUEST_FAILED` / `ADAPTER_OUTPUT_VALIDATION_FAILED` / `ADAPTER_OUTPUT_DEGRADED`. |
+| required assertions | Events validate through canonical registry and enter journal through `AdapterCallbackAppendBoundary`; fake-real harness does not call provider SDKs, endpoint healthchecks, sockets, HTTP clients, or other network probes; secret-like adapter metadata is rejected or redacted before trace exposure; output modes remain explicit as `real`, `fallback`, or `degraded`. |
 | replay expectations | Replay reconstructs adapter health state from recorded events only. |
 | forbidden behavior | No live provider request. |
 
