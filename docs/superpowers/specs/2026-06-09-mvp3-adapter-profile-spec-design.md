@@ -6,6 +6,8 @@
 
 **Tech Stack:** Python package under `src/voice_agent`, pytest through `./scripts/test`, Markdown specs under `docs/specs`.
 
+**Slice status:** This design is now MVP-3 Slice 1. It should be implemented after the MVP-3 Slice 0 fixture/replay safety skeleton in `docs/implementation/mvp3-backlog.md`.
+
 ---
 
 ## Scope

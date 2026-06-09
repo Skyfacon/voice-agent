@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.11, pytest through `./scripts/test`, Markdown specs under `docs/specs`.
 
+**Slice status:** This plan implements MVP-3 Slice 1 and should run only after MVP-3 Slice 0 fixture/replay safety skeleton is in place.
+
 ---
 
 ## File Structure
