@@ -18,6 +18,7 @@ MVP-3 must not start with direct provider integration. 真实 provider 只能在
 - `docs/adr/ADR-012 MVP Vertical Slice and Development SLOs.md`
 - `docs/adr/ADR-015 Repository Governance and AGENTS.md Rules.md`
 - `docs/specs/model-adapter-capabilities.md`
+- `docs/specs/adapter-capability-profiles.md`
 - `docs/specs/replay-spec.md`
 - `docs/specs/state-reducers.md`
 - `docs/implementation/mvp0-backlog.md`
@@ -122,8 +123,11 @@ No provider selection, SDK dependency, healthcheck, network call, or runtime ada
 
 - Synthetic profile examples pass `validate_capability_matrix`.
 - Required real profile set passes `validate_mvp3_adapter_profile_set`.
-- Runtime assembly snapshot can be built without probing providers.
-- Mock-only and credential-like profile cases fail closed.
+- Runtime assembly snapshot can be built with `assemble_runtime_adapters(stage="mvp3", ...)` without probing providers.
+- Mock-only profiles fail MVP-3 real readiness.
+- Fallback/degraded profiles remain explicit but do not satisfy required real readiness.
+- Credential-like endpoint/config refs fail closed.
+- Missing required capabilities fail closed.
 
 ## Slice 2: Adapter health/error/degraded event harness
 
