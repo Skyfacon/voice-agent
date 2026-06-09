@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from voice_agent.runtime.adapter_callback_boundary import (
-    ADAPTER_CALLBACK_EVENT_NAMES,
     AdapterCallbackAppendBoundary,
 )
 
@@ -13,7 +12,15 @@ class AdapterEventHarnessError(ValueError):
     pass
 
 
-ADAPTER_EVENT_HARNESS_EVENT_NAMES = ADAPTER_CALLBACK_EVENT_NAMES
+ADAPTER_EVENT_HARNESS_EVENT_NAMES = frozenset(
+    {
+        "ADAPTER_HEALTHCHECK_FAILED",
+        "ADAPTER_REQUEST_RETRYING",
+        "ADAPTER_REQUEST_FAILED",
+        "ADAPTER_OUTPUT_VALIDATION_FAILED",
+        "ADAPTER_OUTPUT_DEGRADED",
+    }
+)
 ADAPTER_EVENT_HARNESS_OUTPUT_MODES = frozenset({"real", "fallback", "degraded"})
 
 

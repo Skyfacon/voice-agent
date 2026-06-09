@@ -58,7 +58,7 @@ All MVP-3 fixtures must be synthetic, redacted, and minimal.
 | --- | --- |
 | purpose | Validate ASR adapter final transcript or text projection contract. |
 | initial state | Committed audio turn metadata exists. |
-| event chain | ASR adapter output event or degraded/fallback event. |
+| event chain | `ASR_TRANSCRIPT_OUTPUT_EMITTED` plus `ADAPTER_OUTPUT_DEGRADED` when timestamps or streaming support are unavailable. |
 | required assertions | Output mode is explicit; no raw audio is committed; missing timestamps degrade explicitly. |
 | replay expectations | Replay uses recorded refs only. |
 | forbidden behavior | No direct ASR provider call outside adapter. |
