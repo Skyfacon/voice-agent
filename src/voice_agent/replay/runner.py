@@ -67,6 +67,7 @@ DATA_PLANE_REF_FIELDS = frozenset(
         "audio_format_ref",
         "text_ref",
         "asr_frame_ref",
+        "audio_timestamps_ref",
         "semantic_frame_ref",
         "runtime_config_ref",
         "capability_snapshot_ref",
@@ -243,6 +244,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_task_focus_state_update_causality(ordered_events)
     _validate_task_focus_active_task_creation_order(ordered_events)
     _validate_post_commit_understanding_and_router_order(ordered_events)
+    _validate_asr_transcript_output_contract(ordered_events)
     _validate_user_patch_evidence_pack_source_links(ordered_events)
     _validate_tool_execution_gate_links(ordered_events)
     _validate_spoken_plan_source_links(ordered_events)
@@ -496,21 +498,21 @@ def _is_audio_ingress_event(event: Mapping[str, Any]) -> bool:
 
 def _validate_post_commit_understanding_and_router_order(ordered_events: Sequence[Mapping[str, Any]]) -> None:
     committed_turn_events: dict[tuple[str, str], str] = {}
-    mock_asr_events: dict[tuple[str, str], str] = {}
+    asr_events: dict[tuple[str, str], str] = {}
     mock_thinker_events: dict[tuple[str, str], str] = {}
 
     for event in ordered_events:
         event_name = str(event["event_name"])
         if event_name == "TURN_INGRESS_COMMITTED":
             committed_turn_events[_turn_key(event)] = str(event["event_id"])
-        elif event_name == "MOCK_ASR_FRAME_EMITTED":
+        elif event_name in {"MOCK_ASR_FRAME_EMITTED", "ASR_TRANSCRIPT_OUTPUT_EMITTED"}:
             key = _turn_key(event)
             committed_event_id = committed_turn_events.get(key)
             if committed_event_id is None:
-                raise ReplayValidationError("MOCK_ASR_FRAME_EMITTED requires prior TURN_INGRESS_COMMITTED")
+                raise ReplayValidationError(f"{event_name} requires prior TURN_INGRESS_COMMITTED")
             if event.get("caused_by_event_id") != committed_event_id:
-                raise ReplayValidationError("MOCK_ASR_FRAME_EMITTED must be caused by TURN_INGRESS_COMMITTED")
-            mock_asr_events[key] = str(event["event_id"])
+                raise ReplayValidationError(f"{event_name} must be caused by TURN_INGRESS_COMMITTED")
+            asr_events[key] = str(event["event_id"])
         elif event_name == "MOCK_THINKER_FRAME_EMITTED":
             key = _turn_key(event)
             committed_event_id = committed_turn_events.get(key)
@@ -523,16 +525,19 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
             key = _turn_key(event)
             if key not in committed_turn_events:
                 raise ReplayValidationError("ROUTER_DECISION_EMITTED requires prior TURN_INGRESS_COMMITTED")
-            mock_asr_event_id = mock_asr_events.get(key)
+            asr_event_id = asr_events.get(key)
             mock_thinker_event_id = mock_thinker_events.get(key)
-            if mock_asr_event_id is None and mock_thinker_event_id is None:
+            if asr_event_id is None and mock_thinker_event_id is None:
                 raise ReplayValidationError(
-                    "ROUTER_DECISION_EMITTED requires prior MOCK_ASR_FRAME_EMITTED or MOCK_THINKER_FRAME_EMITTED"
+                    "ROUTER_DECISION_EMITTED requires prior MOCK_ASR_FRAME_EMITTED or "
+                    "MOCK_THINKER_FRAME_EMITTED, or ASR_TRANSCRIPT_OUTPUT_EMITTED"
                 )
-            if event.get("asr_frame_event_id") is not None and mock_asr_event_id is None:
-                raise ReplayValidationError("ROUTER_DECISION_EMITTED asr_frame_event_id requires prior mock ASR")
-            if event.get("asr_frame_event_id") not in (None, mock_asr_event_id):
-                raise ReplayValidationError("ROUTER_DECISION_EMITTED asr_frame_event_id must reference prior mock ASR")
+            if event.get("asr_frame_event_id") is not None and asr_event_id is None:
+                raise ReplayValidationError(
+                    "ROUTER_DECISION_EMITTED asr_frame_event_id requires prior mock ASR or ASR transcript evidence"
+                )
+            if event.get("asr_frame_event_id") not in (None, asr_event_id):
+                raise ReplayValidationError("ROUTER_DECISION_EMITTED asr_frame_event_id must reference prior ASR evidence")
             if event.get("thinker_frame_event_id") is not None and mock_thinker_event_id is None:
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED thinker_frame_event_id requires prior mock Thinker"
@@ -541,6 +546,116 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED thinker_frame_event_id must reference prior mock Thinker"
                 )
+
+
+def _validate_asr_transcript_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    degraded_by_request_capability: set[tuple[str, str, str]] = set()
+    forbidden_fields = {
+        "raw_audio",
+        "audio_bytes",
+        "audio_payload",
+        "raw_trace",
+        "raw_transcript",
+        "provider_response",
+    }
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+        if event_name == "ADAPTER_OUTPUT_DEGRADED" and event.get("adapter_type") == "asr":
+            request_id = event.get("adapter_request_id")
+            missing_capability = event.get("missing_capability")
+            if request_id not in (None, "") and missing_capability not in (None, ""):
+                degraded_by_request_capability.add(
+                    (str(event["adapter_id"]), str(request_id), str(missing_capability))
+                )
+
+        if event_name != "ASR_TRANSCRIPT_OUTPUT_EMITTED":
+            events_by_id[event_id] = event
+            continue
+
+        if forbidden_fields.intersection(event):
+            raise ReplayValidationError("ASR_TRANSCRIPT_OUTPUT_EMITTED must not contain raw audio or provider payload")
+        output_mode = str(event["output_mode"])
+        if output_mode not in {"real", "fallback", "degraded"}:
+            raise ReplayValidationError("ASR_TRANSCRIPT_OUTPUT_EMITTED output_mode must be real, fallback, or degraded")
+
+        turn_event = events_by_id.get(str(event["caused_by_event_id"]))
+        if turn_event is None or turn_event["event_name"] != "TURN_INGRESS_COMMITTED":
+            raise ReplayValidationError("ASR_TRANSCRIPT_OUTPUT_EMITTED requires prior TURN_INGRESS_COMMITTED")
+        if turn_event.get("input_modality") != "audio":
+            raise ReplayValidationError("ASR_TRANSCRIPT_OUTPUT_EMITTED requires committed audio turn metadata")
+        for field in ("turn_id", "utterance_id", "audio_span_id", "input_modality"):
+            if event.get(field) != turn_event.get(field):
+                raise ReplayValidationError(f"ASR_TRANSCRIPT_OUTPUT_EMITTED {field} must match committed turn")
+
+        _validate_asr_status_enum(
+            event,
+            status_field="timestamp_status",
+            allowed_statuses={"available", "unavailable"},
+        )
+        _validate_asr_status_enum(
+            event,
+            status_field="streaming_status",
+            allowed_statuses={"supported", "unsupported_final_only"},
+        )
+        _validate_asr_missing_capability_degradation(
+            event,
+            output_mode=output_mode,
+            degraded_by_request_capability=degraded_by_request_capability,
+            status_field="timestamp_status",
+            missing_status="unavailable",
+            missing_capability="supports_audio_timestamps",
+        )
+        _validate_asr_missing_capability_degradation(
+            event,
+            output_mode=output_mode,
+            degraded_by_request_capability=degraded_by_request_capability,
+            status_field="streaming_status",
+            missing_status="unsupported_final_only",
+            missing_capability="supports_streaming_output",
+        )
+        events_by_id[event_id] = event
+
+
+def _validate_asr_status_enum(
+    event: Mapping[str, Any],
+    *,
+    status_field: str,
+    allowed_statuses: set[str],
+) -> None:
+    status = event.get(status_field)
+    if status not in allowed_statuses:
+        raise ReplayValidationError(
+            f"ASR_TRANSCRIPT_OUTPUT_EMITTED {status_field} must be one of {sorted(allowed_statuses)}"
+        )
+
+
+def _validate_asr_missing_capability_degradation(
+    event: Mapping[str, Any],
+    *,
+    output_mode: str,
+    degraded_by_request_capability: set[tuple[str, str, str]],
+    status_field: str,
+    missing_status: str,
+    missing_capability: str,
+) -> None:
+    if event.get(status_field) != missing_status:
+        return
+    if output_mode != "degraded":
+        raise ReplayValidationError(
+            f"ASR_TRANSCRIPT_OUTPUT_EMITTED {status_field}={missing_status} requires output_mode=degraded"
+        )
+    degradation_key = (
+        str(event["adapter_id"]),
+        str(event["adapter_request_id"]),
+        missing_capability,
+    )
+    if degradation_key not in degraded_by_request_capability:
+        raise ReplayValidationError(
+            f"ASR_TRANSCRIPT_OUTPUT_EMITTED missing {missing_capability} requires prior ADAPTER_OUTPUT_DEGRADED"
+        )
 
 
 def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:

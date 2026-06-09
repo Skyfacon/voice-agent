@@ -144,6 +144,7 @@ Text input ingress policy for event journal:
 | Model adapter events | `ADAPTER_REQUEST_FAILED` | Adapter | `adapter_id`, `adapter_type`, `adapter_request_id`, `failure_reason`, `retryable`, `timeout_ms` optional, `output_mode` | caused by adapter request failure after policy handling | false |
 | Model adapter events | `ADAPTER_OUTPUT_VALIDATION_FAILED` | Adapter / Schema Validator | `adapter_id`, `adapter_type`, `adapter_request_id`, `schema_name`, `failure_reasons`, `output_mode` | caused by model/provider output failing system schema validation | false |
 | Model adapter events | `ADAPTER_OUTPUT_DEGRADED` | Adapter / Runtime | `adapter_id`, `adapter_type`, `adapter_request_id` optional, `degraded_reason`, `missing_capability` optional, `fallback_adapter_id` optional, `output_mode` | caused by unsupported capability, fallback, or degraded provider output | false |
+| Model adapter events | `ASR_TRANSCRIPT_OUTPUT_EMITTED` | ASR Adapter | `adapter_id`, `adapter_type=asr`, `adapter_request_id`, `turn_id`, `utterance_id`, `input_modality=audio`, `audio_span_id`, `asr_frame_ref`, `text_ref`, `transcript_finality=final`, `timestamp_status`, `streaming_status`, `output_mode=real|fallback|degraded` | caused by `TURN_INGRESS_COMMITTED`; missing timestamp or streaming capability must be paired with `ADAPTER_OUTPUT_DEGRADED` | false |
 | Model adapter events | `MOCK_ASR_FRAME_EMITTED` | ASR Adapter | `turn_id`, `utterance_id`, `input_modality`, `asr_frame_ref`, `output_mode=mock` | caused by `TURN_INGRESS_COMMITTED` when ASR mock is used | true |
 | Model adapter events | `MOCK_THINKER_FRAME_EMITTED` | Thinker Adapter | `turn_id`, `utterance_id`, `semantic_frame_ref`, `output_mode=mock` | caused by `TURN_INGRESS_COMMITTED` when Thinker mock is used | true |
 | SlowTask events | `SLOWTASK_CREATED` | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `initial_goal_ref` | caused by `ROUTER_DECISION_EMITTED` with spawn decision | false |
@@ -247,6 +248,10 @@ MVP-1 / MVP-2 canonical addendum:
 - Composer/progress safety events: `COMMITMENT_COVERAGE_CHECK_PASSED`, `COMMITMENT_COVERAGE_CHECK_FAILED`, `PROGRESS_TRUTHFULNESS_CHECK_PASSED`, `PROGRESS_TRUTHFULNESS_CHECK_FAILED`
 - Adapter events: `ADAPTER_HEALTHCHECK_FAILED`, `ADAPTER_REQUEST_RETRYING`, `ADAPTER_REQUEST_FAILED`, `ADAPTER_OUTPUT_VALIDATION_FAILED`, `ADAPTER_OUTPUT_DEGRADED` when those paths occur
 - Trace safety events: `TRACE_SECRET_REDACTION_APPLIED`, `TRACE_WRITE_BLOCKED_SECRET_DETECTED`
+
+MVP-3 canonical addendum:
+
+- ASR adapter contract event: `ASR_TRANSCRIPT_OUTPUT_EMITTED` for final transcript or equivalent text projection refs. Replay uses recorded refs and metadata only; it does not require raw audio or rerun the ASR provider.
 
 后续 ADR 若新增 MVP-relevant event，必须同时更新本 registry 或明确声明该名称只是 payload enum / state value，而不是 journal event name。
 

@@ -13,6 +13,7 @@ ADAPTER_HEALTH_EVENT_NAMES = frozenset(
         "ADAPTER_REQUEST_FAILED",
         "ADAPTER_OUTPUT_VALIDATION_FAILED",
         "ADAPTER_OUTPUT_DEGRADED",
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED",
         "MOCK_ASR_FRAME_EMITTED",
         "MOCK_THINKER_FRAME_EMITTED",
     }
@@ -66,7 +67,11 @@ class AdapterHealthState:
                 adapter.missing_capabilities = tuple(
                     sorted({*adapter.missing_capabilities, str(event["missing_capability"])})
                 )
-        elif event_name in {"MOCK_ASR_FRAME_EMITTED", "MOCK_THINKER_FRAME_EMITTED"}:
+        elif event_name in {
+            "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+            "MOCK_ASR_FRAME_EMITTED",
+            "MOCK_THINKER_FRAME_EMITTED",
+        }:
             self.output_event_modes[str(event["event_id"])] = str(event["output_mode"])
 
         self.last_adapter_event_id = str(event["event_id"])

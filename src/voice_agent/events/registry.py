@@ -86,6 +86,29 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
         "ADAPTER_OUTPUT_DEGRADED",
         required_fields=("adapter_id", "adapter_type", "degraded_reason", "output_mode"),
     ),
+    "ASR_TRANSCRIPT_OUTPUT_EMITTED": _definition(
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "turn_id",
+            "utterance_id",
+            "input_modality",
+            "audio_span_id",
+            "asr_frame_ref",
+            "text_ref",
+            "transcript_finality",
+            "timestamp_status",
+            "streaming_status",
+            "output_mode",
+        ),
+        literal_fields={
+            "adapter_type": "asr",
+            "input_modality": "audio",
+            "transcript_finality": "final",
+        },
+    ),
     "TEXT_INPUT_RECEIVED": _definition(
         "TEXT_INPUT_RECEIVED",
         required_fields=(

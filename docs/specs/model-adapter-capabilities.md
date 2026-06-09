@@ -84,6 +84,7 @@ Canonical health/error/degradation events:
 - `ADAPTER_REQUEST_FAILED`
 - `ADAPTER_OUTPUT_VALIDATION_FAILED`
 - `ADAPTER_OUTPUT_DEGRADED`
+- `ASR_TRANSCRIPT_OUTPUT_EMITTED`
 
 Frame/output events 必须携带 `output_mode=real|mock|fallback|degraded`，或引用包含该 mode 的 capability snapshot。
 
@@ -96,6 +97,7 @@ Frame/output events 必须携带 `output_mode=real|mock|fallback|degraded`，或
 | `ADAPTER_REQUEST_FAILED` | `adapter_id`, `adapter_type`, `adapter_request_id`, `failure_reason`, `retryable`, optional `timeout_ms`, `output_mode` |
 | `ADAPTER_OUTPUT_VALIDATION_FAILED` | `adapter_id`, `adapter_type`, `adapter_request_id`, `schema_name`, `failure_reasons`, `output_mode` |
 | `ADAPTER_OUTPUT_DEGRADED` | `adapter_id`, `adapter_type`, optional `adapter_request_id`, `degraded_reason`, optional `missing_capability`, optional `fallback_adapter_id`, `output_mode` |
+| `ASR_TRANSCRIPT_OUTPUT_EMITTED` | `adapter_id`, `adapter_type=asr`, `adapter_request_id`, `turn_id`, `utterance_id`, `input_modality=audio`, `audio_span_id`, `asr_frame_ref`, `text_ref`, `transcript_finality=final`, `timestamp_status`, `streaming_status`, `output_mode=real/fallback/degraded` |
 
 任何 request body、headers、tokens、cookies、credentials、authorization headers 都不得写入 adapter events。
 
