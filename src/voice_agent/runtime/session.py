@@ -5,10 +5,12 @@ from typing import Any
 
 from voice_agent.adapters.capabilities import AdapterCapability
 from voice_agent.adapters.mock_adapters import (
-    mvp0_capability_snapshot,
+    MVP0_MOCK_CAPABILITY_SNAPSHOT_REF,
+    MVP0_MOCK_CAPABILITY_VERSION,
     mvp0_mock_adapter_capabilities,
 )
 from voice_agent.events.journal import InMemoryEventJournal
+from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig, assemble_runtime_adapters
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,34 @@ def start_mvp0_session(
     created_wall_clock_ms: int,
 ) -> SessionStartupResult:
     capabilities = mvp0_mock_adapter_capabilities()
-    capability_snapshot = mvp0_capability_snapshot(capabilities)
+    assembly_config = RuntimeAdapterAssemblyConfig(
+        stage="mvp0_mock",
+        capability_snapshot_ref=MVP0_MOCK_CAPABILITY_SNAPSHOT_REF,
+        capability_version=MVP0_MOCK_CAPABILITY_VERSION,
+    )
+    return start_configured_session(
+        session_id=session_id,
+        conversation_id=conversation_id,
+        runtime_config_ref=runtime_config_ref,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        assembly_config=assembly_config,
+        capabilities=capabilities,
+    )
+
+
+def start_configured_session(
+    *,
+    session_id: str,
+    conversation_id: str,
+    runtime_config_ref: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    assembly_config: RuntimeAdapterAssemblyConfig,
+    capabilities: tuple[AdapterCapability, ...],
+) -> SessionStartupResult:
+    assembly = assemble_runtime_adapters(assembly_config, capabilities)
+    capability_snapshot = assembly.capability_snapshot
     journal = InMemoryEventJournal(session_id=session_id, conversation_id=conversation_id)
 
     session_started = journal.append(
@@ -53,6 +82,6 @@ def start_mvp0_session(
 
     return SessionStartupResult(
         journal=journal,
-        capabilities=capabilities,
+        capabilities=assembly.capabilities,
         capability_snapshot=capability_snapshot,
     )

@@ -52,6 +52,40 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "output_modes",
         ),
     ),
+    "ADAPTER_HEALTHCHECK_FAILED": _definition(
+        "ADAPTER_HEALTHCHECK_FAILED",
+        required_fields=("adapter_id", "adapter_type", "health_status", "failure_reason", "output_mode"),
+    ),
+    "ADAPTER_REQUEST_RETRYING": _definition(
+        "ADAPTER_REQUEST_RETRYING",
+        required_fields=("adapter_id", "adapter_type", "adapter_request_id", "retry_count", "retry_reason"),
+    ),
+    "ADAPTER_REQUEST_FAILED": _definition(
+        "ADAPTER_REQUEST_FAILED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "failure_reason",
+            "retryable",
+            "output_mode",
+        ),
+    ),
+    "ADAPTER_OUTPUT_VALIDATION_FAILED": _definition(
+        "ADAPTER_OUTPUT_VALIDATION_FAILED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "schema_name",
+            "failure_reasons",
+            "output_mode",
+        ),
+    ),
+    "ADAPTER_OUTPUT_DEGRADED": _definition(
+        "ADAPTER_OUTPUT_DEGRADED",
+        required_fields=("adapter_id", "adapter_type", "degraded_reason", "output_mode"),
+    ),
     "TEXT_INPUT_RECEIVED": _definition(
         "TEXT_INPUT_RECEIVED",
         required_fields=(

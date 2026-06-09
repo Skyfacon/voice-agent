@@ -190,6 +190,16 @@ Required:
 - TTS basic audio synthesis。
 - 不新增架构能力。
 
+Executable readiness gate:
+
+- `validate_mvp3_adapter_profile_set` 必须在 runtime assembly 前验证 profile set。
+- `assemble_runtime_adapters(stage="mvp3", ...)` 必须拒绝 mock-only profile set。
+- fallback / degraded / mock profile 可以存在，但不得计入 MVP-3 required real profile。
+- MVP-3 required real profile 不得使用 `provider=mock`、`deployment_mode=mock`、`mock://` endpoint、`mocked=true` 或 `mock_profile_ref`。
+- MVP-3 required real profile 必须声明 `target_architecture_validation=true`。
+- MVP-3 assembly gate 只构建 capability snapshot，不得 probe provider endpoint。
+- Adapter callback 进入 Event Journal 前必须通过单一 append boundary 分配 `adapter_callback_seq`，不得由 callback caller 自行填写。
+
 ## 9. Validation Requirements
 
 - MVP-0 mock capability case 验证所有 mock adapter 如实声明 matrices。
@@ -197,3 +207,6 @@ Required:
 - unsupported capability 不得静默使用。
 - adapter failure paths 覆盖 healthcheck failed、retrying、failed、validation failed、degraded。
 - adapter events 不得写入 secrets。
+- MVP-3 runtime assembly 必须验证 ASR、Thinker、Slow LLM、TTS 各自至少有一个 required real profile。
+- MVP-3 runtime assembly 必须记录 `ADAPTER_CAPABILITY_SNAPSHOT_RECORDED`，且 snapshot 包含 adapter ids/types、deployment modes、output modes、capability version。
+- MVP-3 adapter health/error/degradation events 必须在 canonical event registry 中可验证。
