@@ -3,14 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from voice_agent.adapters.capabilities import AdapterCapability
+from voice_agent.adapters.capabilities import AdapterCapability, CREDENTIAL_LIKE_REF_PATTERN
 from voice_agent.adapters.mock_adapters import (
     MVP0_MOCK_CAPABILITY_SNAPSHOT_REF,
     MVP0_MOCK_CAPABILITY_VERSION,
     mvp0_mock_adapter_capabilities,
 )
 from voice_agent.events.journal import InMemoryEventJournal
-from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig, assemble_runtime_adapters
+from voice_agent.runtime.assembly import (
+    RuntimeAdapterAssemblyConfig,
+    RuntimeAdapterAssemblyError,
+    assemble_runtime_adapters,
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,7 @@ def start_configured_session(
     assembly_config: RuntimeAdapterAssemblyConfig,
     capabilities: tuple[AdapterCapability, ...],
 ) -> SessionStartupResult:
+    _validate_startup_ref(runtime_config_ref, field="runtime_config_ref")
     assembly = assemble_runtime_adapters(assembly_config, capabilities)
     capability_snapshot = assembly.capability_snapshot
     journal = InMemoryEventJournal(session_id=session_id, conversation_id=conversation_id)
@@ -85,3 +90,10 @@ def start_configured_session(
         capabilities=assembly.capabilities,
         capability_snapshot=capability_snapshot,
     )
+
+
+def _validate_startup_ref(value: str, *, field: str) -> None:
+    if not value:
+        raise RuntimeAdapterAssemblyError(f"{field} must be non-empty")
+    if CREDENTIAL_LIKE_REF_PATTERN.search(value):
+        raise RuntimeAdapterAssemblyError(f"{field} must not contain credential-like content")
