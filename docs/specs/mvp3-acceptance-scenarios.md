@@ -48,7 +48,7 @@ All MVP-3 fixtures must be synthetic, redacted, and minimal.
 | purpose | Validate MVP-3 runtime session startup from validated profiles. |
 | initial state | Valid MVP-3 profile set. |
 | event chain | `SESSION_STARTED` -> `ADAPTER_CAPABILITY_SNAPSHOT_RECORDED`. |
-| required assertions | Snapshot records adapter ids/types, deployment modes, output modes, and capability version. |
+| required assertions | Snapshot records `capability_snapshot_ref`, `adapter_ids`, `adapter_types`, `deployment_modes`, `output_modes`, and `capability_version`; valid profile sets can include explicit `real`, `fallback`, and `degraded` modes; unsupported, incomplete, or credential-like endpoint/config/profile refs fail closed before startup. |
 | replay expectations | Replay does not probe providers. |
 | forbidden behavior | No startup network healthcheck. |
 

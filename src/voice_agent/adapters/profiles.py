@@ -7,6 +7,7 @@ from typing import Any
 from voice_agent.adapters.capabilities import (
     AdapterCapability,
     CapabilityValidationError,
+    CREDENTIAL_LIKE_REF_PATTERN,
     validate_capability_matrix,
 )
 
@@ -64,6 +65,10 @@ def build_capability_snapshot(
     normalized = tuple(deepcopy(dict(matrix)) for matrix in matrices)
     if not capability_snapshot_ref:
         raise AdapterProfileValidationError("capability_snapshot_ref must be non-empty")
+    if CREDENTIAL_LIKE_REF_PATTERN.search(capability_snapshot_ref):
+        raise AdapterProfileValidationError(
+            "capability_snapshot_ref must not contain credential-like content"
+        )
     if not capability_version:
         raise AdapterProfileValidationError("capability_version must be non-empty")
     return {
