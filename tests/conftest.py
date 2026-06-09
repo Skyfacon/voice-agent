@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MVP0_REPLAY_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "replay" / "mvp0"
 MVP1_REPLAY_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "replay" / "mvp1"
 MVP2_REPLAY_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "replay" / "mvp2"
+MVP3_REPLAY_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "replay" / "mvp3"
 
 
 def load_json_fixture(path: Path) -> dict[str, Any]:

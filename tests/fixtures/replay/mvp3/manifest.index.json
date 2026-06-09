@@ -1,0 +1,100 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP3-ACCEPTANCE",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "scope": "MVP-3 acceptance skeleton for real/fallback/degraded adapter integration behind existing adapter boundaries, starting with fixture and replay safety before provider execution.",
+  "generated_fixtures_must_be": [
+    "synthetic",
+    "redacted",
+    "minimal"
+  ],
+  "required_scenarios": [
+    "MVP3-FIXTURE-SAFETY-001",
+    "MVP3-ADAPTER-PROFILE-001",
+    "MVP3-ADAPTER-EVENT-HARNESS-001",
+    "MVP3-RUNTIME-ASSEMBLY-001",
+    "MVP3-ASR-CONTRACT-001",
+    "MVP3-THINKER-CONTRACT-001",
+    "MVP3-SLOW-LLM-STRUCTURED-001",
+    "MVP3-TTS-CONTRACT-001",
+    "MVP3-FALLBACK-DEGRADED-REPLAY-001",
+    "MVP3-ACCEPTANCE-SCOPE-SAFETY-001"
+  ],
+  "forbidden_behaviors": [
+    "provider_sdk_dependency",
+    "provider_network_probe",
+    "direct_external_model_call",
+    "real_external_tool_side_effect",
+    "raw_audio_fixture",
+    "raw_trace_fixture",
+    "secret_or_credential_fixture",
+    "unredacted_real_user_input",
+    "replay_calls_provider",
+    "new_architecture_capability"
+  ],
+  "required_replay_properties": [
+    "deterministic_replay_does_not_rerun_models_tools_network_clock_or_random",
+    "mvp3_slice0_contains_no_provider_execution",
+    "mvp3_fixtures_are_synthetic_redacted_minimal",
+    "mock_real_fallback_degraded_modes_must_be_explicit"
+  ],
+  "fixture_checks": [
+    {
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "purpose": "empty MVP-3 replay safety skeleton with no provider execution"
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "MVP3-FIXTURE-SAFETY-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "MVP-3 Slice 0 fixtures are deterministic, GitHub-safe, synthetic/redacted/minimal, and contain no provider execution."
+    },
+    {
+      "scenario_id": "MVP3-ADAPTER-PROFILE-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 1 profile contract must use provider-agnostic metadata and fail closed for mock-only or credential-like profiles."
+    },
+    {
+      "scenario_id": "MVP3-ADAPTER-EVENT-HARNESS-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 2 adapter harness must emit canonical health/error/degraded events through the callback append boundary."
+    },
+    {
+      "scenario_id": "MVP3-RUNTIME-ASSEMBLY-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 3 runtime assembly must record validated capability snapshots without provider probes."
+    },
+    {
+      "scenario_id": "MVP3-ASR-CONTRACT-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 4 ASR contract must use explicit output modes and safe refs."
+    },
+    {
+      "scenario_id": "MVP3-THINKER-CONTRACT-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 5 Thinker contract must normalize structured output before downstream use."
+    },
+    {
+      "scenario_id": "MVP3-SLOW-LLM-STRUCTURED-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 6 Slow LLM contract must make validation failure event-visible."
+    },
+    {
+      "scenario_id": "MVP3-TTS-CONTRACT-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 7 TTS contract must use safe audio refs and explicit truncate degradation."
+    },
+    {
+      "scenario_id": "MVP3-FALLBACK-DEGRADED-REPLAY-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 8 replay must distinguish real/fallback/degraded modes without provider rerun."
+    },
+    {
+      "scenario_id": "MVP3-ACCEPTANCE-SCOPE-SAFETY-001",
+      "fixture": "000-empty-mvp3-session.fixture.json",
+      "assertion": "Future Slice 9 acceptance must reject unsafe fixtures, direct provider calls, and scope broadening."
+    }
+  ]
+}

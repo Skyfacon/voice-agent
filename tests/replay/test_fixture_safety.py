@@ -9,6 +9,7 @@ from conftest import (
     MVP0_REPLAY_FIXTURE_DIR,
     MVP1_REPLAY_FIXTURE_DIR,
     MVP2_REPLAY_FIXTURE_DIR,
+    MVP3_REPLAY_FIXTURE_DIR,
     REPO_ROOT,
     load_json_fixture,
 )
@@ -22,6 +23,7 @@ MVP1_EMPTY_FIXTURE = MVP1_REPLAY_FIXTURE_DIR / "000-empty-mvp1-session.fixture.j
 MVP1_MANIFEST_INDEX = MVP1_REPLAY_FIXTURE_DIR / "manifest.index.json"
 MVP2_EMPTY_FIXTURE = MVP2_REPLAY_FIXTURE_DIR / "000-empty-mvp2-session.fixture.json"
 MVP2_MANIFEST_INDEX = MVP2_REPLAY_FIXTURE_DIR / "manifest.index.json"
+MVP3_EMPTY_FIXTURE = MVP3_REPLAY_FIXTURE_DIR / "000-empty-mvp3-session.fixture.json"
 
 REQUIRED_GITIGNORE_LINES = {
     "diagnostics/",
@@ -331,6 +333,40 @@ def test_empty_mvp2_fixture_is_synthetic_minimal_and_github_safe() -> None:
 
 def test_empty_mvp2_fixture_replays_deterministically_without_runtime_execution() -> None:
     result = run_replay_fixture(load_json_fixture(MVP2_EMPTY_FIXTURE))
+
+    assert result.replay_mode == "deterministic"
+    assert result.fixture_domain == "GITHUB_ALLOWED"
+    assert result.ordered_events == ()
+    assert result.diagnostics["ignored_events"] == []
+    assert result.diagnostics["data_plane_refs"] == []
+    assert result.state_digest["source_session_id"] is None
+    assert result.state_digest["last_event_seq"] == 0
+    assert [event["event_name"] for event in result.replay_events] == [
+        "REPLAY_STARTED",
+        "REPLAY_COMPLETED",
+    ]
+
+
+def test_empty_mvp3_fixture_lives_in_github_allowed_fixture_dir() -> None:
+    assert MVP3_EMPTY_FIXTURE.parent == MVP3_REPLAY_FIXTURE_DIR
+    assert "replays/local" not in MVP3_EMPTY_FIXTURE.as_posix()
+    assert MVP3_EMPTY_FIXTURE.is_file()
+
+
+def test_empty_mvp3_fixture_is_synthetic_minimal_and_github_safe() -> None:
+    fixture = load_json_fixture(MVP3_EMPTY_FIXTURE)
+
+    assert_fixture_is_github_safe(fixture)
+    assert fixture["replay_manifest"]["replay_id"] == "replay_mvp3_empty_session_000"
+    assert fixture["replay_manifest"]["source_trace_ref"] == "fixture://mvp3/000-empty-mvp3-session"
+    assert fixture["replay_manifest"]["replay_mode"] == "deterministic"
+    assert fixture["replay_manifest"]["fixture_domain"] == "GITHUB_ALLOWED"
+    assert fixture["replay_manifest"]["generated_from"] == "hand_written_minimal"
+    assert fixture["events"] == []
+
+
+def test_empty_mvp3_fixture_replays_deterministically_without_runtime_execution() -> None:
+    result = run_replay_fixture(load_json_fixture(MVP3_EMPTY_FIXTURE))
 
     assert result.replay_mode == "deterministic"
     assert result.fixture_domain == "GITHUB_ALLOWED"
