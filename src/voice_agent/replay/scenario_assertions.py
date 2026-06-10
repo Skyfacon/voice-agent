@@ -183,6 +183,15 @@ MVP3_DIRECT_PROVIDER_MARKERS = (
     "api.groq.com",
     "api.deepseek.com",
 )
+MVP3_FORBIDDEN_FIXTURE_KEYS = frozenset(
+    {
+        "audio",
+        "audio_samples",
+        "pcm_samples",
+        "pcm_bytes",
+        "wav_bytes",
+    }
+)
 MVP3_FORBIDDEN_FIXTURE_KEY_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -1793,6 +1802,7 @@ def assert_mvp3_fixture_is_repo_safe(fixture: Mapping[str, Any]) -> None:
 
         for path, value in _iter_json_values(fixture):
             last_key = path[-1] if path else ""
+            normalized_key = last_key.lower().replace("-", "_")
             if path[:1] == ("replay_manifest",) and last_key in ALLOWED_MANIFEST_SAFETY_FLAGS:
                 if value is not False:
                     raise MVP3AcceptanceError(f"unsafe manifest safety flag: {'.'.join(path)}")
@@ -1807,6 +1817,8 @@ def assert_mvp3_fixture_is_repo_safe(fixture: Mapping[str, Any]) -> None:
                     raise MVP3AcceptanceError(f"unsafe authorization ref: {'.'.join(path)}")
                 _assert_mvp3_safe_string_fixture_value(value, ".".join(path))
                 continue
+            if normalized_key in MVP3_FORBIDDEN_FIXTURE_KEYS:
+                raise MVP3AcceptanceError(f"forbidden MVP-3 raw/provider payload key: {'.'.join(path)}")
             if any(pattern.search(last_key) for pattern in MVP3_FORBIDDEN_FIXTURE_KEY_PATTERNS):
                 raise MVP3AcceptanceError(f"forbidden MVP-3 raw/provider payload key: {'.'.join(path)}")
             if any(pattern.search(last_key) for pattern in FORBIDDEN_FIXTURE_KEY_PATTERNS):
@@ -1902,6 +1914,9 @@ def _validate_mvp3_manifest_index(
     missing_scenarios = [scenario_id for scenario_id in required_scenarios if scenario_id not in scenario_entries]
     if missing_scenarios:
         raise MVP3AcceptanceError(f"Missing scenario entries: {missing_scenarios}")
+    extra_scenarios = [scenario_id for scenario_id in scenario_entries if scenario_id not in required_scenarios]
+    if extra_scenarios:
+        raise MVP3AcceptanceError(f"Unexpected scenario entries: {extra_scenarios}")
     fixture_check_names = set(_mvp3_fixture_check_names(index))
     missing_fixture_checks = sorted(
         {
@@ -1935,7 +1950,7 @@ def _mvp3_fixture_check_names(index: Mapping[str, Any]) -> tuple[str, ...]:
     for check in checks:
         if not isinstance(check, Mapping) or not isinstance(check.get("fixture"), str):
             raise MVP3AcceptanceError("fixture_checks entries must contain fixture")
-        names.append(str(check["fixture"]))
+        names.append(_validate_mvp3_fixture_name(str(check["fixture"])))
     if len(names) != len(set(names)):
         raise MVP3AcceptanceError("fixture_checks must not contain duplicate fixtures")
     return tuple(names)
@@ -1965,9 +1980,22 @@ def _mvp3_scenario_fixture_names(scenario: Mapping[str, Any]) -> tuple[str, ...]
         if not isinstance(fixture, str):
             raise MVP3AcceptanceError("scenario entry must include fixture or fixtures")
         fixture_names = (fixture,)
-    if not fixture_names or not all(name.endswith(".fixture.json") for name in fixture_names):
-        raise MVP3AcceptanceError("scenario fixtures must be .fixture.json files")
-    return fixture_names
+    if not fixture_names:
+        raise MVP3AcceptanceError("scenario entry must include at least one fixture")
+    return tuple(_validate_mvp3_fixture_name(name) for name in fixture_names)
+
+
+def _validate_mvp3_fixture_name(fixture_name: str) -> str:
+    if (
+        not fixture_name
+        or "/" in fixture_name
+        or "\\" in fixture_name
+        or Path(fixture_name).is_absolute()
+        or Path(fixture_name).name != fixture_name
+        or not fixture_name.endswith(".fixture.json")
+    ):
+        raise MVP3AcceptanceError(f"MVP-3 fixture names must be local .fixture.json basenames: {fixture_name}")
+    return fixture_name
 
 
 def _assert_mvp3_replay_matches_suite(
@@ -2342,8 +2370,9 @@ def _assert_mvp3_scope_text_does_not_broaden(scope: str) -> None:
 
 
 def _is_forbidden_mvp3_source_module(source_module: str) -> bool:
+    normalized_source_module = source_module.strip().lower().replace("-", "_")
     return any(
-        source_module == forbidden or source_module.startswith(f"{forbidden}.")
+        normalized_source_module == forbidden or normalized_source_module.startswith(f"{forbidden}.")
         for forbidden in MVP3_FORBIDDEN_SOURCE_MODULES
     )
 

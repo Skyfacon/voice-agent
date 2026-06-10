@@ -230,6 +230,24 @@ def test_mvp3_acceptance_rejects_missing_required_scenario_mapping() -> None:
         )
 
 
+def test_mvp3_acceptance_rejects_extra_scenario_mapping() -> None:
+    manifest = load_json_fixture(MANIFEST_INDEX)
+    manifest["scenarios"].append(
+        {
+            "scenario_id": "MVP3-REAL-PROVIDER-999",
+            "fixture": EMPTY_FIXTURE.name,
+            "assertion": "hidden future provider scenario must not be silently accepted",
+        }
+    )
+
+    with pytest.raises(MVP3AcceptanceError, match="Unexpected scenario entries"):
+        run_mvp3_acceptance_manifest(
+            manifest,
+            fixture_dir=MVP3_REPLAY_FIXTURE_DIR,
+            required_scenario_ids=REQUIRED_SCENARIOS,
+        )
+
+
 def test_mvp3_acceptance_rejects_manifest_that_weakens_replay_scope_gates() -> None:
     manifest = load_json_fixture(MANIFEST_INDEX)
     manifest["required_replay_properties"] = [
@@ -263,6 +281,18 @@ def test_mvp3_acceptance_rejects_missing_adapter_output_mode_label(tmp_path) -> 
         )
 
 
+def test_mvp3_acceptance_rejects_path_traversal_fixture_names() -> None:
+    manifest = load_json_fixture(MANIFEST_INDEX)
+    manifest["scenarios"][0]["fixture"] = "../outside.fixture.json"
+
+    with pytest.raises(MVP3AcceptanceError, match="basenames"):
+        run_mvp3_acceptance_manifest(
+            manifest,
+            fixture_dir=MVP3_REPLAY_FIXTURE_DIR,
+            required_scenario_ids=REQUIRED_SCENARIOS,
+        )
+
+
 def test_mvp3_acceptance_rejects_repo_unsafe_direct_provider_refs() -> None:
     fixture = deepcopy(load_json_fixture(SLICE8_FIXTURE))
     fixture["events"][0]["runtime_config_ref"] = "https://provider.example.invalid/v1/models"
@@ -286,6 +316,20 @@ def test_mvp3_acceptance_rejects_non_string_raw_or_provider_payload_fields() -> 
     with pytest.raises(MVP3AcceptanceError, match="provider_response"):
         assert_mvp3_fixture_is_repo_safe(fixture)
 
+    fixture = deepcopy(load_json_fixture(SLICE8_FIXTURE))
+    audio_started = _event_by_id(fixture["events"], "evt_mvp3_slice8_audio_started")
+    audio_started["audio"] = [0, 1, 2, 3]
+
+    with pytest.raises(MVP3AcceptanceError, match="audio"):
+        assert_mvp3_fixture_is_repo_safe(fixture)
+
+    fixture = deepcopy(load_json_fixture(SLICE8_FIXTURE))
+    audio_started = _event_by_id(fixture["events"], "evt_mvp3_slice8_audio_started")
+    audio_started["pcm_samples"] = [0, 1, 2, 3]
+
+    with pytest.raises(MVP3AcceptanceError, match="pcm_samples"):
+        assert_mvp3_fixture_is_repo_safe(fixture)
+
 
 def test_mvp3_acceptance_rejects_percent_encoded_provider_refs() -> None:
     fixture = deepcopy(load_json_fixture(SLICE8_FIXTURE))
@@ -306,6 +350,18 @@ def test_mvp3_acceptance_rejects_qualified_provider_source_modules(tmp_path) -> 
     fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(MVP3AcceptanceError, match="provider_client.openai"):
+        run_mvp3_acceptance_manifest(
+            manifest,
+            fixture_dir=tmp_path,
+            required_scenario_ids=REQUIRED_SCENARIOS,
+        )
+
+    fixture = load_json_fixture(fixture_path)
+    asr_output = _event_by_id(fixture["events"], "evt_mvp3_slice8_asr_real_output")
+    asr_output["source_module"] = "Provider_Client.openai"
+    fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(MVP3AcceptanceError, match="Provider_Client.openai"):
         run_mvp3_acceptance_manifest(
             manifest,
             fixture_dir=tmp_path,
