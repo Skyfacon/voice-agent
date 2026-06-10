@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import unquote
 
 from voice_agent.privacy.redaction import SECRET_VALUE_PATTERN, is_safe_authorization_ref
 from voice_agent.replay.runner import ReplayResult, run_replay_fixture
@@ -21,6 +22,10 @@ class MVP1AcceptanceError(AssertionError):
 
 
 class MVP2AcceptanceError(AssertionError):
+    pass
+
+
+class MVP3AcceptanceError(AssertionError):
     pass
 
 
@@ -65,6 +70,129 @@ MVP2_REQUIRED_SCENARIOS = (
     "MVP2-ACCEPTANCE-SCOPE-SAFETY-001",
 )
 MVP2_OUTPUT_MODES = frozenset({"mock", "degraded", "fallback"})
+MVP3_REQUIRED_SCENARIOS = (
+    "MVP3-FIXTURE-SAFETY-001",
+    "MVP3-ADAPTER-PROFILE-001",
+    "MVP3-ADAPTER-EVENT-HARNESS-001",
+    "MVP3-RUNTIME-ASSEMBLY-001",
+    "MVP3-ASR-CONTRACT-001",
+    "MVP3-THINKER-CONTRACT-001",
+    "MVP3-SLOW-LLM-STRUCTURED-001",
+    "MVP3-TTS-CONTRACT-001",
+    "MVP3-FALLBACK-DEGRADED-REPLAY-001",
+    "MVP3-ACCEPTANCE-SCOPE-SAFETY-001",
+)
+MVP3_OUTPUT_MODES = frozenset({"real", "fallback", "degraded"})
+MVP3_ALL_OUTPUT_MODES = frozenset({"real", "mock", "fallback", "degraded"})
+MVP3_REQUIRED_REPLAY_PROPERTIES = frozenset(
+    {
+        "deterministic_replay_does_not_rerun_models_tools_network_clock_or_random",
+        "mvp3_slice0_contains_no_provider_execution",
+        "mvp3_fixtures_are_synthetic_redacted_minimal",
+        "mock_real_fallback_degraded_modes_must_be_explicit",
+        "adapter_health_digest_distinguishes_output_modes_failure_retry_missing_capabilities_degradation",
+        "fallback_degraded_replay_uses_recorded_refs_only",
+        "all_mvp3_scenario_ids_are_manifest_mapped",
+    }
+)
+MVP3_REQUIRED_FORBIDDEN_BEHAVIORS = frozenset(
+    {
+        "provider_sdk_dependency",
+        "provider_network_probe",
+        "direct_external_model_call",
+        "real_external_tool_side_effect",
+        "raw_audio_fixture",
+        "raw_trace_fixture",
+        "secret_or_credential_fixture",
+        "unredacted_real_user_input",
+        "replay_calls_provider",
+        "new_architecture_capability",
+        "missing_output_mode_label",
+        "weakened_replay_properties",
+        "scope_broadening",
+        "raw_local_debug_artifact_ref",
+    }
+)
+MVP3_ADAPTER_OUTPUT_EVENT_NAMES = frozenset(
+    {
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
+        "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED",
+        "TTS_SYNTHESIS_OUTPUT_EMITTED",
+    }
+)
+MVP3_ADAPTER_OUTPUT_MODE_REQUIRED_EVENT_NAMES = MVP3_ADAPTER_OUTPUT_EVENT_NAMES | frozenset(
+    {
+        "ADAPTER_HEALTHCHECK_FAILED",
+        "ADAPTER_REQUEST_FAILED",
+        "ADAPTER_OUTPUT_VALIDATION_FAILED",
+        "ADAPTER_OUTPUT_DEGRADED",
+    }
+)
+MVP3_FORBIDDEN_SOURCE_MODULES = frozenset(
+    {
+        "provider_sdk",
+        "provider_client",
+        "provider_http_client",
+        "provider_websocket_client",
+        "startup_healthcheck_probe",
+        "network_probe",
+        "real_external_tool_adapter",
+        "external_write_adapter",
+        "external_communication_adapter",
+        "booking_or_payment_adapter",
+        "real_device_adapter",
+        "direct_frontend_mutator",
+        "model_text_ui_driver",
+    }
+)
+MVP3_FORBIDDEN_EVENT_NAMES = frozenset(
+    {
+        "PROVIDER_REQUEST_STARTED",
+        "PROVIDER_REQUEST_COMPLETED",
+        "PROVIDER_HEALTHCHECK_STARTED",
+        "PROVIDER_HEALTHCHECK_COMPLETED",
+        "EXTERNAL_MODEL_CALL_STARTED",
+        "EXTERNAL_TOOL_SIDE_EFFECT_COMMITTED",
+        "SLOWTASK_PAUSED",
+        "SLOWTASK_RESUMED",
+        "MULTI_SLOWTASK_ACTIVATED",
+    }
+)
+MVP3_FORBIDDEN_SCOPE_MARKERS = (
+    "multi active slowtask",
+    "multi-active slowtask",
+    "pause/resume",
+    "real external side effect",
+    "production privacy",
+    "provider call during replay",
+    "startup network healthcheck",
+)
+MVP3_DIRECT_PROVIDER_MARKERS = (
+    "http://",
+    "https://",
+    "ws://",
+    "wss://",
+    "socket://",
+    "sdk://",
+    "provider-call://",
+    "provider://live",
+    "healthcheck://",
+    "api.openai.com",
+    "api.anthropic.com",
+    "api.groq.com",
+    "api.deepseek.com",
+)
+MVP3_FORBIDDEN_FIXTURE_KEY_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"(^|[_-])audio[_-]?(bytes|data|payload)$",
+        r"(^|[_-])raw[_-]?(audio|trace|transcript|web)([_-]?(bytes|data|payload|ref))?$",
+        r"(^|[_-])provider[_-]?(payload|response|request|request[_-]?body|headers?|schema|raw[_-]?output)$",
+        r"(^|[_-])provider[_-].*(payload|response|request|headers?|schema|tool[_-]?calls|raw[_-]?output)$",
+        r"(^|[_-])(request|response)[_-]?(body|payload)$",
+    )
+)
 MVP2_REQUIRED_REPLAY_PROPERTIES = frozenset(
     {
         "deterministic_replay_does_not_rerun_models_tools_network_clock_or_random",
@@ -457,6 +585,29 @@ class MVP2ScenarioResult:
 class MVP2AcceptanceResult:
     scenario_results: tuple[MVP2ScenarioResult, ...]
     fixture_results: tuple[MVP2FixtureCheckResult, ...]
+    summary: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP3FixtureCheckResult:
+    fixture_name: str
+    result_status: str
+    state_digest: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP3ScenarioResult:
+    scenario_id: str
+    fixture_names: tuple[str, ...]
+    result_status: str
+    assertion_summary: dict[str, Any]
+    state_digest: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MVP3AcceptanceResult:
+    scenario_results: tuple[MVP3ScenarioResult, ...]
+    fixture_results: tuple[MVP3FixtureCheckResult, ...]
     summary: dict[str, Any]
 
 
@@ -1542,6 +1693,739 @@ def _string_tuple_mvp2(value: object, field: str) -> tuple[str, ...]:
         raise MVP2AcceptanceError(f"{field} must be a list of strings")
     if not all(isinstance(item, str) and item for item in value):
         raise MVP2AcceptanceError(f"{field} must be a list of non-empty strings")
+    return tuple(value)
+
+
+def run_mvp3_acceptance_manifest(
+    manifest_index: Mapping[str, Any],
+    *,
+    fixture_dir: Path,
+    required_scenario_ids: Sequence[str] | None = None,
+) -> MVP3AcceptanceResult:
+    required_scenarios = tuple(required_scenario_ids or MVP3_REQUIRED_SCENARIOS)
+    index = deepcopy(dict(manifest_index))
+    _validate_mvp3_manifest_index(index, required_scenario_ids=required_scenarios)
+
+    fixture_results: list[MVP3FixtureCheckResult] = []
+    replay_results_by_fixture: dict[str, ReplayResult] = {}
+    fixtures_by_name: dict[str, dict[str, Any]] = {}
+    for fixture_name in _mvp3_fixture_check_names(index):
+        fixture = _load_mvp3_fixture(fixture_dir / fixture_name)
+        assert_mvp3_fixture_is_repo_safe(fixture)
+        assert_fixture_has_no_forbidden_mvp3_scope(fixture["events"])
+        assert_mvp3_fixture_has_explicit_output_modes(fixture)
+        first_result = run_replay_fixture(fixture)
+        second_result = run_replay_fixture(fixture)
+        if first_result.state_digest != second_result.state_digest:
+            raise MVP3AcceptanceError(f"{fixture_name} replay is not deterministic")
+        _assert_mvp3_replay_matches_suite(index, fixture_name=fixture_name, result=first_result)
+        _assert_mvp3_replay_state_surface(first_result, fixture_name=fixture_name)
+        fixtures_by_name[fixture_name] = fixture
+        replay_results_by_fixture[fixture_name] = first_result
+        fixture_results.append(
+            MVP3FixtureCheckResult(
+                fixture_name=fixture_name,
+                result_status=first_result.result_status,
+                state_digest=first_result.state_digest,
+            )
+        )
+
+    scenario_entries = _mvp3_scenario_entries_by_id(index)
+    scenario_results: list[MVP3ScenarioResult] = []
+    for scenario_id in required_scenarios:
+        scenario = scenario_entries[scenario_id]
+        fixture_names = _mvp3_scenario_fixture_names(scenario)
+        fixtures = tuple(fixtures_by_name[name] for name in fixture_names)
+        replay_results = tuple(replay_results_by_fixture[name] for name in fixture_names)
+        assertion_summary = _assert_mvp3_scenario(
+            scenario_id,
+            fixtures=fixtures,
+            results=replay_results,
+        )
+        scenario_results.append(
+            MVP3ScenarioResult(
+                scenario_id=scenario_id,
+                fixture_names=fixture_names,
+                result_status="passed",
+                assertion_summary=assertion_summary,
+                state_digest=replay_results[-1].state_digest,
+            )
+        )
+
+    return MVP3AcceptanceResult(
+        scenario_results=tuple(scenario_results),
+        fixture_results=tuple(fixture_results),
+        summary={
+            "suite_id": str(index["suite_id"]),
+            "result_status": "passed",
+            "scenario_count": len(scenario_results),
+            "fixture_count": len(fixture_results),
+            "validated_fixture_names": [fixture.fixture_name for fixture in fixture_results],
+            "deterministic_replay_verified": True,
+            "runtime_execution_detected": False,
+            "provider_execution_detected": False,
+            "adapter_health_digest_verified": _mvp3_adapter_health_digest_verified(
+                replay_results_by_fixture.values()
+            ),
+            "fallback_degraded_contract_verified": any(
+                scenario.scenario_id == "MVP3-FALLBACK-DEGRADED-REPLAY-001"
+                for scenario in scenario_results
+            ),
+            "adr_update_required": False,
+            "hidden_future_scope_detected": False,
+        },
+    )
+
+
+def assert_mvp3_fixture_is_repo_safe(fixture: Mapping[str, Any]) -> None:
+    try:
+        manifest = _required_mapping_mvp3(fixture, "replay_manifest")
+        if manifest.get("fixture_domain") != "GITHUB_ALLOWED":
+            raise MVP3AcceptanceError("fixture_domain must be GITHUB_ALLOWED")
+        if manifest.get("replay_mode") != "deterministic":
+            raise MVP3AcceptanceError("MVP-3 fixtures must use deterministic replay")
+        if manifest.get("generated_from") not in {"synthetic", "redacted", "hand_written_minimal"}:
+            raise MVP3AcceptanceError("GitHub fixtures must be synthetic, redacted, or hand_written_minimal")
+        if manifest.get("allowed_re_eval_components", []) != []:
+            raise MVP3AcceptanceError("deterministic MVP-3 fixtures must not opt into re-eval components")
+        if any(manifest.get(flag) is not False for flag in ALLOWED_MANIFEST_SAFETY_FLAGS):
+            raise MVP3AcceptanceError("GitHub fixture safety flags must all be false")
+
+        for path, value in _iter_json_values(fixture):
+            last_key = path[-1] if path else ""
+            if path[:1] == ("replay_manifest",) and last_key in ALLOWED_MANIFEST_SAFETY_FLAGS:
+                if value is not False:
+                    raise MVP3AcceptanceError(f"unsafe manifest safety flag: {'.'.join(path)}")
+                continue
+            if last_key in ALLOWED_SAFE_SECRET_METADATA_KEYS:
+                if not isinstance(value, str) or _contains_secret_like_value(value):
+                    raise MVP3AcceptanceError(f"unsafe secret metadata: {'.'.join(path)}")
+                _assert_mvp3_safe_string_fixture_value(value, ".".join(path))
+                continue
+            if last_key in ALLOWED_SAFE_REF_KEYS:
+                if not isinstance(value, str) or not is_safe_authorization_ref(value, allow_local=False):
+                    raise MVP3AcceptanceError(f"unsafe authorization ref: {'.'.join(path)}")
+                _assert_mvp3_safe_string_fixture_value(value, ".".join(path))
+                continue
+            if any(pattern.search(last_key) for pattern in MVP3_FORBIDDEN_FIXTURE_KEY_PATTERNS):
+                raise MVP3AcceptanceError(f"forbidden MVP-3 raw/provider payload key: {'.'.join(path)}")
+            if any(pattern.search(last_key) for pattern in FORBIDDEN_FIXTURE_KEY_PATTERNS):
+                raise MVP3AcceptanceError(f"forbidden fixture key: {'.'.join(path)}")
+            if isinstance(value, str):
+                _assert_mvp3_safe_string_fixture_value(value, ".".join(path))
+    except MVP3AcceptanceError as exc:
+        raise MVP3AcceptanceError(f"repo-unsafe MVP-3 fixture content: {exc}") from exc
+
+
+def assert_fixture_has_no_forbidden_mvp3_scope(events: Sequence[Mapping[str, Any]]) -> None:
+    for event in events:
+        event_name = str(event.get("event_name", ""))
+        source_module = str(event.get("source_module", ""))
+        if event_name in MVP3_FORBIDDEN_EVENT_NAMES:
+            raise MVP3AcceptanceError(f"forbidden MVP-3 event_name: {event_name}")
+        if _is_forbidden_mvp3_source_module(source_module):
+            raise MVP3AcceptanceError(f"forbidden MVP-3 source_module: {source_module}")
+
+
+def assert_mvp3_fixture_has_explicit_output_modes(fixture: Mapping[str, Any]) -> None:
+    for event in _required_sequence_mvp3(fixture, "events"):
+        if not isinstance(event, Mapping):
+            raise MVP3AcceptanceError("fixture events must be objects")
+        event_name = str(event.get("event_name", ""))
+        output_mode = event.get("output_mode")
+        if event_name in MVP3_ADAPTER_OUTPUT_MODE_REQUIRED_EVENT_NAMES:
+            if output_mode not in MVP3_OUTPUT_MODES:
+                raise MVP3AcceptanceError(
+                    f"{event_name} must declare output_mode=real, fallback, or degraded"
+                )
+        elif output_mode is not None and output_mode not in MVP3_ALL_OUTPUT_MODES:
+            raise MVP3AcceptanceError(f"{event_name} uses unsupported output_mode: {output_mode}")
+
+        if event_name == "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED":
+            output_modes = _string_tuple_mvp3(event.get("output_modes", ()), "output_modes")
+            deployment_modes = _string_tuple_mvp3(event.get("deployment_modes", ()), "deployment_modes")
+            if not output_modes:
+                raise MVP3AcceptanceError("capability snapshot must declare output_modes")
+            if set(output_modes) - MVP3_OUTPUT_MODES:
+                raise MVP3AcceptanceError("MVP-3 capability output_modes must be real/fallback/degraded")
+            if "mock" in deployment_modes:
+                raise MVP3AcceptanceError("MVP-3 capability deployment_modes must not be mock")
+        if str(event.get("execution_mode", "")).startswith(("real_provider", "provider")):
+            raise MVP3AcceptanceError("MVP-3 acceptance must not claim direct provider execution")
+
+
+def _validate_mvp3_manifest_index(
+    index: Mapping[str, Any],
+    *,
+    required_scenario_ids: tuple[str, ...],
+) -> None:
+    required_fields = {
+        "manifest_index_schema_version",
+        "suite_id",
+        "fixture_domain",
+        "replay_mode",
+        "scope",
+        "generated_fixtures_must_be",
+        "required_scenarios",
+        "forbidden_behaviors",
+        "required_replay_properties",
+        "fixture_checks",
+        "scenarios",
+    }
+    missing = required_fields - set(index)
+    if missing:
+        raise MVP3AcceptanceError(f"Missing MVP-3 acceptance manifest fields: {sorted(missing)}")
+    if index["manifest_index_schema_version"] != "1.0":
+        raise MVP3AcceptanceError("manifest_index_schema_version must be '1.0'")
+    if index["suite_id"] != "MVP3-ACCEPTANCE":
+        raise MVP3AcceptanceError("suite_id must be 'MVP3-ACCEPTANCE'")
+    if index["fixture_domain"] != "GITHUB_ALLOWED":
+        raise MVP3AcceptanceError("MVP-3 acceptance fixtures must be GITHUB_ALLOWED")
+    if index["replay_mode"] != "deterministic":
+        raise MVP3AcceptanceError("MVP-3 acceptance uses deterministic replay")
+
+    generated_requirements = _string_tuple_mvp3(
+        index["generated_fixtures_must_be"],
+        "generated_fixtures_must_be",
+    )
+    if generated_requirements != ("synthetic", "redacted", "minimal"):
+        raise MVP3AcceptanceError("generated_fixtures_must_be must be synthetic/redacted/minimal")
+
+    required_scenarios = _string_tuple_mvp3(index["required_scenarios"], "required_scenarios")
+    if required_scenarios != required_scenario_ids:
+        raise MVP3AcceptanceError(f"required_scenarios must be {list(required_scenario_ids)}")
+
+    _assert_mvp3_scope_text_does_not_broaden(str(index["scope"]))
+    _validate_mvp3_scope_gate_lists(index)
+
+    scenario_entries = _mvp3_scenario_entries_by_id(index)
+    missing_scenarios = [scenario_id for scenario_id in required_scenarios if scenario_id not in scenario_entries]
+    if missing_scenarios:
+        raise MVP3AcceptanceError(f"Missing scenario entries: {missing_scenarios}")
+    fixture_check_names = set(_mvp3_fixture_check_names(index))
+    missing_fixture_checks = sorted(
+        {
+            fixture_name
+            for scenario in scenario_entries.values()
+            for fixture_name in _mvp3_scenario_fixture_names(scenario)
+            if fixture_name not in fixture_check_names
+        }
+    )
+    if missing_fixture_checks:
+        raise MVP3AcceptanceError(f"scenario fixtures must be listed in fixture_checks: {missing_fixture_checks}")
+
+
+def _validate_mvp3_scope_gate_lists(index: Mapping[str, Any]) -> None:
+    forbidden_behaviors = set(_string_tuple_mvp3(index["forbidden_behaviors"], "forbidden_behaviors"))
+    missing_behaviors = sorted(MVP3_REQUIRED_FORBIDDEN_BEHAVIORS - forbidden_behaviors)
+    if missing_behaviors:
+        raise MVP3AcceptanceError(f"forbidden_behaviors missing MVP-3 scope gates: {missing_behaviors}")
+
+    replay_properties = set(
+        _string_tuple_mvp3(index["required_replay_properties"], "required_replay_properties")
+    )
+    missing_properties = sorted(MVP3_REQUIRED_REPLAY_PROPERTIES - replay_properties)
+    if missing_properties:
+        raise MVP3AcceptanceError(f"required_replay_properties missing scope gates: {missing_properties}")
+
+
+def _mvp3_fixture_check_names(index: Mapping[str, Any]) -> tuple[str, ...]:
+    checks = _required_sequence_mvp3(index, "fixture_checks")
+    names: list[str] = []
+    for check in checks:
+        if not isinstance(check, Mapping) or not isinstance(check.get("fixture"), str):
+            raise MVP3AcceptanceError("fixture_checks entries must contain fixture")
+        names.append(str(check["fixture"]))
+    if len(names) != len(set(names)):
+        raise MVP3AcceptanceError("fixture_checks must not contain duplicate fixtures")
+    return tuple(names)
+
+
+def _mvp3_scenario_entries_by_id(index: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    scenarios = _required_sequence_mvp3(index, "scenarios")
+    entries: dict[str, Mapping[str, Any]] = {}
+    for scenario in scenarios:
+        if not isinstance(scenario, Mapping):
+            raise MVP3AcceptanceError("scenarios entries must be objects")
+        scenario_id = scenario.get("scenario_id")
+        if not isinstance(scenario_id, str) or not scenario_id:
+            raise MVP3AcceptanceError("scenario entry must include scenario_id")
+        _mvp3_scenario_fixture_names(scenario)
+        if scenario_id in entries:
+            raise MVP3AcceptanceError(f"duplicate scenario_id: {scenario_id}")
+        entries[scenario_id] = scenario
+    return entries
+
+
+def _mvp3_scenario_fixture_names(scenario: Mapping[str, Any]) -> tuple[str, ...]:
+    if "fixtures" in scenario:
+        fixture_names = _string_tuple_mvp3(scenario["fixtures"], "fixtures")
+    else:
+        fixture = scenario.get("fixture")
+        if not isinstance(fixture, str):
+            raise MVP3AcceptanceError("scenario entry must include fixture or fixtures")
+        fixture_names = (fixture,)
+    if not fixture_names or not all(name.endswith(".fixture.json") for name in fixture_names):
+        raise MVP3AcceptanceError("scenario fixtures must be .fixture.json files")
+    return fixture_names
+
+
+def _assert_mvp3_replay_matches_suite(
+    index: Mapping[str, Any],
+    *,
+    fixture_name: str,
+    result: ReplayResult,
+) -> None:
+    if result.fixture_domain != index["fixture_domain"]:
+        raise MVP3AcceptanceError(f"{fixture_name} fixture_domain mismatch")
+    if result.replay_mode != index["replay_mode"]:
+        raise MVP3AcceptanceError(f"{fixture_name} replay_mode mismatch")
+    if result.result_status != "passed":
+        raise MVP3AcceptanceError(f"{fixture_name} replay did not pass")
+    if result.diagnostics["ignored_events"]:
+        raise MVP3AcceptanceError(f"{fixture_name} replay ignored MVP-3 events")
+
+
+def _assert_mvp3_replay_state_surface(result: ReplayResult, *, fixture_name: str) -> None:
+    required_digest_fields = {
+        "adapter_health_state_hash",
+        "trace_privacy_state_hash",
+        "slowtask_state_hash",
+        "overall_digest",
+    }
+    missing = sorted(required_digest_fields - set(result.state_digest))
+    if missing:
+        raise MVP3AcceptanceError(f"{fixture_name} state digest missing fields: {missing}")
+    unsafe_flags = {
+        "contains_raw_audio": result.trace_privacy_state.contains_raw_audio,
+        "contains_raw_trace": result.trace_privacy_state.contains_raw_trace,
+        "contains_real_user_input": result.trace_privacy_state.contains_real_user_input,
+        "contains_secrets": result.trace_privacy_state.contains_secrets,
+        "contains_unredacted_tool_result": result.trace_privacy_state.contains_unredacted_tool_result,
+        "contains_large_raw_web_content": result.trace_privacy_state.contains_large_raw_web_content,
+    }
+    if any(value is not False for value in unsafe_flags.values()):
+        raise MVP3AcceptanceError(f"{fixture_name} replayed unsafe fixture flags: {unsafe_flags}")
+
+
+def _assert_mvp3_scenario(
+    scenario_id: str,
+    *,
+    fixtures: tuple[Mapping[str, Any], ...],
+    results: tuple[ReplayResult, ...],
+) -> dict[str, Any]:
+    if scenario_id == "MVP3-FIXTURE-SAFETY-001":
+        return _assert_mvp3_fixture_safety(fixtures[0], results[0])
+    if scenario_id == "MVP3-ADAPTER-PROFILE-001":
+        return _assert_mvp3_adapter_profile(fixtures[0], results[0])
+    if scenario_id == "MVP3-ADAPTER-EVENT-HARNESS-001":
+        return _assert_mvp3_adapter_event_harness(fixtures[0], results[0])
+    if scenario_id == "MVP3-RUNTIME-ASSEMBLY-001":
+        return _assert_mvp3_runtime_assembly(fixtures[0], results[0])
+    if scenario_id == "MVP3-ASR-CONTRACT-001":
+        return _assert_mvp3_asr_contract(fixtures[0], results[0])
+    if scenario_id == "MVP3-THINKER-CONTRACT-001":
+        return _assert_mvp3_thinker_contract(fixtures[0], results[0])
+    if scenario_id == "MVP3-SLOW-LLM-STRUCTURED-001":
+        return _assert_mvp3_slow_llm_contract(fixtures[0], results[0])
+    if scenario_id == "MVP3-TTS-CONTRACT-001":
+        return _assert_mvp3_tts_contract(fixtures[0], results[0])
+    if scenario_id == "MVP3-FALLBACK-DEGRADED-REPLAY-001":
+        return _assert_mvp3_fallback_degraded_replay(fixtures[0], results[0])
+    if scenario_id == "MVP3-ACCEPTANCE-SCOPE-SAFETY-001":
+        return _assert_mvp3_acceptance_scope_safety(fixtures, results)
+    raise MVP3AcceptanceError(f"Unknown MVP-3 acceptance scenario: {scenario_id}")
+
+
+def _assert_mvp3_fixture_safety(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    assert_mvp3_fixture_is_repo_safe(fixture)
+    if _required_sequence_mvp3(fixture, "events"):
+        raise MVP3AcceptanceError("fixture safety scenario must use the empty MVP-3 fixture")
+    if result.ordered_events:
+        raise MVP3AcceptanceError("empty MVP-3 fixture must replay without source events")
+    return {
+        "fixture_domain": result.fixture_domain,
+        "replay_mode": result.replay_mode,
+        "event_count": len(result.ordered_events),
+        "unsafe_fixture_count": 0,
+        "runtime_execution_detected": False,
+    }
+
+
+def _assert_mvp3_adapter_profile(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp3(fixture)
+    _require_mvp3_event_names(events, ["ADAPTER_CAPABILITY_SNAPSHOT_RECORDED"])
+    snapshot = events["ADAPTER_CAPABILITY_SNAPSHOT_RECORDED"][0]
+    adapter_types = tuple(str(value) for value in snapshot["adapter_types"])
+    output_modes = tuple(str(value) for value in snapshot["output_modes"])
+    deployment_modes = tuple(str(value) for value in snapshot["deployment_modes"])
+    if set(adapter_types) != {"asr", "thinker", "slow_llm", "tts"}:
+        raise MVP3AcceptanceError("MVP-3 profile scenario must cover ASR, Thinker, Slow LLM, and TTS")
+    if set(output_modes) - MVP3_OUTPUT_MODES:
+        raise MVP3AcceptanceError("MVP-3 profile output modes must be real/fallback/degraded")
+    if "mock" in deployment_modes:
+        raise MVP3AcceptanceError("MVP-3 profile scenario must not use mock deployment mode")
+    if snapshot.get("capability_version") in (None, ""):
+        raise MVP3AcceptanceError("MVP-3 profile scenario must record capability_version")
+    if not result.adapter_health_state.adapters:
+        raise MVP3AcceptanceError("MVP-3 profile scenario must replay adapter health records")
+    return {
+        "adapter_ids": list(snapshot["adapter_ids"]),
+        "adapter_types": list(adapter_types),
+        "deployment_modes": list(deployment_modes),
+        "output_modes": list(output_modes),
+        "capability_version": snapshot["capability_version"],
+    }
+
+
+def _assert_mvp3_adapter_event_harness(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp3(fixture)
+    _require_mvp3_event_names(
+        events,
+        [
+            "ADAPTER_REQUEST_RETRYING",
+            "ADAPTER_REQUEST_FAILED",
+            "ADAPTER_OUTPUT_VALIDATION_FAILED",
+            "ADAPTER_OUTPUT_DEGRADED",
+        ],
+    )
+    adapters = result.adapter_health_state.adapters
+    slow_llm = adapters.get("mvp3_slice8_slow_llm")
+    tts = adapters.get("mvp3_slice8_tts")
+    if slow_llm is None or tts is None:
+        raise MVP3AcceptanceError("adapter event harness scenario must replay slow_llm and tts adapter records")
+    if slow_llm.retry_count < 1 or slow_llm.failure_count < 2:
+        raise MVP3AcceptanceError("adapter event harness must expose retry and failure counts")
+    if not tts.missing_capabilities:
+        raise MVP3AcceptanceError("adapter event harness must expose missing_capabilities")
+    return {
+        "retry_event_count": len(events["ADAPTER_REQUEST_RETRYING"]),
+        "failure_event_count": len(events["ADAPTER_REQUEST_FAILED"])
+        + len(events["ADAPTER_OUTPUT_VALIDATION_FAILED"]),
+        "degraded_event_count": len(events["ADAPTER_OUTPUT_DEGRADED"]),
+        "slow_llm_retry_count": slow_llm.retry_count,
+        "slow_llm_failure_count": slow_llm.failure_count,
+        "tts_missing_capabilities": list(tts.missing_capabilities),
+    }
+
+
+def _assert_mvp3_runtime_assembly(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp3(fixture)
+    _require_mvp3_event_names(events, ["SESSION_STARTED", "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED"])
+    started = events["SESSION_STARTED"][0]
+    snapshot = events["ADAPTER_CAPABILITY_SNAPSHOT_RECORDED"][0]
+    if snapshot.get("caused_by_event_id") != started["event_id"]:
+        raise MVP3AcceptanceError("runtime assembly snapshot must be caused by SESSION_STARTED")
+    if result.adapter_health_state.capability_snapshot_ref != snapshot["capability_snapshot_ref"]:
+        raise MVP3AcceptanceError("runtime assembly must replay capability_snapshot_ref")
+    return {
+        "capability_snapshot_ref": snapshot["capability_snapshot_ref"],
+        "adapter_ids": list(snapshot["adapter_ids"]),
+        "adapter_types": list(snapshot["adapter_types"]),
+        "deployment_modes": list(snapshot["deployment_modes"]),
+        "output_modes": list(snapshot["output_modes"]),
+        "capability_version": snapshot["capability_version"],
+    }
+
+
+def _assert_mvp3_asr_contract(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    event = _find_event_mvp3(fixture, "ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    if event.get("output_mode") not in MVP3_OUTPUT_MODES:
+        raise MVP3AcceptanceError("ASR contract output_mode must be real/fallback/degraded")
+    if event.get("timestamp_status") not in {"available", "unavailable"}:
+        raise MVP3AcceptanceError("ASR contract must label timestamp_status")
+    if event.get("streaming_status") not in {"supported", "unsupported", "unavailable"}:
+        raise MVP3AcceptanceError("ASR contract must label streaming_status")
+    if result.adapter_health_state.output_event_modes.get(str(event["event_id"])) != event["output_mode"]:
+        raise MVP3AcceptanceError("ASR output mode must appear in adapter health digest")
+    return {
+        "event_id": event["event_id"],
+        "adapter_id": event["adapter_id"],
+        "output_mode": event["output_mode"],
+        "timestamp_status": event["timestamp_status"],
+        "streaming_status": event["streaming_status"],
+    }
+
+
+def _assert_mvp3_thinker_contract(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    event = _find_event_mvp3(fixture, "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED")
+    if event.get("normalization_status") != "normalized":
+        raise MVP3AcceptanceError("Thinker contract output must be normalized")
+    status_fields = (
+        "semantic_close_status",
+        "assistant_directedness_status",
+        "emotion_status",
+        "audio_caption_status",
+    )
+    unavailable_fields = [field for field in status_fields if event.get(field) == "unavailable"]
+    if result.adapter_health_state.output_event_modes.get(str(event["event_id"])) != event["output_mode"]:
+        raise MVP3AcceptanceError("Thinker output mode must appear in adapter health digest")
+    router = _find_event_mvp3(fixture, "ROUTER_DECISION_EMITTED")
+    if router.get("thinker_frame_event_id") != event["event_id"]:
+        raise MVP3AcceptanceError("Router must consume the normalized Thinker output event")
+    return {
+        "event_id": event["event_id"],
+        "adapter_id": event["adapter_id"],
+        "output_mode": event["output_mode"],
+        "normalization_status": event["normalization_status"],
+        "unavailable_optional_fields": unavailable_fields,
+    }
+
+
+def _assert_mvp3_slow_llm_contract(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    events = _events_by_name_mvp3(fixture)
+    _require_mvp3_event_names(
+        events,
+        [
+            "ADAPTER_OUTPUT_VALIDATION_FAILED",
+            "ADAPTER_OUTPUT_DEGRADED",
+            "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED",
+            "PLAN_VERSION_ADVANCED",
+        ],
+    )
+    output = events["SLOW_LLM_STRUCTURED_OUTPUT_EMITTED"][0]
+    if output.get("normalization_status") != "normalized":
+        raise MVP3AcceptanceError("Slow LLM structured output must be normalized")
+    if output.get("schema_name") != "voice_agent.slowtask.structured_output.v1":
+        raise MVP3AcceptanceError("Slow LLM structured output must use the MVP-3 schema")
+    task = result.slowtask_state.tasks[str(output["task_id"])]
+    if task.current_plan_version <= int(output["plan_version"]):
+        raise MVP3AcceptanceError("old-plan Slow LLM output must not advance current task state")
+    if task.resolved_arguments_refs or task.argument_provenance_refs:
+        raise MVP3AcceptanceError("old-plan Slow LLM output must remain stale evidence without adoption")
+    return {
+        "output_event_id": output["event_id"],
+        "output_mode": output["output_mode"],
+        "output_plan_version": output["plan_version"],
+        "current_plan_version": task.current_plan_version,
+        "validation_failed_count": len(events["ADAPTER_OUTPUT_VALIDATION_FAILED"]),
+        "resolved_arguments_refs": list(task.resolved_arguments_refs),
+    }
+
+
+def _assert_mvp3_tts_contract(fixture: Mapping[str, Any], result: ReplayResult) -> dict[str, Any]:
+    tts = _find_event_mvp3(fixture, "TTS_SYNTHESIS_OUTPUT_EMITTED")
+    degraded = _find_event_mvp3(fixture, "ADAPTER_OUTPUT_DEGRADED", adapter_id=tts["adapter_id"])
+    if tts.get("normalization_status") != "normalized":
+        raise MVP3AcceptanceError("TTS output must be normalized")
+    if tts.get("truncate_status") == "unsupported_blocked":
+        if degraded.get("missing_capability") != "supports_tts_truncate":
+            raise MVP3AcceptanceError("unsupported TTS truncate must pair with missing capability degradation")
+    audio_ref = str(tts.get("audio_ref") or tts.get("tts_stream_ref") or "")
+    _assert_mvp3_safe_string_fixture_value(audio_ref, "tts.audio_ref")
+    if result.adapter_health_state.output_event_modes.get(str(tts["event_id"])) != tts["output_mode"]:
+        raise MVP3AcceptanceError("TTS output mode must appear in adapter health digest")
+    return {
+        "event_id": tts["event_id"],
+        "adapter_id": tts["adapter_id"],
+        "output_mode": tts["output_mode"],
+        "truncate_status": tts["truncate_status"],
+        "missing_capability": degraded.get("missing_capability"),
+    }
+
+
+def _assert_mvp3_fallback_degraded_replay(
+    fixture: Mapping[str, Any],
+    result: ReplayResult,
+) -> dict[str, Any]:
+    expected_output_modes = {
+        "evt_mvp3_slice8_asr_real_output": "real",
+        "evt_mvp3_slice8_thinker_fallback_output": "fallback",
+        "evt_mvp3_slice8_slow_llm_fallback_output": "fallback",
+        "evt_mvp3_slice8_tts_degraded_output": "degraded",
+    }
+    if result.adapter_health_state.output_event_modes != expected_output_modes:
+        raise MVP3AcceptanceError("fallback/degraded replay must distinguish output modes")
+    if result.diagnostics["adapter_outcomes"]["output_event_modes"] != expected_output_modes:
+        raise MVP3AcceptanceError("fallback/degraded diagnostics must expose output modes")
+    adapters = result.adapter_health_state.adapters
+    slow_llm = adapters["mvp3_slice8_slow_llm"]
+    tts = adapters["mvp3_slice8_tts"]
+    if slow_llm.retry_count != 1 or slow_llm.failure_count != 2:
+        raise MVP3AcceptanceError("fallback/degraded replay must expose retry_count and failure_count")
+    if slow_llm.latest_degradation_reason != "fallback_after_validation_failure":
+        raise MVP3AcceptanceError("fallback/degraded replay must expose latest_degradation_reason")
+    if tts.missing_capabilities != ("supports_tts_truncate",):
+        raise MVP3AcceptanceError("fallback/degraded replay must expose missing_capabilities")
+    task = result.slowtask_state.tasks["task_mvp3_slice8"]
+    if task.current_plan_version != 2 or task.resolved_arguments_refs or task.argument_provenance_refs:
+        raise MVP3AcceptanceError("old-plan adapter output must not advance current task state")
+    return {
+        "output_event_modes": expected_output_modes,
+        "slow_llm_retry_count": slow_llm.retry_count,
+        "slow_llm_failure_count": slow_llm.failure_count,
+        "slow_llm_latest_degradation_reason": slow_llm.latest_degradation_reason,
+        "tts_missing_capabilities": list(tts.missing_capabilities),
+        "current_plan_version": task.current_plan_version,
+    }
+
+
+def _assert_mvp3_acceptance_scope_safety(
+    fixtures: tuple[Mapping[str, Any], ...],
+    results: tuple[ReplayResult, ...],
+) -> dict[str, Any]:
+    if not fixtures or len(fixtures) != len(results):
+        raise MVP3AcceptanceError("scope safety scenario must cover all checked fixtures")
+    for fixture, result in zip(fixtures, results, strict=True):
+        assert_mvp3_fixture_is_repo_safe(fixture)
+        assert_fixture_has_no_forbidden_mvp3_scope(fixture["events"])
+        assert_mvp3_fixture_has_explicit_output_modes(fixture)
+        if result.replay_mode != "deterministic" or result.fixture_domain != "GITHUB_ALLOWED":
+            raise MVP3AcceptanceError("scope safety scenario requires deterministic GITHUB_ALLOWED fixtures")
+    return {
+        "fixture_count": len(fixtures),
+        "replay_modes": sorted({result.replay_mode for result in results}),
+        "fixture_domains": sorted({result.fixture_domain for result in results}),
+        "unsafe_fixture_count": 0,
+        "runtime_execution_detected": False,
+        "provider_execution_detected": False,
+    }
+
+
+def _mvp3_adapter_health_digest_verified(results: Sequence[ReplayResult]) -> bool:
+    for result in results:
+        adapters = result.adapter_health_state.adapters
+        if not adapters:
+            continue
+        digest = result.diagnostics.get("adapter_outcomes", {})
+        if digest != result.adapter_health_state.to_digest_dict():
+            return False
+        required_fields = {
+            "output_mode",
+            "retry_count",
+            "failure_count",
+            "missing_capabilities",
+            "latest_degradation_reason",
+        }
+        for adapter in digest.get("adapters", {}).values():
+            if not required_fields <= set(adapter):
+                return False
+        if {"real", "fallback", "degraded"} <= set(result.adapter_health_state.output_event_modes.values()):
+            return True
+    return False
+
+
+def _events_by_name_mvp3(fixture: Mapping[str, Any]) -> dict[str, list[Mapping[str, Any]]]:
+    events_by_name: dict[str, list[Mapping[str, Any]]] = {}
+    for event in _required_sequence_mvp3(fixture, "events"):
+        if not isinstance(event, Mapping):
+            raise MVP3AcceptanceError("fixture events must be objects")
+        events_by_name.setdefault(str(event["event_name"]), []).append(event)
+    return events_by_name
+
+
+def _require_mvp3_event_names(
+    events_by_name: Mapping[str, Sequence[Mapping[str, Any]]],
+    event_names: Sequence[str],
+) -> None:
+    missing = [event_name for event_name in event_names if event_name not in events_by_name]
+    if missing:
+        raise MVP3AcceptanceError(f"Missing expected MVP-3 scenario events: {missing}")
+
+
+def _find_event_mvp3(fixture: Mapping[str, Any], event_name: str, **matches: object) -> Mapping[str, Any]:
+    for event in _required_sequence_mvp3(fixture, "events"):
+        if not isinstance(event, Mapping) or event.get("event_name") != event_name:
+            continue
+        if all(event.get(field) == expected for field, expected in matches.items()):
+            return event
+    raise MVP3AcceptanceError(f"Missing {event_name} event matching {matches}")
+
+
+def _assert_mvp3_scope_text_does_not_broaden(scope: str) -> None:
+    lower_scope = scope.lower()
+    for marker in MVP3_FORBIDDEN_SCOPE_MARKERS:
+        if marker in lower_scope:
+            raise MVP3AcceptanceError(f"MVP-3 manifest scope broadens into forbidden area: {marker}")
+    if "adapter" not in lower_scope or "existing adapter boundaries" not in lower_scope:
+        raise MVP3AcceptanceError("MVP-3 manifest scope must stay inside existing adapter boundaries")
+
+
+def _is_forbidden_mvp3_source_module(source_module: str) -> bool:
+    return any(
+        source_module == forbidden or source_module.startswith(f"{forbidden}.")
+        for forbidden in MVP3_FORBIDDEN_SOURCE_MODULES
+    )
+
+
+def _assert_mvp3_safe_string_fixture_value(value: str, key_path: str) -> None:
+    lower_values = _mvp3_lower_and_decoded_values(value)
+    if _contains_secret_like_value(value):
+        raise MVP3AcceptanceError(f"forbidden secret-like fixture value: {key_path}")
+    if any(lower_value.endswith(extension) for lower_value in lower_values for extension in RAW_AUDIO_EXTENSIONS):
+        raise MVP3AcceptanceError(f"forbidden raw audio ref: {key_path}")
+    if any(
+        lower_value.startswith(marker) or marker in lower_value
+        for lower_value in lower_values
+        for marker in MVP3_DIRECT_PROVIDER_MARKERS
+    ):
+        raise MVP3AcceptanceError(f"forbidden direct provider or network ref: {key_path}")
+    forbidden_markers = (
+        "audio/raw/",
+        "traces/",
+        "diagnostics/",
+        "replays/local/",
+        "raw trace",
+        "raw audio",
+        "raw transcript",
+        "raw web",
+        "large raw web",
+        "real user",
+        "access_token",
+        "api_key",
+        "authorization header",
+        "cookie=",
+        "bearer ",
+        "provider payload",
+        "provider_payload",
+        "provider schema",
+        "provider_schema",
+    )
+    if any(marker in lower_value for lower_value in lower_values for marker in forbidden_markers):
+        raise MVP3AcceptanceError(f"forbidden local, raw, provider, or secret marker: {key_path}")
+
+
+def _mvp3_lower_and_decoded_values(value: str) -> tuple[str, ...]:
+    values = [value]
+    decoded = value
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        values.append(next_decoded)
+        decoded = next_decoded
+    return tuple(dict.fromkeys(item.lower() for item in values))
+
+
+def _load_mvp3_fixture(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise MVP3AcceptanceError(f"Fixture not found: {path.name}")
+    with path.open(encoding="utf-8") as fixture_file:
+        loaded = json.load(fixture_file)
+    if not isinstance(loaded, dict):
+        raise MVP3AcceptanceError(f"Fixture must contain a JSON object: {path.name}")
+    return loaded
+
+
+def _required_mapping_mvp3(mapping: Mapping[str, Any], field: str) -> Mapping[str, Any]:
+    value = mapping.get(field)
+    if not isinstance(value, Mapping):
+        raise MVP3AcceptanceError(f"{field} must be an object")
+    return value
+
+
+def _required_sequence_mvp3(mapping: Mapping[str, Any], field: str) -> Sequence[Any]:
+    value = mapping.get(field)
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise MVP3AcceptanceError(f"{field} must be a list")
+    return value
+
+
+def _string_tuple_mvp3(value: object, field: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise MVP3AcceptanceError(f"{field} must be a list of strings")
+    if not all(isinstance(item, str) and item for item in value):
+        raise MVP3AcceptanceError(f"{field} must be a list of non-empty strings")
     return tuple(value)
 
 

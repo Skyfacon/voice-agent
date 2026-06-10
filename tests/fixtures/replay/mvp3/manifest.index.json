@@ -31,13 +31,20 @@
     "secret_or_credential_fixture",
     "unredacted_real_user_input",
     "replay_calls_provider",
-    "new_architecture_capability"
+    "new_architecture_capability",
+    "missing_output_mode_label",
+    "weakened_replay_properties",
+    "scope_broadening",
+    "raw_local_debug_artifact_ref"
   ],
   "required_replay_properties": [
     "deterministic_replay_does_not_rerun_models_tools_network_clock_or_random",
     "mvp3_slice0_contains_no_provider_execution",
     "mvp3_fixtures_are_synthetic_redacted_minimal",
-    "mock_real_fallback_degraded_modes_must_be_explicit"
+    "mock_real_fallback_degraded_modes_must_be_explicit",
+    "adapter_health_digest_distinguishes_output_modes_failure_retry_missing_capabilities_degradation",
+    "fallback_degraded_replay_uses_recorded_refs_only",
+    "all_mvp3_scenario_ids_are_manifest_mapped"
   ],
   "fixture_checks": [
     {
@@ -57,38 +64,38 @@
     },
     {
       "scenario_id": "MVP3-ADAPTER-PROFILE-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 1 profile contract must use provider-agnostic metadata and fail closed for mock-only or credential-like profiles."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 1 profile contract is acceptance-closed by a recorded capability snapshot with provider-agnostic adapter ids/types, explicit real/fallback/degraded output modes, and no provider probe."
     },
     {
       "scenario_id": "MVP3-ADAPTER-EVENT-HARNESS-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 2 adapter harness must emit canonical health/error/degraded events through the callback append boundary."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 2 adapter harness coverage replays canonical retry/failure/validation/degraded events from recorded journal events only."
     },
     {
       "scenario_id": "MVP3-RUNTIME-ASSEMBLY-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 3 runtime assembly must record validated capability snapshots without provider probes."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 3 runtime assembly coverage replays SESSION_STARTED and ADAPTER_CAPABILITY_SNAPSHOT_RECORDED without provider probes."
     },
     {
       "scenario_id": "MVP3-ASR-CONTRACT-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 4 ASR contract must use explicit output modes and safe refs."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 4 ASR contract coverage replays explicit real output mode and safe transcript refs."
     },
     {
       "scenario_id": "MVP3-THINKER-CONTRACT-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 5 Thinker contract must normalize structured output before downstream use."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 5 Thinker contract coverage replays normalized fallback SemanticFrame refs before downstream Router use."
     },
     {
       "scenario_id": "MVP3-SLOW-LLM-STRUCTURED-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 6 Slow LLM contract must make validation failure event-visible."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 6 Slow LLM contract coverage replays validation failure, fallback output labels, and old-plan non-adoption."
     },
     {
       "scenario_id": "MVP3-TTS-CONTRACT-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 7 TTS contract must use safe audio refs and explicit truncate degradation."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 7 TTS contract coverage replays safe normalized audio refs and explicit truncate degradation."
     },
     {
       "scenario_id": "MVP3-FALLBACK-DEGRADED-REPLAY-001",
@@ -97,8 +104,11 @@
     },
     {
       "scenario_id": "MVP3-ACCEPTANCE-SCOPE-SAFETY-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 9 acceptance must reject unsafe fixtures, direct provider calls, and scope broadening."
+      "fixtures": [
+        "000-empty-mvp3-session.fixture.json",
+        "008-fallback-degraded-replay.fixture.json"
+      ],
+      "assertion": "Slice 9 acceptance rejects unsafe fixtures, direct provider calls, missing output labels, weakened replay properties, and scope broadening."
     }
   ]
 }
