@@ -107,10 +107,10 @@ TTS success output must use safe normalized audio refs/metadata.
 | Field | Spec |
 | --- | --- |
 | purpose | Validate real/fallback/degraded adapter outcomes are replay-visible. |
-| initial state | Adapter profile set includes explicit modes. |
-| event chain | real output, fallback output, and degraded event variants. |
-| required assertions | Output modes are explicit and old-plan results do not advance current task without adoption. |
-| replay expectations | Deterministic replay distinguishes modes from recorded events. |
+| initial state | Adapter profile set includes explicit modes for ASR, Thinker, Slow LLM, and TTS. |
+| event chain | `ASR_TRANSCRIPT_OUTPUT_EMITTED` with `output_mode=real`; `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED` and `SLOW_LLM_STRUCTURED_OUTPUT_EMITTED` with `output_mode=fallback`; `TTS_SYNTHESIS_OUTPUT_EMITTED` with `output_mode=degraded`; canonical `ADAPTER_REQUEST_RETRYING`, `ADAPTER_REQUEST_FAILED`, `ADAPTER_OUTPUT_VALIDATION_FAILED`, and `ADAPTER_OUTPUT_DEGRADED` events for retry/failure/validation/degraded paths. |
+| required assertions | Output modes are explicit; replay diagnostics and adapter health digest distinguish output modes, `failure_count`, `retry_count`, `missing_capabilities`, and `latest_degradation_reason`; old-plan adapter output does not advance current task state without an explicit ADR-016/SlowTask adoption chain. |
+| replay expectations | Deterministic replay distinguishes modes from recorded events and uses recorded refs only. |
 | forbidden behavior | No hidden provider rerun during replay. |
 
 ## Scenario MVP3-ACCEPTANCE-SCOPE-SAFETY-001

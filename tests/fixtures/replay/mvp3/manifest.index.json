@@ -43,6 +43,10 @@
     {
       "fixture": "000-empty-mvp3-session.fixture.json",
       "purpose": "empty MVP-3 replay safety skeleton with no provider execution"
+    },
+    {
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "purpose": "fallback/degraded adapter replay with recorded real/fallback/degraded outcomes"
     }
   ],
   "scenarios": [
@@ -88,8 +92,8 @@
     },
     {
       "scenario_id": "MVP3-FALLBACK-DEGRADED-REPLAY-001",
-      "fixture": "000-empty-mvp3-session.fixture.json",
-      "assertion": "Future Slice 8 replay must distinguish real/fallback/degraded modes without provider rerun."
+      "fixture": "008-fallback-degraded-replay.fixture.json",
+      "assertion": "Slice 8 replay distinguishes real/fallback/degraded adapter outcomes, canonical retry/failure/validation/degraded paths, and old-plan adapter output without provider rerun."
     },
     {
       "scenario_id": "MVP3-ACCEPTANCE-SCOPE-SAFETY-001",

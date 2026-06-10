@@ -189,6 +189,8 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
     except ValueError as exc:
         raise ReplayValidationError(str(exc)) from exc
 
+    diagnostics["adapter_outcomes"] = adapter_health_state.to_digest_dict()
+
     result_status = "degraded" if manifest.replay_mode == "degraded" else "passed"
     trace_privacy_state.mark_replay_completed(result_status=result_status)
     digest = state_digest(
