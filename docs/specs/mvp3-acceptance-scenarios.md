@@ -80,10 +80,13 @@ All MVP-3 fixtures must be synthetic, redacted, and minimal.
 | --- | --- |
 | purpose | Validate Slow LLM structured output and validation failure handling. |
 | initial state | SlowTask current plan needs model output. |
-| event chain | adapter request -> structured output validation pass or `ADAPTER_OUTPUT_VALIDATION_FAILED`. |
-| required assertions | Invalid output does not silently pass downstream; retry/failure/degraded path is event-visible. |
-| replay expectations | Replay does not call Slow LLM provider. |
-| forbidden behavior | No direct provider call from SlowTask. |
+| event chain | adapter request -> `SLOW_LLM_STRUCTURED_OUTPUT_EMITTED` with validated normalized output/ref metadata or `ADAPTER_OUTPUT_VALIDATION_FAILED`. |
+| required assertions | Slow LLM success output uses `output_mode=real\|fallback\|degraded`; SlowTask consumes only validated normalized refs/metadata; invalid output does not silently pass downstream; Retry/failure/degraded path is event-visible. |
+| replay expectations | Replay uses recorded refs only and does not call Slow LLM provider. |
+| forbidden behavior | No direct provider call from SlowTask; No provider-specific schema leakage into SlowTask. |
+
+Slice 6 requires `output_mode=real|fallback|degraded` on every Slow LLM success output.
+Invalid output does not silently pass downstream.
 
 ## Scenario MVP3-TTS-CONTRACT-001
 
