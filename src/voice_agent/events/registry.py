@@ -134,6 +134,28 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "normalization_status": "normalized",
         },
     ),
+    "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED": _definition(
+        "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "schema_name",
+            "normalization_status",
+            "slow_llm_output_ref",
+            "structured_output_ref",
+            "validation_result_ref",
+            "output_mode",
+        ),
+        literal_fields={
+            "adapter_type": "slow_llm",
+            "schema_name": "voice_agent.slowtask.structured_output.v1",
+            "normalization_status": "normalized",
+        },
+    ),
     "TEXT_INPUT_RECEIVED": _definition(
         "TEXT_INPUT_RECEIVED",
         required_fields=(

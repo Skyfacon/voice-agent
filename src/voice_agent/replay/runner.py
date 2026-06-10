@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from voice_agent.adapters.capabilities import OUTPUT_MODES
+from voice_agent.adapters.slow_llm_contract import SLOW_LLM_ALLOWED_SLOWTASK_BINDING_EVENTS
 from voice_agent.composer.constants import (
     ALLOWED_PROGRESS_SOURCE_EVENTS,
     ALLOWED_SOURCE_MODULES_BY_EVENT,
@@ -74,6 +75,9 @@ DATA_PLANE_REF_FIELDS = frozenset(
         "assistant_directedness_ref",
         "emotion_ref",
         "audio_caption_ref",
+        "slow_llm_output_ref",
+        "structured_output_ref",
+        "validation_result_ref",
         "audio_summary_ref",
         "runtime_config_ref",
         "capability_snapshot_ref",
@@ -252,6 +256,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_post_commit_understanding_and_router_order(ordered_events)
     _validate_asr_transcript_output_contract(ordered_events)
     _validate_thinker_semantic_frame_output_contract(ordered_events)
+    _validate_slow_llm_structured_output_contract(ordered_events)
     _validate_user_patch_evidence_pack_source_links(ordered_events)
     _validate_tool_execution_gate_links(ordered_events)
     _validate_spoken_plan_source_links(ordered_events)
@@ -386,10 +391,21 @@ def _validate_task_event_seq_monotonicity(ordered_events: Sequence[Mapping[str, 
         task_event_seq = int(event["task_event_seq"])
         latest_seq = latest_seq_by_task_id.get(task_id)
         if latest_seq is not None and task_event_seq <= latest_seq:
+            if _is_slow_llm_adapter_seq_binding(event, latest_seq=latest_seq):
+                continue
             raise ReplayValidationError(
                 f"{event['event_name']} task_event_seq must increase monotonically per task_id"
             )
         latest_seq_by_task_id[task_id] = task_event_seq
+
+
+def _is_slow_llm_adapter_seq_binding(event: Mapping[str, Any], *, latest_seq: int) -> bool:
+    if int(event["task_event_seq"]) != latest_seq:
+        return False
+    event_name = str(event["event_name"])
+    return event_name == "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" or (
+        event_name == "ADAPTER_OUTPUT_VALIDATION_FAILED" and event.get("adapter_type") == "slow_llm"
+    )
 
 
 def _validate_audio_turn_opened_before_commit(ordered_events: Sequence[Mapping[str, Any]]) -> None:
@@ -826,6 +842,149 @@ def _validate_thinker_missing_capability_degradation(
         raise ReplayValidationError(
             f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED missing {missing_capability} requires prior ADAPTER_OUTPUT_DEGRADED"
         )
+
+
+SLOW_LLM_STRUCTURED_OUTPUT_SCHEMA = "voice_agent.slowtask.structured_output.v1"
+SLOW_LLM_FORBIDDEN_PAYLOAD_FIELDS = frozenset(
+    {
+        "raw_audio",
+        "audio_bytes",
+        "audio_payload",
+        "raw_trace",
+        "raw_slow_llm_output",
+        "raw_structured_output",
+        "provider_response",
+        "provider_payload",
+        "provider_schema",
+        "provider_specific_schema",
+        "provider_tool_calls",
+        "structured_output",
+        "resolved_arguments",
+        "argument_provenance",
+    }
+)
+SLOW_LLM_CONSUMER_EVENTS = frozenset(
+    {
+        "ARGUMENTS_RESOLVED",
+        "ARGUMENT_RESOLUTION_PROVENANCE",
+        "CLARIFICATION_REQUESTED",
+        "SEMANTIC_COMMITMENT_EMITTED",
+    }
+)
+
+
+def _validate_slow_llm_structured_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    valid_outputs_by_id: dict[str, Mapping[str, Any]] = {}
+    validation_failed_ids: set[str] = set()
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+
+        if event_name == "ADAPTER_OUTPUT_VALIDATION_FAILED" and event.get("adapter_type") == "slow_llm":
+            if event.get("output_mode") not in {"real", "fallback", "degraded"}:
+                raise ReplayValidationError(
+                    "ADAPTER_OUTPUT_VALIDATION_FAILED slow_llm output_mode must be real, fallback, or degraded"
+                )
+            validation_failed_ids.add(event_id)
+
+        if event_name == "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED":
+            _validate_slow_llm_output_event(event, events_by_id)
+            valid_outputs_by_id[event_id] = event
+
+        if event_name in SLOW_LLM_CONSUMER_EVENTS:
+            caused_by_event_id = str(event.get("caused_by_event_id", ""))
+            if caused_by_event_id in validation_failed_ids:
+                raise ReplayValidationError(
+                    f"{event_name} must not consume Slow LLM validation failed output"
+                )
+            slow_llm_output = valid_outputs_by_id.get(caused_by_event_id)
+            if slow_llm_output is not None and event_name == "ARGUMENTS_RESOLVED":
+                _validate_arguments_resolved_consumes_slow_llm_refs(event, slow_llm_output)
+
+        events_by_id[event_id] = event
+
+
+def _validate_slow_llm_output_event(
+    event: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if _contains_forbidden_payload_field(event, forbidden_fields=SLOW_LLM_FORBIDDEN_PAYLOAD_FIELDS):
+        raise ReplayValidationError(
+            "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED must not contain provider-specific schema or raw payload"
+        )
+    output_mode = str(event["output_mode"])
+    if output_mode not in {"real", "fallback", "degraded"}:
+        raise ReplayValidationError(
+            "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED output_mode must be real, fallback, or degraded"
+        )
+    if event.get("schema_name") != SLOW_LLM_STRUCTURED_OUTPUT_SCHEMA:
+        raise ReplayValidationError("SLOW_LLM_STRUCTURED_OUTPUT_EMITTED schema_name must be system-owned")
+    if event.get("normalization_status") != "normalized":
+        raise ReplayValidationError("SLOW_LLM_STRUCTURED_OUTPUT_EMITTED must be normalized before SlowTask use")
+
+    slowtask_event = events_by_id.get(str(event["caused_by_event_id"]))
+    if slowtask_event is None:
+        raise ReplayValidationError(
+            "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED requires prior SlowTask event"
+        )
+    if slowtask_event.get("event_name") not in SLOW_LLM_ALLOWED_SLOWTASK_BINDING_EVENTS:
+        raise ReplayValidationError(
+            "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED requires prior allowed SlowTask event"
+        )
+    for field in ("task_id", "plan_version", "task_event_seq"):
+        if event.get(field) != slowtask_event.get(field):
+            raise ReplayValidationError(
+                f"SLOW_LLM_STRUCTURED_OUTPUT_EMITTED {field} must match bound SlowTask event"
+            )
+
+    resolved_ref = event.get("resolved_arguments_ref")
+    provenance_ref = event.get("provenance_ref")
+    if (resolved_ref in (None, "")) != (provenance_ref in (None, "")):
+        raise ReplayValidationError(
+            "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED resolved_arguments_ref and provenance_ref must be paired"
+        )
+
+
+def _contains_forbidden_payload_field(
+    value: object,
+    *,
+    forbidden_fields: frozenset[str],
+) -> bool:
+    if isinstance(value, Mapping):
+        for key, nested_value in value.items():
+            if str(key) in forbidden_fields:
+                return True
+            if _contains_forbidden_payload_field(nested_value, forbidden_fields=forbidden_fields):
+                return True
+        return False
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return any(
+            _contains_forbidden_payload_field(item, forbidden_fields=forbidden_fields)
+            for item in value
+        )
+    return False
+
+
+def _validate_arguments_resolved_consumes_slow_llm_refs(
+    event: Mapping[str, Any],
+    slow_llm_output: Mapping[str, Any],
+) -> None:
+    for field in ("task_id", "plan_version"):
+        if event.get(field) != slow_llm_output.get(field):
+            raise ReplayValidationError(
+                f"ARGUMENTS_RESOLVED {field} must match referenced Slow LLM output"
+            )
+    for field in ("resolved_arguments_ref", "provenance_ref"):
+        if field not in slow_llm_output:
+            raise ReplayValidationError(
+                f"ARGUMENTS_RESOLVED requires referenced Slow LLM output {field}"
+            )
+        if event.get(field) != slow_llm_output.get(field):
+            raise ReplayValidationError(
+                f"ARGUMENTS_RESOLVED {field} must match referenced Slow LLM output"
+            )
 
 
 def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
