@@ -156,6 +156,26 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "normalization_status": "normalized",
         },
     ),
+    "TTS_SYNTHESIS_OUTPUT_EMITTED": _definition(
+        "TTS_SYNTHESIS_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "spoken_plan_id",
+            "approved_check_event_id",
+            "normalization_status",
+            "audio_format_ref",
+            "synthesis_result_ref",
+            "truncate_status",
+            "output_mode",
+        ),
+        one_of_fields=(("audio_ref", "tts_stream_ref"),),
+        literal_fields={
+            "adapter_type": "tts",
+            "normalization_status": "normalized",
+        },
+    ),
     "TEXT_INPUT_RECEIVED": _definition(
         "TEXT_INPUT_RECEIVED",
         required_fields=(

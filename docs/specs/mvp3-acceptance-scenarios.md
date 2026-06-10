@@ -94,10 +94,13 @@ Invalid output does not silently pass downstream.
 | --- | --- |
 | purpose | Validate TTS basic synthesis refs and truncate capability handling. |
 | initial state | SpokenPlan approved for playback. |
-| event chain | TTS adapter output or degraded/fallback event; playback events if output is safe. |
-| required assertions | Audio refs are safe; missing truncate capability blocks or degrades barge-in target validation. |
-| replay expectations | Replay does not require raw audio. |
+| event chain | TTS adapter output as `TTS_SYNTHESIS_OUTPUT_EMITTED`, or canonical retry/failure/degraded events; playback events if output is safe. |
+| required assertions | Success output uses `output_mode=real\|fallback\|degraded`; safe normalized audio refs/metadata are used; no raw audio/provider payload is exposed; missing truncate capability blocks or degrades barge-in target validation. Retry/failure/degraded path is event-visible. |
+| replay expectations | Replay uses recorded refs only and does not require raw audio. |
 | forbidden behavior | No raw audio fixture or pause/resume scope. |
+
+Slice 7 requires `output_mode=real|fallback|degraded` on every TTS success output.
+TTS success output must use safe normalized audio refs/metadata.
 
 ## Scenario MVP3-FALLBACK-DEGRADED-REPLAY-001
 

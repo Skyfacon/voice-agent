@@ -78,6 +78,7 @@ DATA_PLANE_REF_FIELDS = frozenset(
         "slow_llm_output_ref",
         "structured_output_ref",
         "validation_result_ref",
+        "synthesis_result_ref",
         "audio_summary_ref",
         "runtime_config_ref",
         "capability_snapshot_ref",
@@ -257,6 +258,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_asr_transcript_output_contract(ordered_events)
     _validate_thinker_semantic_frame_output_contract(ordered_events)
     _validate_slow_llm_structured_output_contract(ordered_events)
+    _validate_tts_synthesis_output_contract(ordered_events)
     _validate_user_patch_evidence_pack_source_links(ordered_events)
     _validate_tool_execution_gate_links(ordered_events)
     _validate_spoken_plan_source_links(ordered_events)
@@ -1053,6 +1055,213 @@ def _validate_arguments_resolved_consumes_slow_llm_refs(
             raise ReplayValidationError(
                 f"ARGUMENTS_RESOLVED {field} must match referenced Slow LLM output"
             )
+
+
+TTS_SYNTHESIS_OUTPUT_EVENT_NAME = "TTS_SYNTHESIS_OUTPUT_EMITTED"
+TTS_APPROVED_CHECK_EVENT_NAMES = frozenset(
+    {
+        "COMMITMENT_COVERAGE_CHECK_PASSED",
+        "PROGRESS_TRUTHFULNESS_CHECK_PASSED",
+    }
+)
+TTS_TRUNCATE_STATUSES = frozenset({"supported", "unsupported_blocked"})
+TTS_FORBIDDEN_PAYLOAD_FIELDS = frozenset(
+    {
+        "raw_audio",
+        "audio_bytes",
+        "audio_payload",
+        "raw_trace",
+        "raw_tts_output",
+        "raw_synthesis_output",
+        "provider_response",
+        "provider_payload",
+        "provider_schema",
+        "provider_specific_schema",
+        "synthesis_result",
+        "audio_samples",
+        "wav_bytes",
+        "pcm_bytes",
+    }
+)
+TTS_SAFE_REF_FIELDS = frozenset(
+    {
+        "adapter_request_id",
+        "audio_ref",
+        "tts_stream_ref",
+        "audio_format_ref",
+        "synthesis_result_ref",
+    }
+)
+TTS_UNSAFE_REF_TERMS = frozenset(
+    {
+        "raw_audio",
+        "audio/raw",
+        "data:",
+        "traces/",
+        "diagnostics/",
+        "replays/local",
+    }
+)
+
+
+def _validate_tts_synthesis_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    tts_outputs_by_id: dict[str, Mapping[str, Any]] = {}
+    tts_output_by_playback_span_id: dict[str, Mapping[str, Any]] = {}
+    degraded_by_request_capability: set[tuple[str, str, str]] = set()
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+
+        if event_name == "ADAPTER_OUTPUT_DEGRADED" and event.get("adapter_type") == "tts":
+            request_id = event.get("adapter_request_id")
+            missing_capability = event.get("missing_capability")
+            if request_id not in (None, "") and missing_capability not in (None, ""):
+                degraded_by_request_capability.add(
+                    (str(event["adapter_id"]), str(request_id), str(missing_capability))
+                )
+
+        if event_name == TTS_SYNTHESIS_OUTPUT_EVENT_NAME:
+            _validate_tts_output_event(
+                event,
+                events_by_id=events_by_id,
+                degraded_by_request_capability=degraded_by_request_capability,
+            )
+            tts_outputs_by_id[event_id] = event
+        elif event_name == "PLAYBACK_SPAN_STARTED":
+            tts_output = _tts_output_for_playback(event, tts_outputs_by_id)
+            if tts_output is not None:
+                _validate_playback_consumes_tts_refs(event, tts_output)
+                tts_output_by_playback_span_id[str(event["playback_span_id"])] = tts_output
+        elif event_name == "TTS_TRUNCATE_REQUESTED":
+            tts_output = tts_output_by_playback_span_id.get(str(event["playback_span_id"]))
+            if tts_output is not None and tts_output.get("truncate_status") == "unsupported_blocked":
+                raise ReplayValidationError(
+                    "TTS_TRUNCATE_REQUESTED cannot pass target validation when TTS truncate capability is blocked"
+                )
+
+        events_by_id[event_id] = event
+
+
+def _validate_tts_output_event(
+    event: Mapping[str, Any],
+    *,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+    degraded_by_request_capability: set[tuple[str, str, str]],
+) -> None:
+    if _contains_forbidden_payload_field(event, forbidden_fields=TTS_FORBIDDEN_PAYLOAD_FIELDS):
+        raise ReplayValidationError(
+            "TTS_SYNTHESIS_OUTPUT_EMITTED must not contain raw audio or provider-specific payload"
+        )
+    output_mode = str(event["output_mode"])
+    if output_mode not in {"real", "fallback", "degraded"}:
+        raise ReplayValidationError("TTS_SYNTHESIS_OUTPUT_EMITTED output_mode must be real, fallback, or degraded")
+    if event.get("normalization_status") != "normalized":
+        raise ReplayValidationError("TTS_SYNTHESIS_OUTPUT_EMITTED must be normalized before playback use")
+    truncate_status = event.get("truncate_status")
+    if truncate_status not in TTS_TRUNCATE_STATUSES:
+        raise ReplayValidationError("TTS_SYNTHESIS_OUTPUT_EMITTED truncate_status must be supported or unsupported_blocked")
+
+    _validate_tts_safe_refs(event)
+
+    approved_check = events_by_id.get(str(event.get("caused_by_event_id", "")))
+    if approved_check is None or approved_check.get("event_name") not in TTS_APPROVED_CHECK_EVENT_NAMES:
+        raise ReplayValidationError("TTS_SYNTHESIS_OUTPUT_EMITTED requires prior passed SpokenPlan check event")
+    if event.get("approved_check_event_id") != approved_check.get("event_id"):
+        raise ReplayValidationError("TTS_SYNTHESIS_OUTPUT_EMITTED approved_check_event_id must match caused_by_event_id")
+    if event.get("spoken_plan_id") != approved_check.get("spoken_plan_id"):
+        raise ReplayValidationError("TTS_SYNTHESIS_OUTPUT_EMITTED spoken_plan_id must match approved check")
+    for optional_field in ("task_id", "plan_version"):
+        if event.get(optional_field) not in (None, "") and event.get(optional_field) != approved_check.get(optional_field):
+            raise ReplayValidationError(f"TTS_SYNTHESIS_OUTPUT_EMITTED {optional_field} must match approved check")
+
+    if truncate_status == "unsupported_blocked":
+        if output_mode != "degraded":
+            raise ReplayValidationError(
+                "TTS_SYNTHESIS_OUTPUT_EMITTED unsupported truncate capability requires output_mode=degraded"
+            )
+        degradation_key = (
+            str(event["adapter_id"]),
+            str(event["adapter_request_id"]),
+            "supports_tts_truncate",
+        )
+        if degradation_key not in degraded_by_request_capability:
+            raise ReplayValidationError(
+                "TTS_SYNTHESIS_OUTPUT_EMITTED missing truncate capability requires prior ADAPTER_OUTPUT_DEGRADED"
+            )
+
+
+def _validate_tts_safe_refs(event: Mapping[str, Any]) -> None:
+    for field in TTS_SAFE_REF_FIELDS:
+        value = event.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, str):
+            raise ReplayValidationError(f"TTS_SYNTHESIS_OUTPUT_EMITTED {field} must be a safe ref string")
+        lowered = value.lower()
+        if CREDENTIAL_LIKE_REF_PATTERN.search(value) or any(term in lowered for term in TTS_UNSAFE_REF_TERMS):
+            raise ReplayValidationError(f"TTS_SYNTHESIS_OUTPUT_EMITTED {field} must be a safe ref")
+
+
+def _validate_playback_consumes_tts_refs(
+    playback_event: Mapping[str, Any],
+    tts_output: Mapping[str, Any],
+) -> None:
+    if playback_event.get("caused_by_event_id") != tts_output.get("approved_check_event_id"):
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED caused_by_event_id must match TTS approved check")
+    if playback_event.get("spoken_plan_id") != tts_output.get("spoken_plan_id"):
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED spoken_plan_id must match TTS output")
+    if playback_event.get("approved_check_event_id") != tts_output.get("approved_check_event_id"):
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED approved_check_event_id must match TTS output")
+    consumed_ref_matched = False
+    for ref_field in ("audio_ref", "tts_stream_ref"):
+        playback_ref = playback_event.get(ref_field)
+        if playback_ref in (None, ""):
+            continue
+        if playback_ref != tts_output.get(ref_field):
+            raise ReplayValidationError(f"PLAYBACK_SPAN_STARTED {ref_field} must match TTS output")
+        consumed_ref_matched = True
+    if not consumed_ref_matched:
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED must consume a TTS output ref")
+
+
+def _tts_output_for_playback(
+    playback_event: Mapping[str, Any],
+    tts_outputs_by_id: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    tts_output_event_id = playback_event.get("tts_output_event_id")
+    if tts_output_event_id not in (None, ""):
+        tts_output = tts_outputs_by_id.get(str(tts_output_event_id))
+        if tts_output is None:
+            raise ReplayValidationError("PLAYBACK_SPAN_STARTED tts_output_event_id must reference prior TTS output")
+        return tts_output
+
+    matching_outputs = [
+        tts_output
+        for tts_output in tts_outputs_by_id.values()
+        if _tts_output_refs_match_playback(playback_event, tts_output)
+    ]
+    if len(matching_outputs) > 1:
+        raise ReplayValidationError("PLAYBACK_SPAN_STARTED TTS output refs are ambiguous without tts_output_event_id")
+    if matching_outputs:
+        return matching_outputs[0]
+    return None
+
+
+def _tts_output_refs_match_playback(
+    playback_event: Mapping[str, Any],
+    tts_output: Mapping[str, Any],
+) -> bool:
+    if playback_event.get("spoken_plan_id") != tts_output.get("spoken_plan_id"):
+        return False
+    if playback_event.get("approved_check_event_id") != tts_output.get("approved_check_event_id"):
+        return False
+    return any(
+        playback_event.get(ref_field) not in (None, "")
+        and playback_event.get(ref_field) == tts_output.get(ref_field)
+        for ref_field in ("audio_ref", "tts_stream_ref")
+    )
 
 
 def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
