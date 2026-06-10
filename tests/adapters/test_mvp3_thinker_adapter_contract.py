@@ -480,6 +480,103 @@ def test_replay_rejects_user_patch_summary_ref_not_recorded_by_real_thinker_even
         )
 
 
+def test_replay_rejects_user_patch_frame_ref_not_recorded_by_real_thinker_event() -> None:
+    events, thinker_event, patch_event = _append_user_patch_from_real_thinker(
+        session_id="sess_mvp3_slice5_thinker_replay_stale_frame",
+        event_id_prefix="evt_mvp3_slice5_thinker_replay_stale_frame",
+    )
+    patch_event["evidence_pack"]["non_authoritative_hypothesis"][
+        "semantic_frame_ref"
+    ] = "semantic-frame://synthetic/mvp3/slice5/replay-stale-frame"
+    patch_event["non_authoritative_hypothesis_refs"] = [
+        "semantic-frame://synthetic/mvp3/slice5/replay-stale-frame",
+        str(thinker_event["semantic_summary_ref"]),
+    ]
+
+    with pytest.raises(ReplayValidationError, match="semantic_frame_ref"):
+        run_replay_fixture(
+            {
+                "replay_manifest": _github_allowed_replay_manifest(),
+                "events": events,
+            }
+        )
+
+
+def test_replay_rejects_user_patch_top_level_hypothesis_refs_not_matching_real_thinker_pack() -> None:
+    events, thinker_event, patch_event = _append_user_patch_from_real_thinker(
+        session_id="sess_mvp3_slice5_thinker_replay_stale_hypothesis_refs",
+        event_id_prefix="evt_mvp3_slice5_thinker_replay_stale_hypothesis_refs",
+    )
+    patch_event["non_authoritative_hypothesis_refs"] = [
+        str(thinker_event["semantic_frame_ref"]),
+        str(thinker_event["semantic_summary_ref"]),
+        "semantic-frame://synthetic/mvp3/slice5/replay-extra-stale-frame",
+    ]
+
+    with pytest.raises(ReplayValidationError, match="non_authoritative_hypothesis_refs"):
+        run_replay_fixture(
+            {
+                "replay_manifest": _github_allowed_replay_manifest(),
+                "events": events,
+            }
+        )
+
+
+def test_replay_rejects_provider_payload_in_user_patch_hypothesis_sourced_from_real_thinker() -> None:
+    events, _, patch_event = _append_user_patch_from_real_thinker(
+        session_id="sess_mvp3_slice5_thinker_replay_patch_provider_payload",
+        event_id_prefix="evt_mvp3_slice5_thinker_replay_patch_provider_payload",
+    )
+    patch_event["evidence_pack"]["non_authoritative_hypothesis"]["provider_response"] = {
+        "choices": [{"message": "provider-specific"}],
+    }
+
+    with pytest.raises(ReplayValidationError, match="provider-specific"):
+        run_replay_fixture(
+            {
+                "replay_manifest": _github_allowed_replay_manifest(),
+                "events": events,
+            }
+        )
+
+
+@pytest.mark.parametrize("raw_field", ("semantic_frame", "semantic_summary"))
+def test_replay_rejects_raw_semantic_payload_names_in_thinker_event(raw_field: str) -> None:
+    startup = _start_mvp3_thinker_contract_session(
+        session_id=f"sess_mvp3_slice5_thinker_raw_{raw_field}_synthetic"
+    )
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix=f"evt_mvp3_slice5_thinker_raw_{raw_field}",
+    )
+    emission = ThinkerAdapterContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_thinker",
+        output_mode="real",
+    ).emit_semantic_frame(
+        event_id=f"evt_mvp3_slice5_thinker_raw_{raw_field}_frame",
+        caused_by_event_id=str(committed_turn["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+        adapter_request_id=f"adapter_request_mvp3_thinker_raw_{raw_field}_001",
+        semantic_frame_ref=f"semantic-frame://synthetic/mvp3/slice5/raw-{raw_field}",
+        semantic_summary_ref=f"summary://synthetic/mvp3/slice5/raw-{raw_field}",
+        **_available_optional_refs(),
+    )
+    events = startup.journal.events()
+    thinker = next(event for event in events if event["event_id"] == emission.thinker_event["event_id"])
+    thinker[raw_field] = "raw semantic payload must not be replay accepted"
+
+    with pytest.raises(ReplayValidationError, match="raw payload"):
+        run_replay_fixture(
+            {
+                "replay_manifest": _github_allowed_replay_manifest(),
+                "events": events,
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("status_field", "invalid_status"),
     (
@@ -718,6 +815,71 @@ def _append_patch_router_event(
         turn_committed_event_id=str(committed_turn["event_id"]),
         thinker_frame_event_id=str(thinker_event["event_id"]),
     )
+
+
+def _append_user_patch_from_real_thinker(
+    *,
+    session_id: str,
+    event_id_prefix: str,
+) -> tuple[list[dict[str, object]], dict[str, object], dict[str, object]]:
+    startup = _start_mvp3_thinker_contract_session(session_id=session_id)
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix=event_id_prefix,
+    )
+    emission = ThinkerAdapterContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_thinker",
+        output_mode="real",
+    ).emit_semantic_frame(
+        event_id=f"{event_id_prefix}_frame",
+        caused_by_event_id=str(committed_turn["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+        adapter_request_id=f"adapter_request_{event_id_prefix}_001",
+        semantic_frame_ref=f"semantic-frame://synthetic/mvp3/slice5/{event_id_prefix}",
+        semantic_summary_ref=f"summary://synthetic/mvp3/slice5/{event_id_prefix}",
+        **_available_optional_refs(),
+    )
+    startup.journal.append(
+        event_name="SLOWTASK_CREATED",
+        event_id=f"{event_id_prefix}_task_created",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(emission.thinker_event["event_id"]),
+        created_monotonic_ms=215,
+        created_wall_clock_ms=1700000000215,
+        trace_redaction_level="metadata_only",
+        task_id="task_mvp3_slice5_active",
+        plan_version=1,
+        task_event_seq=1,
+        initial_goal_ref=f"goal://synthetic/mvp3/slice5/{event_id_prefix}",
+    )
+    router_event = _append_patch_router_event(
+        startup.journal,
+        committed_turn=committed_turn,
+        thinker_event=emission.thinker_event,
+        event_id=f"{event_id_prefix}_router",
+    )
+    result = UserPatchEvidencePackRuntime(startup.journal).receive_patch_from_router_decision(
+        router_decision_event=router_event,
+        turn_committed_event=committed_turn,
+        task_id="task_mvp3_slice5_active",
+        current_plan_version=1,
+        next_task_event_seq=2,
+        patch_id=f"patch_{event_id_prefix}",
+        event_id=f"{event_id_prefix}_patch",
+        evidence_ref=f"evidence://synthetic/mvp3/slice5/{event_id_prefix}",
+        created_monotonic_ms=230,
+        created_wall_clock_ms=1700000000230,
+        thinker_frame_event=emission.thinker_event,
+        semantic_summary_ref=str(emission.thinker_event["semantic_summary_ref"]),
+        candidate_patch_types=["constraint_update_candidate"],
+    )
+    events = startup.journal.events()
+    patch_event = next(event for event in events if event["event_id"] == result.user_patch_event["event_id"])
+    thinker_event = next(event for event in events if event["event_id"] == emission.thinker_event["event_id"])
+    return events, thinker_event, patch_event
 
 
 def _available_optional_refs() -> dict[str, str | None]:

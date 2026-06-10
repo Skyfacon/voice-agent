@@ -690,10 +690,8 @@ THINKER_OPTIONAL_STATUS_FIELDS = (
 )
 
 
-def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
-    events_by_id: dict[str, Mapping[str, Any]] = {}
-    degraded_by_request_capability: set[tuple[str, str, str]] = set()
-    forbidden_fields = {
+THINKER_FORBIDDEN_PAYLOAD_FIELDS = frozenset(
+    {
         "raw_audio",
         "audio_bytes",
         "audio_payload",
@@ -704,11 +702,20 @@ def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Ma
         "provider_schema",
         "provider_specific_schema",
         "raw_semantic_frame",
+        "raw_semantic_summary",
+        "semantic_frame",
+        "semantic_summary",
         "semantic_close",
         "assistant_directedness",
         "emotion",
         "audio_caption",
     }
+)
+
+
+def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    degraded_by_request_capability: set[tuple[str, str, str]] = set()
 
     for event in ordered_events:
         event_name = str(event["event_name"])
@@ -725,7 +732,7 @@ def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Ma
             events_by_id[event_id] = event
             continue
 
-        if forbidden_fields.intersection(event):
+        if THINKER_FORBIDDEN_PAYLOAD_FIELDS.intersection(event):
             raise ReplayValidationError(
                 "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED must not contain provider-specific schema or raw payload"
             )
@@ -875,9 +882,23 @@ def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Map
                 )
             thinker_event = events_by_id.get(str(expected_thinker_event_id))
             if thinker_event is not None and thinker_event["event_name"] == "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED":
+                if THINKER_FORBIDDEN_PAYLOAD_FIELDS.intersection(hypothesis):
+                    raise ReplayValidationError(
+                        "USER_PATCH_RECEIVED Thinker hypothesis must not contain provider-specific schema or raw payload"
+                    )
+                if hypothesis.get("semantic_frame_ref") != thinker_event.get("semantic_frame_ref"):
+                    raise ReplayValidationError(
+                        "USER_PATCH_RECEIVED semantic_frame_ref must match referenced Thinker output"
+                    )
                 if hypothesis.get("semantic_summary_ref") != thinker_event.get("semantic_summary_ref"):
                     raise ReplayValidationError(
                         "USER_PATCH_RECEIVED semantic_summary_ref must match referenced Thinker output"
+                    )
+                expected_hypothesis_refs = _hypothesis_ref_set(hypothesis)
+                actual_hypothesis_refs = _string_set(event.get("non_authoritative_hypothesis_refs", ()))
+                if actual_hypothesis_refs != expected_hypothesis_refs:
+                    raise ReplayValidationError(
+                        "USER_PATCH_RECEIVED non_authoritative_hypothesis_refs must match evidence_pack hypothesis refs"
                     )
 
 
@@ -1872,6 +1893,14 @@ def _require_source_id_in_refs(
     expected_event_id = router_event.get(source_id_field)
     if expected_event_id in (None, "") or str(expected_event_id) not in source_event_ids:
         raise ReplayValidationError(f"USER_PATCH_RECEIVED evidence_pack must include router {source_id_field}")
+
+
+def _hypothesis_ref_set(hypothesis: Mapping[str, Any]) -> set[str]:
+    return {
+        str(value)
+        for field in ("semantic_frame_ref", "semantic_summary_ref", "audio_summary_ref")
+        if (value := hypothesis.get(field)) not in (None, "")
+    }
 
 
 def _string_list_for_replay(value: object) -> list[str]:
