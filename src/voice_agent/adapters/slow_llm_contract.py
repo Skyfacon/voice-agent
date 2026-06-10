@@ -6,7 +6,6 @@ from typing import Any
 
 from voice_agent.adapters.capabilities import CREDENTIAL_LIKE_REF_PATTERN
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
-from voice_agent.state.slowtask_state import SLOWTASK_EVENT_NAMES
 
 
 class SlowLLMStructuredOutputContractError(ValueError):
@@ -16,7 +15,14 @@ class SlowLLMStructuredOutputContractError(ValueError):
 SLOW_LLM_OUTPUT_MODES = frozenset({"real", "fallback", "degraded"})
 SLOW_LLM_STRUCTURED_OUTPUT_EVENT_NAME = "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED"
 SLOW_LLM_STRUCTURED_OUTPUT_SCHEMA = "voice_agent.slowtask.structured_output.v1"
-SLOW_LLM_ALLOWED_SLOWTASK_BINDING_EVENTS = SLOWTASK_EVENT_NAMES
+SLOW_LLM_ALLOWED_SLOWTASK_BINDING_EVENTS = frozenset(
+    {
+        "PLANNING_STARTED",
+        "PLANNING_RESTARTED",
+        "EVIDENCE_REVIEWED",
+        "AMBIGUITY_RESOLVED",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -128,15 +134,7 @@ class SlowLLMStructuredOutputContract:
             raise SlowLLMStructuredOutputContractError(
                 "Slow LLM validation failure must be caused by the bound SlowTask event"
             )
-        invalid_failure_reasons = (
-            not failure_reasons
-            or isinstance(failure_reasons, (str, bytes))
-            or not all(isinstance(reason, str) and reason for reason in failure_reasons)
-        )
-        if invalid_failure_reasons:
-            raise SlowLLMStructuredOutputContractError(
-                "failure_reasons must be a non-empty sequence of strings"
-            )
+        failure_reasons = _validate_failure_reasons(failure_reasons)
 
         return self._boundary.append_adapter_event(
             event_name="ADAPTER_OUTPUT_VALIDATION_FAILED",
@@ -153,7 +151,7 @@ class SlowLLMStructuredOutputContract:
             plan_version=int(slowtask_event["plan_version"]),
             task_event_seq=int(slowtask_event["task_event_seq"]),
             schema_name=SLOW_LLM_STRUCTURED_OUTPUT_SCHEMA,
-            failure_reasons=list(failure_reasons),
+            failure_reasons=failure_reasons,
             output_mode=self._output_mode,
         )
 
@@ -202,3 +200,21 @@ def _optional_safe_ref(value: str | None, field: str) -> str | None:
     if value is None:
         return None
     return _require_safe_ref(value, field)
+
+
+def _validate_failure_reasons(failure_reasons: Sequence[str]) -> list[str]:
+    invalid_failure_reasons = (
+        not failure_reasons
+        or isinstance(failure_reasons, (str, bytes))
+        or not all(isinstance(reason, str) and reason for reason in failure_reasons)
+    )
+    if invalid_failure_reasons:
+        raise SlowLLMStructuredOutputContractError(
+            "failure_reasons must be a non-empty sequence of strings"
+        )
+    normalized = list(failure_reasons)
+    if any(CREDENTIAL_LIKE_REF_PATTERN.search(reason) for reason in normalized):
+        raise SlowLLMStructuredOutputContractError(
+            "failure_reasons must not contain credential-like content"
+        )
+    return normalized

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from voice_agent.adapters.capabilities import OUTPUT_MODES
+from voice_agent.adapters.capabilities import CREDENTIAL_LIKE_REF_PATTERN, OUTPUT_MODES
 from voice_agent.adapters.slow_llm_contract import SLOW_LLM_ALLOWED_SLOWTASK_BINDING_EVENTS
 from voice_agent.composer.constants import (
     ALLOWED_PROGRESS_SOURCE_EVENTS,
@@ -384,27 +384,43 @@ def _validate_causal_links_after_sort(ordered_events: Sequence[Mapping[str, Any]
 
 def _validate_task_event_seq_monotonicity(ordered_events: Sequence[Mapping[str, Any]]) -> None:
     latest_seq_by_task_id: dict[str, int] = {}
+    events_by_id: dict[str, Mapping[str, Any]] = {}
     for event in ordered_events:
         if event.get("task_id") in (None, "") or event.get("task_event_seq") in (None, ""):
+            events_by_id[str(event["event_id"])] = event
             continue
         task_id = str(event["task_id"])
         task_event_seq = int(event["task_event_seq"])
         latest_seq = latest_seq_by_task_id.get(task_id)
         if latest_seq is not None and task_event_seq <= latest_seq:
-            if _is_slow_llm_adapter_seq_binding(event, latest_seq=latest_seq):
+            if _is_slow_llm_adapter_seq_binding(event, events_by_id=events_by_id):
+                events_by_id[str(event["event_id"])] = event
                 continue
             raise ReplayValidationError(
                 f"{event['event_name']} task_event_seq must increase monotonically per task_id"
             )
         latest_seq_by_task_id[task_id] = task_event_seq
+        events_by_id[str(event["event_id"])] = event
 
 
-def _is_slow_llm_adapter_seq_binding(event: Mapping[str, Any], *, latest_seq: int) -> bool:
-    if int(event["task_event_seq"]) != latest_seq:
-        return False
+def _is_slow_llm_adapter_seq_binding(
+    event: Mapping[str, Any],
+    *,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
     event_name = str(event["event_name"])
-    return event_name == "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" or (
-        event_name == "ADAPTER_OUTPUT_VALIDATION_FAILED" and event.get("adapter_type") == "slow_llm"
+    if event_name != "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" and not (
+        _is_slow_llm_structured_validation_failed_event(event)
+    ):
+        return False
+    bound_event = events_by_id.get(str(event.get("caused_by_event_id", "")))
+    if bound_event is None:
+        return False
+    if bound_event.get("event_name") not in SLOW_LLM_ALLOWED_SLOWTASK_BINDING_EVENTS:
+        return False
+    return all(
+        event.get(field) == bound_event.get(field)
+        for field in ("task_id", "plan_version", "task_event_seq")
     )
 
 
@@ -876,21 +892,25 @@ SLOW_LLM_CONSUMER_EVENTS = frozenset(
 def _validate_slow_llm_structured_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
     events_by_id: dict[str, Mapping[str, Any]] = {}
     valid_outputs_by_id: dict[str, Mapping[str, Any]] = {}
+    slow_llm_task_plan_keys: set[tuple[str, int]] = set()
     validation_failed_ids: set[str] = set()
 
     for event in ordered_events:
         event_name = str(event["event_name"])
         event_id = str(event["event_id"])
 
-        if event_name == "ADAPTER_OUTPUT_VALIDATION_FAILED" and event.get("adapter_type") == "slow_llm":
+        if _is_slow_llm_structured_validation_failed_event(event):
             if event.get("output_mode") not in {"real", "fallback", "degraded"}:
                 raise ReplayValidationError(
                     "ADAPTER_OUTPUT_VALIDATION_FAILED slow_llm output_mode must be real, fallback, or degraded"
                 )
+            _validate_slow_llm_validation_failure_event(event, events_by_id)
+            slow_llm_task_plan_keys.add(_task_plan_key(event))
             validation_failed_ids.add(event_id)
 
         if event_name == "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED":
             _validate_slow_llm_output_event(event, events_by_id)
+            slow_llm_task_plan_keys.add(_task_plan_key(event))
             valid_outputs_by_id[event_id] = event
 
         if event_name in SLOW_LLM_CONSUMER_EVENTS:
@@ -900,10 +920,58 @@ def _validate_slow_llm_structured_output_contract(ordered_events: Sequence[Mappi
                     f"{event_name} must not consume Slow LLM validation failed output"
                 )
             slow_llm_output = valid_outputs_by_id.get(caused_by_event_id)
-            if slow_llm_output is not None and event_name == "ARGUMENTS_RESOLVED":
+            if event_name == "ARGUMENTS_RESOLVED" and _task_plan_key(event) in slow_llm_task_plan_keys:
+                if slow_llm_output is None:
+                    raise ReplayValidationError(
+                        "ARGUMENTS_RESOLVED requires validated Slow LLM structured output"
+                    )
                 _validate_arguments_resolved_consumes_slow_llm_refs(event, slow_llm_output)
 
         events_by_id[event_id] = event
+
+
+def _task_plan_key(event: Mapping[str, Any]) -> tuple[str, int]:
+    return str(event["task_id"]), int(event["plan_version"])
+
+
+def _is_slow_llm_structured_validation_failed_event(event: Mapping[str, Any]) -> bool:
+    return (
+        event.get("event_name") == "ADAPTER_OUTPUT_VALIDATION_FAILED"
+        and event.get("adapter_type") == "slow_llm"
+        and event.get("schema_name") == SLOW_LLM_STRUCTURED_OUTPUT_SCHEMA
+    )
+
+
+def _validate_slow_llm_validation_failure_event(
+    event: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    bound_event = events_by_id.get(str(event.get("caused_by_event_id", "")))
+    if bound_event is None:
+        raise ReplayValidationError("ADAPTER_OUTPUT_VALIDATION_FAILED slow_llm requires prior SlowTask event")
+    if bound_event.get("event_name") not in SLOW_LLM_ALLOWED_SLOWTASK_BINDING_EVENTS:
+        raise ReplayValidationError(
+            "ADAPTER_OUTPUT_VALIDATION_FAILED slow_llm requires prior allowed SlowTask event"
+        )
+    for field in ("task_id", "plan_version", "task_event_seq"):
+        if event.get(field) != bound_event.get(field):
+            raise ReplayValidationError(
+                f"ADAPTER_OUTPUT_VALIDATION_FAILED slow_llm {field} must match bound SlowTask event"
+            )
+    failure_reasons = event.get("failure_reasons")
+    if (
+        not isinstance(failure_reasons, Sequence)
+        or isinstance(failure_reasons, (str, bytes))
+        or not failure_reasons
+        or not all(isinstance(reason, str) and reason for reason in failure_reasons)
+    ):
+        raise ReplayValidationError(
+            "ADAPTER_OUTPUT_VALIDATION_FAILED slow_llm failure_reasons must be non-empty strings"
+        )
+    if any(CREDENTIAL_LIKE_REF_PATTERN.search(reason) for reason in failure_reasons):
+        raise ReplayValidationError(
+            "ADAPTER_OUTPUT_VALIDATION_FAILED slow_llm failure_reasons must not contain credential-like content"
+        )
 
 
 def _validate_slow_llm_output_event(

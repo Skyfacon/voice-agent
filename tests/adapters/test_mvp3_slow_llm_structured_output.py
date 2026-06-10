@@ -200,6 +200,51 @@ def test_invalid_slow_llm_structured_output_emits_validation_failed_and_cannot_f
         )
 
 
+def test_replay_rejects_indirect_arguments_resolved_after_slow_llm_validation_failure() -> None:
+    startup = _start_mvp3_slow_llm_contract_session(
+        session_id="sess_mvp3_slice6_slow_llm_indirect_invalid_synthetic"
+    )
+    evidence_reviewed = _append_planning_slowtask_chain(
+        startup.journal,
+        event_id_prefix="evt_mvp3_slice6_slow_llm_indirect_invalid",
+    )
+    SlowLLMStructuredOutputContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_slow_llm",
+        output_mode="real",
+    ).emit_output_validation_failed(
+        event_id="evt_mvp3_slice6_slow_llm_indirect_validation_failed",
+        caused_by_event_id=str(evidence_reviewed["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        slowtask_event=evidence_reviewed,
+        adapter_request_id="adapter_request_mvp3_slow_llm_indirect_invalid_001",
+        failure_reasons=("missing_required_field: resolved_arguments_ref",),
+    )
+    startup.journal.append(
+        event_name="ARGUMENTS_RESOLVED",
+        event_id="evt_mvp3_slice6_slow_llm_indirect_arguments_resolved",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(evidence_reviewed["event_id"]),
+        created_monotonic_ms=211,
+        created_wall_clock_ms=1700000000211,
+        trace_redaction_level="metadata_only",
+        task_id=str(evidence_reviewed["task_id"]),
+        plan_version=int(evidence_reviewed["plan_version"]),
+        task_event_seq=int(evidence_reviewed["task_event_seq"]) + 1,
+        resolved_arguments_ref="resolved-arguments://synthetic/mvp3/slice6/indirect-invalid",
+        provenance_ref="provenance://synthetic/mvp3/slice6/indirect-invalid",
+    )
+
+    with pytest.raises(ReplayValidationError, match="validated Slow LLM structured output"):
+        run_replay_fixture(
+            {
+                "replay_manifest": _github_allowed_replay_manifest(),
+                "events": startup.journal.events(),
+            }
+        )
+
+
 def test_slow_llm_retry_failure_and_degraded_paths_are_replay_visible() -> None:
     startup = _start_mvp3_slow_llm_contract_session(
         session_id="sess_mvp3_slice6_slow_llm_failure_paths_synthetic"
@@ -263,6 +308,47 @@ def test_slow_llm_retry_failure_and_degraded_paths_are_replay_visible() -> None:
     ]
 
 
+def test_replay_accepts_delayed_slow_llm_callback_bound_to_prior_slowtask_event() -> None:
+    startup = _start_mvp3_slow_llm_contract_session(
+        session_id="sess_mvp3_slice6_slow_llm_delayed_callback_synthetic"
+    )
+    evidence_reviewed = _append_planning_slowtask_chain(
+        startup.journal,
+        event_id_prefix="evt_mvp3_slice6_slow_llm_delayed_callback",
+    )
+    waiting = _append_waiting_for_slot_after_evidence(
+        startup.journal,
+        evidence_reviewed=evidence_reviewed,
+        event_id="evt_mvp3_slice6_slow_llm_delayed_callback_waiting",
+    )
+    emission = SlowLLMStructuredOutputContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_slow_llm",
+        output_mode="real",
+    ).emit_structured_output(
+        event_id="evt_mvp3_slice6_slow_llm_delayed_callback_output",
+        caused_by_event_id=str(evidence_reviewed["event_id"]),
+        created_monotonic_ms=220,
+        created_wall_clock_ms=1700000000220,
+        slowtask_event=evidence_reviewed,
+        adapter_request_id="adapter_request_mvp3_slow_llm_delayed_callback_001",
+        slow_llm_output_ref="slow-llm-output://synthetic/mvp3/slice6/delayed-callback",
+        structured_output_ref="structured-output://synthetic/mvp3/slice6/delayed-callback",
+        validation_result_ref="validation://synthetic/mvp3/slice6/delayed-callback",
+    )
+
+    result = run_replay_fixture(
+        {
+            "replay_manifest": _github_allowed_replay_manifest(),
+            "events": startup.journal.events(),
+        }
+    )
+
+    assert result.result_status == "passed"
+    assert waiting["task_event_seq"] > emission.structured_output_event["task_event_seq"]
+    assert result.adapter_health_state.output_event_modes[emission.structured_output_event["event_id"]] == "real"
+
+
 def test_replay_rejects_provider_specific_slow_llm_payload_leaking_downstream() -> None:
     startup = _start_mvp3_slow_llm_contract_session(
         session_id="sess_mvp3_slice6_slow_llm_provider_payload_synthetic"
@@ -296,6 +382,48 @@ def test_replay_rejects_provider_specific_slow_llm_payload_leaking_downstream() 
                 "replay_manifest": _github_allowed_replay_manifest(),
                 "events": events,
             }
+        )
+
+
+def test_slow_llm_contract_rejects_non_request_slowtask_binding_event() -> None:
+    startup = _start_mvp3_slow_llm_contract_session(
+        session_id="sess_mvp3_slice6_slow_llm_non_request_binding_contract_synthetic"
+    )
+    evidence_reviewed = _append_planning_slowtask_chain(
+        startup.journal,
+        event_id_prefix="evt_mvp3_slice6_slow_llm_non_request_binding_contract",
+    )
+    arguments_resolved = startup.journal.append(
+        event_name="ARGUMENTS_RESOLVED",
+        event_id="evt_mvp3_slice6_slow_llm_non_request_binding_arguments_resolved",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(evidence_reviewed["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        trace_redaction_level="metadata_only",
+        task_id=str(evidence_reviewed["task_id"]),
+        plan_version=int(evidence_reviewed["plan_version"]),
+        task_event_seq=int(evidence_reviewed["task_event_seq"]) + 1,
+        resolved_arguments_ref="resolved-arguments://synthetic/mvp3/slice6/non-request-binding",
+        provenance_ref="provenance://synthetic/mvp3/slice6/non-request-binding",
+    )
+    contract = SlowLLMStructuredOutputContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_slow_llm",
+        output_mode="real",
+    )
+
+    with pytest.raises(ValueError, match="allowed SlowTask event"):
+        contract.emit_structured_output(
+            event_id="evt_mvp3_slice6_slow_llm_non_request_binding_output",
+            caused_by_event_id=str(arguments_resolved["event_id"]),
+            created_monotonic_ms=211,
+            created_wall_clock_ms=1700000000211,
+            slowtask_event=arguments_resolved,
+            adapter_request_id="adapter_request_mvp3_slow_llm_non_request_binding_001",
+            slow_llm_output_ref="slow-llm-output://synthetic/mvp3/slice6/non-request-binding",
+            structured_output_ref="structured-output://synthetic/mvp3/slice6/non-request-binding",
+            validation_result_ref="validation://synthetic/mvp3/slice6/non-request-binding",
         )
 
 
@@ -335,6 +463,66 @@ def test_slow_llm_contract_rejects_adapter_event_as_binding_event() -> None:
             slow_llm_output_ref="slow-llm-output://synthetic/mvp3/slice6/adapter-bound-contract-second",
             structured_output_ref="structured-output://synthetic/mvp3/slice6/adapter-bound-contract-second",
             validation_result_ref="validation://synthetic/mvp3/slice6/adapter-bound-contract-second",
+        )
+
+
+def test_slow_llm_contract_rejects_credential_like_validation_failure_reasons() -> None:
+    startup = _start_mvp3_slow_llm_contract_session(
+        session_id="sess_mvp3_slice6_slow_llm_credential_failure_reason_contract_synthetic"
+    )
+    evidence_reviewed = _append_planning_slowtask_chain(
+        startup.journal,
+        event_id_prefix="evt_mvp3_slice6_slow_llm_credential_failure_reason_contract",
+    )
+    contract = SlowLLMStructuredOutputContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_slow_llm",
+        output_mode="real",
+    )
+
+    with pytest.raises(ValueError, match="credential-like"):
+        contract.emit_output_validation_failed(
+            event_id="evt_mvp3_slice6_slow_llm_credential_failure_reason_contract_failed",
+            caused_by_event_id=str(evidence_reviewed["event_id"]),
+            created_monotonic_ms=210,
+            created_wall_clock_ms=1700000000210,
+            slowtask_event=evidence_reviewed,
+            adapter_request_id="adapter_request_mvp3_slow_llm_credential_failure_reason_contract_001",
+            failure_reasons=("provider echoed api_key=synthetic",),
+        )
+
+
+def test_replay_rejects_credential_like_imported_slow_llm_validation_failure_reasons() -> None:
+    startup = _start_mvp3_slow_llm_contract_session(
+        session_id="sess_mvp3_slice6_slow_llm_credential_failure_reason_replay_synthetic"
+    )
+    evidence_reviewed = _append_planning_slowtask_chain(
+        startup.journal,
+        event_id_prefix="evt_mvp3_slice6_slow_llm_credential_failure_reason_replay",
+    )
+    failed = SlowLLMStructuredOutputContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_slow_llm",
+        output_mode="real",
+    ).emit_output_validation_failed(
+        event_id="evt_mvp3_slice6_slow_llm_credential_failure_reason_replay_failed",
+        caused_by_event_id=str(evidence_reviewed["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        slowtask_event=evidence_reviewed,
+        adapter_request_id="adapter_request_mvp3_slow_llm_credential_failure_reason_replay_001",
+        failure_reasons=("missing_required_field: resolved_arguments_ref",),
+    )
+    events = startup.journal.events()
+    imported_failed = next(event for event in events if event["event_id"] == failed["event_id"])
+    imported_failed["failure_reasons"] = ["provider echoed api_key=synthetic"]
+
+    with pytest.raises(ReplayValidationError, match="credential-like"):
+        run_replay_fixture(
+            {
+                "replay_manifest": _github_allowed_replay_manifest(),
+                "events": events,
+            }
         )
 
 
@@ -383,7 +571,7 @@ def test_replay_rejects_adapter_caused_slow_llm_output_chain() -> None:
         output_mode="real",
     )
 
-    with pytest.raises(ReplayValidationError, match="prior allowed SlowTask event"):
+    with pytest.raises(ReplayValidationError, match="task_event_seq|prior allowed SlowTask event"):
         run_replay_fixture(
             {
                 "replay_manifest": _github_allowed_replay_manifest(),
@@ -559,6 +747,27 @@ def _append_planning_slowtask_chain(
         task_event_seq=5,
         evidence_refs=["evidence://synthetic/mvp3/slice6/initial"],
         review_result="requires_slow_llm_structured_output",
+    )
+
+
+def _append_waiting_for_slot_after_evidence(
+    journal: object,
+    *,
+    evidence_reviewed: dict[str, object],
+    event_id: str,
+) -> dict[str, object]:
+    return journal.append(
+        event_name="WAITING_FOR_SLOT",
+        event_id=event_id,
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(evidence_reviewed["event_id"]),
+        created_monotonic_ms=125,
+        created_wall_clock_ms=1700000000125,
+        trace_redaction_level="metadata_only",
+        task_id=str(evidence_reviewed["task_id"]),
+        plan_version=int(evidence_reviewed["plan_version"]),
+        task_event_seq=int(evidence_reviewed["task_event_seq"]) + 1,
+        missing_fields=["destination"],
     )
 
 
