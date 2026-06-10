@@ -113,7 +113,8 @@ Frame/output events 必须携带 `output_mode=real|mock|fallback|degraded`，或
 - retryable timeout/failure 记录 `ADAPTER_REQUEST_RETRYING`。
 - final failure 记录 `ADAPTER_REQUEST_FAILED`。
 - provider output schema validation failure 记录 `ADAPTER_OUTPUT_VALIDATION_FAILED`，下游不得静默消费 invalid output。
-- TTS synthesis success output 记录 `TTS_SYNTHESIS_OUTPUT_EMITTED`，且只包含 safe normalized audio refs / metadata；不得写入 raw audio bytes、provider payload 或 provider-specific schema。
+- TTS synthesis success output 记录 `TTS_SYNTHESIS_OUTPUT_EMITTED`，且只包含 safe normalized audio refs / metadata；safe ref 检查必须覆盖 URL-decoded refs；不得写入 raw audio bytes、provider payload 或 provider-specific schema。
+- MVP-3 approved playback 必须通过 `tts_output_event_id` 或唯一 safe ref match 绑定到 prior `TTS_SYNTHESIS_OUTPUT_EMITTED`，不得播放绕过 TTS adapter contract 的 arbitrary refs。
 - TTS 缺少 truncate capability 时，必须记录 `ADAPTER_OUTPUT_DEGRADED`，并以 `truncate_status=unsupported_blocked` 阻断 barge-in target validation；不得静默通过。
 - adapter 支持 cancellation 时，plan advance 或 task cancel 可触发 cancel path。
 - adapter 不支持 cancellation 时，不得伪造 cancel success；等待结果返回后按 stale policy 处理。

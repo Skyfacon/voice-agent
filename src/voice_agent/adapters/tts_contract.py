@@ -3,8 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import unquote
 
-from voice_agent.adapters.capabilities import CREDENTIAL_LIKE_REF_PATTERN
+from voice_agent.adapters.capabilities import (
+    CREDENTIAL_LIKE_REF_PATTERN,
+    CapabilityValidationError,
+    validate_capability_matrix,
+)
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 
 
@@ -46,12 +51,17 @@ class TtsSynthesisAdapterContract:
         *,
         boundary: AdapterCallbackAppendBoundary,
         adapter_id: str,
+        capability_matrix: Mapping[str, Any],
         output_mode: str,
         source_module: str = "tts_adapter",
         trace_redaction_level: str = "metadata_only",
     ) -> None:
         self._boundary = boundary
         self._adapter_id = _require_non_empty_string(adapter_id, "adapter_id")
+        self._declared_supports_tts_truncate = _validate_tts_capability_matrix(
+            capability_matrix,
+            adapter_id=self._adapter_id,
+        )
         self._output_mode = _validate_output_mode(output_mode)
         self._source_module = _require_non_empty_string(source_module, "source_module")
         self._trace_redaction_level = _require_non_empty_string(
@@ -90,6 +100,10 @@ class TtsSynthesisAdapterContract:
         audio_format_ref = _require_safe_ref(audio_format_ref, "audio_format_ref")
         synthesis_result_ref = _require_safe_ref(synthesis_result_ref, "synthesis_result_ref")
 
+        if truncate_supported and not self._declared_supports_tts_truncate:
+            raise TtsSynthesisAdapterContractError(
+                "TTS truncate_supported cannot exceed declared supports_tts_truncate capability"
+            )
         if not truncate_supported and self._output_mode != "degraded":
             raise TtsSynthesisAdapterContractError(
                 "TTS output_mode must be degraded when truncate capability is unavailable"
@@ -187,6 +201,22 @@ def _validate_output_mode(output_mode: str) -> str:
     return output_mode
 
 
+def _validate_tts_capability_matrix(capability_matrix: Mapping[str, Any], *, adapter_id: str) -> bool:
+    try:
+        matrix = validate_capability_matrix(capability_matrix)
+    except CapabilityValidationError as exc:
+        raise TtsSynthesisAdapterContractError(str(exc)) from exc
+    if matrix.get("adapter_id") != adapter_id:
+        raise TtsSynthesisAdapterContractError("capability_matrix adapter_id must match contract adapter_id")
+    if matrix.get("adapter_type") != "tts":
+        raise TtsSynthesisAdapterContractError("capability_matrix must declare adapter_type=tts")
+    if matrix.get("supports_tts") is not True:
+        raise TtsSynthesisAdapterContractError("capability_matrix must declare supports_tts=true")
+    if matrix.get("supports_audio_output") is not True:
+        raise TtsSynthesisAdapterContractError("capability_matrix must declare supports_audio_output=true")
+    return bool(matrix["supports_tts_truncate"])
+
+
 def _require_non_empty_string(value: str, field: str) -> str:
     if not isinstance(value, str) or value == "":
         raise TtsSynthesisAdapterContractError(f"{field} must be a non-empty string")
@@ -195,8 +225,7 @@ def _require_non_empty_string(value: str, field: str) -> str:
 
 def _require_safe_ref(value: str, field: str) -> str:
     value = _require_non_empty_string(value, field)
-    lowered = value.lower()
-    if CREDENTIAL_LIKE_REF_PATTERN.search(value) or any(term in lowered for term in TTS_UNSAFE_REF_TERMS):
+    if any(_contains_unsafe_ref_content(view) for view in _ref_safety_views(value)):
         raise TtsSynthesisAdapterContractError(f"{field} must be a safe ref")
     return value
 
@@ -205,3 +234,22 @@ def _optional_safe_ref(value: str | None, field: str) -> str | None:
     if value is None:
         return None
     return _require_safe_ref(value, field)
+
+
+def _ref_safety_views(value: str) -> tuple[str, ...]:
+    views = [value]
+    decoded = value
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        views.append(next_decoded)
+        decoded = next_decoded
+    return tuple(views)
+
+
+def _contains_unsafe_ref_content(value: str) -> bool:
+    lowered = value.lower()
+    return CREDENTIAL_LIKE_REF_PATTERN.search(value) is not None or any(
+        term in lowered for term in TTS_UNSAFE_REF_TERMS
+    )

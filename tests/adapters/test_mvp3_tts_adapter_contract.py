@@ -9,7 +9,10 @@ import urllib.request
 
 import pytest
 
-from tests.adapters.test_mvp3_adapter_profiles import valid_mvp3_real_profiles
+from tests.adapters.test_mvp3_adapter_profiles import (
+    mvp3_real_capability,
+    valid_mvp3_real_profiles,
+)
 from voice_agent.adapters.event_harness import FakeRealAdapterEventHarness
 from voice_agent.events.envelope import validate_event_envelope
 from voice_agent.replay.runner import ReplayValidationError, run_replay_fixture
@@ -54,6 +57,7 @@ def test_tts_contract_emits_safe_synthesis_refs_and_playback_link_without_provid
     contract = TtsSynthesisAdapterContract(
         boundary=boundary,
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode="real",
     )
 
@@ -139,6 +143,7 @@ def test_missing_tts_truncate_capability_emits_degraded_blocking_metadata() -> N
 
     startup = _start_mvp3_tts_contract_session(
         session_id="sess_mvp3_slice7_tts_truncate_degraded_synthetic",
+        tts_supports_truncate=False,
     )
     approved_check = _append_approved_spoken_plan_chain(
         startup.journal,
@@ -147,6 +152,7 @@ def test_missing_tts_truncate_capability_emits_degraded_blocking_metadata() -> N
     contract = TtsSynthesisAdapterContract(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode="degraded",
     )
 
@@ -190,11 +196,51 @@ def test_missing_tts_truncate_capability_emits_degraded_blocking_metadata() -> N
     )
 
 
+def test_tts_contract_rejects_supported_truncate_when_declared_capability_is_missing() -> None:
+    from voice_agent.adapters.tts_contract import (
+        TtsSynthesisAdapterContract,
+        TtsSynthesisAdapterContractError,
+    )
+
+    startup = _start_mvp3_tts_contract_session(
+        session_id="sess_mvp3_slice7_tts_declared_truncate_missing_synthetic",
+        tts_supports_truncate=False,
+    )
+    approved_check = _append_approved_spoken_plan_chain(
+        startup.journal,
+        event_id_prefix="evt_mvp3_slice7_tts_declared_truncate_missing",
+    )
+    event_count_before = len(startup.journal.events())
+
+    with pytest.raises(TtsSynthesisAdapterContractError, match="supports_tts_truncate"):
+        TtsSynthesisAdapterContract(
+            boundary=AdapterCallbackAppendBoundary(startup.journal),
+            adapter_id="mvp3_tts",
+            capability_matrix=_tts_capability_matrix(startup),
+            output_mode="real",
+        ).emit_synthesis_output(
+            event_id="evt_mvp3_slice7_tts_declared_truncate_missing_output",
+            caused_by_event_id=str(approved_check["event_id"]),
+            created_monotonic_ms=210,
+            created_wall_clock_ms=1700000000210,
+            approved_check_event=approved_check,
+            adapter_request_id="adapter_request_mvp3_tts_declared_truncate_missing_001",
+            audio_ref="audio://synthetic/mvp3/slice7/declared-truncate-missing",
+            tts_stream_ref=None,
+            audio_format_ref="audio-format://synthetic/mvp3/tts/opus-24khz-mono",
+            synthesis_result_ref="tts-result://synthetic/mvp3/slice7/declared-truncate-missing",
+            truncate_supported=True,
+        )
+
+    assert len(startup.journal.events()) == event_count_before
+
+
 def test_replay_rejects_truncate_request_against_tts_output_missing_truncate_capability() -> None:
     from voice_agent.adapters.tts_contract import TtsSynthesisAdapterContract
 
     startup = _start_mvp3_tts_contract_session(
         session_id="sess_mvp3_slice7_tts_truncate_blocked_synthetic",
+        tts_supports_truncate=False,
     )
     approved_check = _append_approved_spoken_plan_chain(
         startup.journal,
@@ -203,6 +249,7 @@ def test_replay_rejects_truncate_request_against_tts_output_missing_truncate_cap
     emission = TtsSynthesisAdapterContract(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode="degraded",
     ).emit_synthesis_output(
         event_id="evt_mvp3_slice7_tts_truncate_blocked_output",
@@ -263,6 +310,7 @@ def test_replay_rejects_truncate_request_when_blocked_tts_playback_omits_output_
 
     startup = _start_mvp3_tts_contract_session(
         session_id="sess_mvp3_slice7_tts_truncate_unlinked_synthetic",
+        tts_supports_truncate=False,
     )
     approved_check = _append_approved_spoken_plan_chain(
         startup.journal,
@@ -271,6 +319,7 @@ def test_replay_rejects_truncate_request_when_blocked_tts_playback_omits_output_
     emission = TtsSynthesisAdapterContract(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode="degraded",
     ).emit_synthesis_output(
         event_id="evt_mvp3_slice7_tts_truncate_unlinked_output",
@@ -333,6 +382,8 @@ def test_replay_rejects_truncate_request_when_blocked_tts_playback_omits_output_
     (
         ("audio_ref", "audio/raw/mvp3/slice7/unsafe.wav"),
         ("audio_ref", "data:audio/wav;base64,UklGRg=="),
+        ("audio_ref", "audio%2Fraw%2Fmvp3%2Fslice7%2Funsafe.wav"),
+        ("audio_ref", "data%3Aaudio/wav;base64,UklGRg=="),
         ("tts_stream_ref", "traces/mvp3/slice7/unsafe-stream"),
         ("tts_stream_ref", "data:audio/ogg;base64,T2dnUw=="),
         ("synthesis_result_ref", "diagnostics/mvp3/slice7/unsafe-result"),
@@ -368,6 +419,7 @@ def test_tts_contract_rejects_local_raw_or_debug_refs_before_journal_append(
         TtsSynthesisAdapterContract(
             boundary=AdapterCallbackAppendBoundary(startup.journal),
             adapter_id="mvp3_tts",
+            capability_matrix=_tts_capability_matrix(startup),
             output_mode="real",
         ).emit_synthesis_output(
             event_id=f"evt_mvp3_slice7_tts_unsafe_{unsafe_field}_output",
@@ -383,7 +435,14 @@ def test_tts_contract_rejects_local_raw_or_debug_refs_before_journal_append(
     assert len(startup.journal.events()) == event_count_before
 
 
-def test_replay_rejects_raw_audio_data_uri_tts_refs() -> None:
+@pytest.mark.parametrize(
+    "unsafe_ref",
+    (
+        "data:audio/wav;base64,UklGRg==",
+        "data%3Aaudio/wav;base64,UklGRg==",
+    ),
+)
+def test_replay_rejects_raw_audio_data_uri_tts_refs(unsafe_ref: str) -> None:
     from voice_agent.adapters.tts_contract import TtsSynthesisAdapterContract
 
     startup = _start_mvp3_tts_contract_session(
@@ -396,6 +455,7 @@ def test_replay_rejects_raw_audio_data_uri_tts_refs() -> None:
     emission = TtsSynthesisAdapterContract(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode="real",
     ).emit_synthesis_output(
         event_id="evt_mvp3_slice7_tts_data_uri_replay_output",
@@ -412,7 +472,7 @@ def test_replay_rejects_raw_audio_data_uri_tts_refs() -> None:
     )
     events = startup.journal.events()
     tts_event = next(event for event in events if event["event_id"] == emission.synthesis_event["event_id"])
-    tts_event["audio_ref"] = "data:audio/wav;base64,UklGRg=="
+    tts_event["audio_ref"] = unsafe_ref
 
     with pytest.raises(ReplayValidationError, match="safe ref"):
         run_replay_fixture(
@@ -436,6 +496,7 @@ def test_replay_accepts_linked_playback_that_consumes_one_of_two_tts_refs() -> N
     emission = TtsSynthesisAdapterContract(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode="real",
     ).emit_synthesis_output(
         event_id="evt_mvp3_slice7_tts_single_ref_playback_output",
@@ -468,6 +529,57 @@ def test_replay_accepts_linked_playback_that_consumes_one_of_two_tts_refs() -> N
     assert result.result_status == "passed"
     assert playback["audio_ref"] == emission.synthesis_event["audio_ref"]
     assert "tts_stream_ref" not in playback
+
+
+def test_replay_rejects_mvp3_playback_without_matching_tts_output() -> None:
+    from voice_agent.adapters.tts_contract import TtsSynthesisAdapterContract
+
+    startup = _start_mvp3_tts_contract_session(
+        session_id="sess_mvp3_slice7_tts_unmatched_playback_synthetic",
+    )
+    approved_check = _append_approved_spoken_plan_chain(
+        startup.journal,
+        event_id_prefix="evt_mvp3_slice7_tts_unmatched_playback",
+    )
+    TtsSynthesisAdapterContract(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
+        output_mode="real",
+    ).emit_synthesis_output(
+        event_id="evt_mvp3_slice7_tts_unmatched_playback_output",
+        caused_by_event_id=str(approved_check["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        approved_check_event=approved_check,
+        adapter_request_id="adapter_request_mvp3_tts_unmatched_playback_001",
+        audio_ref="audio://synthetic/mvp3/slice7/unmatched-playback-output",
+        tts_stream_ref=None,
+        audio_format_ref="audio-format://synthetic/mvp3/tts/opus-24khz-mono",
+        synthesis_result_ref="tts-result://synthetic/mvp3/slice7/unmatched-playback-output",
+        truncate_supported=True,
+    )
+    startup.journal.append(
+        event_name="PLAYBACK_SPAN_STARTED",
+        event_id="evt_mvp3_slice7_tts_unmatched_playback_started",
+        source_module="talker",
+        caused_by_event_id=str(approved_check["event_id"]),
+        created_monotonic_ms=211,
+        created_wall_clock_ms=1700000000211,
+        trace_redaction_level="metadata_only",
+        playback_span_id="playback_mvp3_slice7_unmatched_001",
+        spoken_plan_id=str(approved_check["spoken_plan_id"]),
+        approved_check_event_id=str(approved_check["event_id"]),
+        audio_ref="audio://synthetic/mvp3/slice7/outside-tts-contract",
+    )
+
+    with pytest.raises(ReplayValidationError, match="prior TTS output"):
+        run_replay_fixture(
+            {
+                "replay_manifest": _github_allowed_replay_manifest(),
+                "events": startup.journal.events(),
+            }
+        )
 
 
 def test_tts_retry_failure_and_degraded_paths_are_replay_visible() -> None:
@@ -550,6 +662,7 @@ def test_replay_rejects_nested_provider_specific_tts_payload() -> None:
     emission = TtsSynthesisAdapterContract(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode="real",
     ).emit_synthesis_output(
         event_id="evt_mvp3_slice7_tts_nested_provider_payload_output",
@@ -593,6 +706,7 @@ def test_tts_contract_accepts_explicit_real_fallback_or_degraded_output_modes(ou
     contract = TtsSynthesisAdapterContract(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id="mvp3_tts",
+        capability_matrix=_tts_capability_matrix(startup),
         output_mode=output_mode,
     )
 
@@ -616,7 +730,11 @@ def test_tts_contract_accepts_explicit_real_fallback_or_degraded_output_modes(ou
     assert emission.synthesis_event["truncate_status"] == "supported"
 
 
-def _start_mvp3_tts_contract_session(*, session_id: str = "sess_mvp3_slice7_tts_synthetic") -> object:
+def _start_mvp3_tts_contract_session(
+    *,
+    session_id: str = "sess_mvp3_slice7_tts_synthetic",
+    tts_supports_truncate: bool = True,
+) -> object:
     return start_configured_session(
         session_id=session_id,
         conversation_id="conv_mvp3_slice7_tts_synthetic",
@@ -628,8 +746,26 @@ def _start_mvp3_tts_contract_session(*, session_id: str = "sess_mvp3_slice7_tts_
             capability_snapshot_ref="capability://synthetic/mvp3/slice7-tts-contract",
             capability_version="mvp3.contract.v1",
         ),
-        capabilities=valid_mvp3_real_profiles(),
+        capabilities=_mvp3_tts_profiles(tts_supports_truncate=tts_supports_truncate),
     )
+
+
+def _mvp3_tts_profiles(*, tts_supports_truncate: bool) -> tuple[object, ...]:
+    return tuple(
+        (
+            mvp3_real_capability("tts", supports_tts_truncate=tts_supports_truncate)
+            if capability.adapter_type == "tts"
+            else capability
+        )
+        for capability in valid_mvp3_real_profiles()
+    )
+
+
+def _tts_capability_matrix(startup: object, *, adapter_id: str = "mvp3_tts") -> dict[str, object]:
+    for capability in startup.capabilities:
+        if capability.adapter_id == adapter_id:
+            return capability.to_dict()
+    raise AssertionError(f"missing TTS capability for adapter_id={adapter_id!r}")
 
 
 def _append_approved_spoken_plan_chain(

@@ -1109,10 +1109,14 @@ def _validate_tts_synthesis_output_contract(ordered_events: Sequence[Mapping[str
     tts_outputs_by_id: dict[str, Mapping[str, Any]] = {}
     tts_output_by_playback_span_id: dict[str, Mapping[str, Any]] = {}
     degraded_by_request_capability: set[tuple[str, str, str]] = set()
+    tts_output_required_for_spoken_plan_playback = False
 
     for event in ordered_events:
         event_name = str(event["event_name"])
         event_id = str(event["event_id"])
+
+        if event_name == "ADAPTER_CAPABILITY_SNAPSHOT_RECORDED" and _snapshot_requires_tts_output_linkage(event):
+            tts_output_required_for_spoken_plan_playback = True
 
         if event_name == "ADAPTER_OUTPUT_DEGRADED" and event.get("adapter_type") == "tts":
             request_id = event.get("adapter_request_id")
@@ -1131,6 +1135,13 @@ def _validate_tts_synthesis_output_contract(ordered_events: Sequence[Mapping[str
             tts_outputs_by_id[event_id] = event
         elif event_name == "PLAYBACK_SPAN_STARTED":
             tts_output = _tts_output_for_playback(event, tts_outputs_by_id)
+            if tts_output is None and _playback_requires_tts_output_linkage(
+                event,
+                tts_output_required_for_spoken_plan_playback=tts_output_required_for_spoken_plan_playback,
+            ):
+                raise ReplayValidationError(
+                    "PLAYBACK_SPAN_STARTED for MVP-3 TTS playback must reference exactly one prior TTS output"
+                )
             if tts_output is not None:
                 _validate_playback_consumes_tts_refs(event, tts_output)
                 tts_output_by_playback_span_id[str(event["playback_span_id"])] = tts_output
@@ -1199,8 +1210,7 @@ def _validate_tts_safe_refs(event: Mapping[str, Any]) -> None:
             continue
         if not isinstance(value, str):
             raise ReplayValidationError(f"TTS_SYNTHESIS_OUTPUT_EMITTED {field} must be a safe ref string")
-        lowered = value.lower()
-        if CREDENTIAL_LIKE_REF_PATTERN.search(value) or any(term in lowered for term in TTS_UNSAFE_REF_TERMS):
+        if any(_contains_unsafe_tts_ref_content(view) for view in _tts_ref_safety_views(value)):
             raise ReplayValidationError(f"TTS_SYNTHESIS_OUTPUT_EMITTED {field} must be a safe ref")
 
 
@@ -1261,6 +1271,48 @@ def _tts_output_refs_match_playback(
         playback_event.get(ref_field) not in (None, "")
         and playback_event.get(ref_field) == tts_output.get(ref_field)
         for ref_field in ("audio_ref", "tts_stream_ref")
+    )
+
+
+def _snapshot_requires_tts_output_linkage(event: Mapping[str, Any]) -> bool:
+    if not str(event.get("capability_version", "")).startswith("mvp3."):
+        return False
+    adapter_types = _string_list_for_replay(event.get("adapter_types"))
+    output_modes = _string_list_for_replay(event.get("output_modes"))
+    return any(
+        adapter_type == "tts" and output_mode != "mock"
+        for adapter_type, output_mode in zip(adapter_types, output_modes, strict=False)
+    )
+
+
+def _playback_requires_tts_output_linkage(
+    event: Mapping[str, Any],
+    *,
+    tts_output_required_for_spoken_plan_playback: bool,
+) -> bool:
+    if not tts_output_required_for_spoken_plan_playback:
+        return False
+    if event.get("approved_check_event_id") in (None, ""):
+        return False
+    return event.get("audio_ref") not in (None, "") or event.get("tts_stream_ref") not in (None, "")
+
+
+def _tts_ref_safety_views(value: str) -> tuple[str, ...]:
+    views = [value]
+    decoded = value
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        views.append(next_decoded)
+        decoded = next_decoded
+    return tuple(views)
+
+
+def _contains_unsafe_tts_ref_content(value: str) -> bool:
+    lowered = value.lower()
+    return CREDENTIAL_LIKE_REF_PATTERN.search(value) is not None or any(
+        term in lowered for term in TTS_UNSAFE_REF_TERMS
     )
 
 
