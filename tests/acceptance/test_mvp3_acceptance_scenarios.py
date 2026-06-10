@@ -13,6 +13,7 @@ MVP3_BACKLOG = REPO_ROOT / "docs" / "implementation" / "mvp3-backlog.md"
 SCENARIO_SPEC = REPO_ROOT / "docs" / "specs" / "mvp3-acceptance-scenarios.md"
 MANIFEST_INDEX = MVP3_REPLAY_FIXTURE_DIR / "manifest.index.json"
 EMPTY_FIXTURE = MVP3_REPLAY_FIXTURE_DIR / "000-empty-mvp3-session.fixture.json"
+SLICE8_FIXTURE = MVP3_REPLAY_FIXTURE_DIR / "008-fallback-degraded-replay.fixture.json"
 
 REQUIRED_SLICE_HEADINGS = [
     "Slice 0: MVP-3 fixture / replay safety skeleton",
@@ -67,7 +68,7 @@ def test_mvp3_backlog_declares_slice_driven_plan_like_prior_mvps() -> None:
     assert "MVP-3 Slice 0" in content
 
 
-def test_mvp3_acceptance_spec_and_manifest_start_with_slice0_skeleton() -> None:
+def test_mvp3_acceptance_spec_and_manifest_register_current_slice_fixtures() -> None:
     manifest = load_json_fixture(MANIFEST_INDEX)
     scenario_ids = _scenario_ids_from_spec()
 
@@ -85,6 +86,10 @@ def test_mvp3_acceptance_spec_and_manifest_start_with_slice0_skeleton() -> None:
         {
             "fixture": "000-empty-mvp3-session.fixture.json",
             "purpose": "empty MVP-3 replay safety skeleton with no provider execution",
+        },
+        {
+            "fixture": "008-fallback-degraded-replay.fixture.json",
+            "purpose": "fallback/degraded adapter replay with recorded real/fallback/degraded outcomes",
         }
     ]
     assert manifest["scenarios"][0] == {
@@ -92,6 +97,15 @@ def test_mvp3_acceptance_spec_and_manifest_start_with_slice0_skeleton() -> None:
         "fixture": "000-empty-mvp3-session.fixture.json",
         "assertion": "MVP-3 Slice 0 fixtures are deterministic, GitHub-safe, synthetic/redacted/minimal, and contain no provider execution.",
     }
+    assert {
+        "scenario_id": "MVP3-FALLBACK-DEGRADED-REPLAY-001",
+        "fixture": "008-fallback-degraded-replay.fixture.json",
+        "assertion": (
+            "Slice 8 replay distinguishes real/fallback/degraded adapter outcomes, "
+            "canonical retry/failure/validation/degraded paths, and old-plan adapter output "
+            "without provider rerun."
+        ),
+    } in manifest["scenarios"]
 
 
 def test_mvp3_empty_fixture_is_repo_safe_and_replays_without_runtime_execution() -> None:
@@ -108,6 +122,21 @@ def test_mvp3_empty_fixture_is_repo_safe_and_replays_without_runtime_execution()
     assert result.diagnostics["data_plane_refs"] == []
     assert result.state_digest["source_session_id"] is None
     assert result.state_digest["last_event_seq"] == 0
+
+
+def test_mvp3_slice8_fixture_is_repo_safe_and_replays_without_runtime_execution() -> None:
+    fixture = load_json_fixture(SLICE8_FIXTURE)
+
+    _assert_mvp3_fixture_manifest_is_repo_safe(fixture)
+    result = run_replay_fixture(fixture)
+
+    assert result.result_status == "passed"
+    assert set(result.adapter_health_state.output_event_modes.values()) == {
+        "real",
+        "fallback",
+        "degraded",
+    }
+    assert result.slowtask_state.tasks["task_mvp3_slice8"].current_plan_version == 2
 
 
 def test_mvp3_manifest_safety_gates_reject_provider_execution_claims() -> None:
@@ -129,11 +158,17 @@ def _scenario_ids_from_spec() -> list[str]:
 
 
 def _assert_mvp3_fixture_is_repo_safe(fixture: dict[str, object]) -> None:
+    _assert_mvp3_fixture_manifest_is_repo_safe(fixture)
+    manifest = fixture["replay_manifest"]
+    assert manifest["replay_id"] == "replay_mvp3_empty_session_000"
+    assert manifest["source_trace_ref"] == "fixture://mvp3/000-empty-mvp3-session"
+    assert fixture["events"] == []
+
+
+def _assert_mvp3_fixture_manifest_is_repo_safe(fixture: dict[str, object]) -> None:
     manifest = fixture["replay_manifest"]
     assert isinstance(manifest, dict)
     assert manifest["manifest_schema_version"] == "1.0"
-    assert manifest["replay_id"] == "replay_mvp3_empty_session_000"
-    assert manifest["source_trace_ref"] == "fixture://mvp3/000-empty-mvp3-session"
     assert manifest["replay_mode"] == "deterministic"
     assert manifest["event_schema_version_range"] == ["1.0"]
     assert manifest["fixture_domain"] == "GITHUB_ALLOWED"
@@ -145,4 +180,3 @@ def _assert_mvp3_fixture_is_repo_safe(fixture: dict[str, object]) -> None:
     assert manifest["contains_unredacted_tool_result"] is False
     assert manifest["contains_large_raw_web_content"] is False
     assert manifest["allowed_re_eval_components"] == []
-    assert fixture["events"] == []
