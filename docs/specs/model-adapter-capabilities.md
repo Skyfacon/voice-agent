@@ -87,6 +87,7 @@ Canonical health/error/degradation events:
 - `ASR_TRANSCRIPT_OUTPUT_EMITTED`
 - `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED`
 - `SLOW_LLM_STRUCTURED_OUTPUT_EMITTED`
+- `TTS_SYNTHESIS_OUTPUT_EMITTED`
 
 Frame/output events 必须携带 `output_mode=real|mock|fallback|degraded`，或引用包含该 mode 的 capability snapshot。
 
@@ -102,6 +103,7 @@ Frame/output events 必须携带 `output_mode=real|mock|fallback|degraded`，或
 | `ASR_TRANSCRIPT_OUTPUT_EMITTED` | `adapter_id`, `adapter_type=asr`, `adapter_request_id`, `turn_id`, `utterance_id`, `input_modality=audio`, `audio_span_id`, `asr_frame_ref`, `text_ref`, `transcript_finality=final`, `timestamp_status`, `streaming_status`, `output_mode=real/fallback/degraded` |
 | `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED` | `adapter_id`, `adapter_type=thinker`, `adapter_request_id`, `turn_id`, `utterance_id`, `input_modality`, `semantic_frame_schema`, `normalization_status=normalized`, `semantic_frame_ref`, `semantic_summary_ref`, `semantic_close_status`, `assistant_directedness_status`, `emotion_status`, `audio_caption_status`, `output_mode=real/fallback/degraded` |
 | `SLOW_LLM_STRUCTURED_OUTPUT_EMITTED` | `adapter_id`, `adapter_type=slow_llm`, `adapter_request_id`, `task_id`, `plan_version`, `task_event_seq`, `schema_name=voice_agent.slowtask.structured_output.v1`, `normalization_status=normalized`, `slow_llm_output_ref`, `structured_output_ref`, `validation_result_ref`, `output_mode=real/fallback/degraded` |
+| `TTS_SYNTHESIS_OUTPUT_EMITTED` | `adapter_id`, `adapter_type=tts`, `adapter_request_id`, `spoken_plan_id`, `approved_check_event_id`, `normalization_status=normalized`, `audio_ref` or `tts_stream_ref`, `audio_format_ref`, `synthesis_result_ref`, `truncate_status=supported/unsupported_blocked`, `output_mode=real/fallback/degraded` |
 
 任何 request body、headers、tokens、cookies、credentials、authorization headers 都不得写入 adapter events。
 
@@ -111,6 +113,9 @@ Frame/output events 必须携带 `output_mode=real|mock|fallback|degraded`，或
 - retryable timeout/failure 记录 `ADAPTER_REQUEST_RETRYING`。
 - final failure 记录 `ADAPTER_REQUEST_FAILED`。
 - provider output schema validation failure 记录 `ADAPTER_OUTPUT_VALIDATION_FAILED`，下游不得静默消费 invalid output。
+- TTS synthesis success output 记录 `TTS_SYNTHESIS_OUTPUT_EMITTED`，且只包含 safe normalized audio refs / metadata；safe ref 检查必须覆盖 URL-decoded refs；不得写入 raw audio bytes、provider payload 或 provider-specific schema。
+- MVP-3 approved playback 必须通过 `tts_output_event_id` 或唯一 safe ref match 绑定到 prior `TTS_SYNTHESIS_OUTPUT_EMITTED`，不得播放绕过 TTS adapter contract 的 arbitrary refs。
+- TTS 缺少 truncate capability 时，必须记录 `ADAPTER_OUTPUT_DEGRADED`，并以 `truncate_status=unsupported_blocked` 阻断 barge-in target validation；不得静默通过。
 - adapter 支持 cancellation 时，plan advance 或 task cancel 可触发 cancel path。
 - adapter 不支持 cancellation 时，不得伪造 cancel success；等待结果返回后按 stale policy 处理。
 
