@@ -109,6 +109,31 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "transcript_finality": "final",
         },
     ),
+    "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED": _definition(
+        "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "turn_id",
+            "utterance_id",
+            "input_modality",
+            "semantic_frame_schema",
+            "normalization_status",
+            "semantic_frame_ref",
+            "semantic_summary_ref",
+            "semantic_close_status",
+            "assistant_directedness_status",
+            "emotion_status",
+            "audio_caption_status",
+            "output_mode",
+        ),
+        literal_fields={
+            "adapter_type": "thinker",
+            "semantic_frame_schema": "voice_agent.semantic_frame.v1",
+            "normalization_status": "normalized",
+        },
+    ),
     "TEXT_INPUT_RECEIVED": _definition(
         "TEXT_INPUT_RECEIVED",
         required_fields=(

@@ -69,8 +69,8 @@ All MVP-3 fixtures must be synthetic, redacted, and minimal.
 | --- | --- |
 | purpose | Validate Thinker structured SemanticFrame-compatible output contract. |
 | initial state | Committed turn and ASR/text evidence exist. |
-| event chain | Thinker adapter output event or degraded/fallback event. |
-| required assertions | Output is normalized before Router/SlowTask use; missing optional semantic fields degrade explicitly. |
+| event chain | `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED` plus `ADAPTER_OUTPUT_DEGRADED` when semantic close, assistant-directedness, emotion, or audio caption are unavailable. |
+| required assertions | Output is normalized before Router/SlowTask use; missing optional semantic fields degrade explicitly; output mode is explicit as real/fallback/degraded. |
 | replay expectations | Replay uses recorded refs only. |
 | forbidden behavior | No provider-specific schema leakage into Router or SlowTask. |
 

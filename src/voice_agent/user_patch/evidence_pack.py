@@ -146,7 +146,11 @@ def construct_user_patch_evidence_pack(
     if asr_frame_event is not None:
         _validate_mock_frame(asr_frame_event, "MOCK_ASR_FRAME_EMITTED", turn_committed_event)
     if thinker_frame_event is not None:
-        _validate_mock_frame(thinker_frame_event, "MOCK_THINKER_FRAME_EMITTED", turn_committed_event)
+        _validate_thinker_frame(thinker_frame_event, turn_committed_event)
+    semantic_summary_ref = _bind_thinker_semantic_summary_ref(
+        thinker_frame_event,
+        semantic_summary_ref,
+    )
 
     normalized_candidates = _normalize_candidate_patch_types(candidate_patch_types)
     authoritative_evidence = _build_authoritative_evidence(
@@ -404,6 +408,49 @@ def _validate_mock_frame(
     for field in ("turn_id", "utterance_id"):
         if event.get(field) != turn_committed_event.get(field):
             raise ValueError(f"{expected_event_name} must match committed turn {field}")
+
+
+def _validate_thinker_frame(
+    event: Mapping[str, Any],
+    turn_committed_event: Mapping[str, Any],
+) -> None:
+    event_name = str(event.get("event_name"))
+    if event_name == "MOCK_THINKER_FRAME_EMITTED":
+        _validate_mock_frame(event, "MOCK_THINKER_FRAME_EMITTED", turn_committed_event)
+        return
+    if event_name != "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED":
+        raise ValueError("Expected MOCK_THINKER_FRAME_EMITTED or THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED")
+    if event.get("output_mode") not in {"real", "fallback", "degraded"}:
+        raise ValueError("THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED must use output_mode=real, fallback, or degraded")
+    if event.get("normalization_status") != "normalized":
+        raise ValueError("THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED must be normalized before UserPatch use")
+    if event.get("semantic_frame_schema") != "voice_agent.semantic_frame.v1":
+        raise ValueError("THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED must use SemanticFrame-compatible schema")
+    for field in ("turn_id", "utterance_id"):
+        if event.get(field) != turn_committed_event.get(field):
+            raise ValueError(f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED must match committed turn {field}")
+
+
+def _bind_thinker_semantic_summary_ref(
+    thinker_frame_event: Mapping[str, Any] | None,
+    semantic_summary_ref: str | None,
+) -> str | None:
+    if thinker_frame_event is None:
+        return semantic_summary_ref
+    if thinker_frame_event.get("event_name") != "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED":
+        return semantic_summary_ref
+
+    event_summary_ref = thinker_frame_event.get("semantic_summary_ref")
+    if event_summary_ref in (None, ""):
+        raise ValueError("THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED requires semantic_summary_ref")
+    event_summary_ref = str(event_summary_ref)
+    if semantic_summary_ref is None:
+        return event_summary_ref
+    if str(semantic_summary_ref) != event_summary_ref:
+        raise ValueError(
+            "semantic_summary_ref must match THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED semantic_summary_ref"
+        )
+    return str(semantic_summary_ref)
 
 
 def _first_present(event: Mapping[str, Any], *fields: str) -> str:

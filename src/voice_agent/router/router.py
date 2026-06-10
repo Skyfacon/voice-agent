@@ -142,7 +142,7 @@ class MVP0Router:
         )
         _validate_mock_frame(
             thinker_frame_event,
-            expected_event_name="MOCK_THINKER_FRAME_EMITTED",
+            expected_event_names=("MOCK_THINKER_FRAME_EMITTED", "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"),
             turn_committed_event=turn_committed_event,
         )
         if router_decision not in MVP0_ROUTER_DECISIONS:
@@ -197,7 +197,7 @@ class MVP1Router:
         )
         _validate_mock_frame(
             thinker_frame_event,
-            expected_event_name="MOCK_THINKER_FRAME_EMITTED",
+            expected_event_names=("MOCK_THINKER_FRAME_EMITTED", "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"),
             turn_committed_event=turn_committed_event,
         )
 
@@ -276,18 +276,37 @@ def _validate_turn_committed_event(event: Mapping[str, Any]) -> None:
 def _validate_mock_frame(
     event: Mapping[str, Any],
     *,
-    expected_event_name: str,
+    expected_event_name: str | None = None,
+    expected_event_names: tuple[str, ...] | None = None,
     turn_committed_event: Mapping[str, Any],
 ) -> None:
-    if event.get("event_name") != expected_event_name:
-        raise ValueError(f"MVP0Router requires a {expected_event_name} event")
-    if event.get("output_mode") != "mock":
-        raise ValueError(f"{expected_event_name} must use output_mode=mock")
+    allowed_names = expected_event_names or (str(expected_event_name),)
+    event_name = str(event.get("event_name"))
+    if event_name not in allowed_names:
+        raise ValueError(f"MVP0Router requires one of {allowed_names} event")
+    _validate_understanding_output_mode(event, event_name=event_name)
     for field in ("turn_id", "utterance_id"):
         if event.get(field) != turn_committed_event.get(field):
-            raise ValueError(f"{expected_event_name} must match committed turn {field}")
+            raise ValueError(f"{event_name} must match committed turn {field}")
     if event.get("caused_by_event_id") != turn_committed_event.get("event_id"):
-        raise ValueError(f"{expected_event_name} must be caused by TURN_INGRESS_COMMITTED")
+        raise ValueError(f"{event_name} must be caused by TURN_INGRESS_COMMITTED")
+
+
+def _validate_understanding_output_mode(event: Mapping[str, Any], *, event_name: str) -> None:
+    output_mode = event.get("output_mode")
+    if event_name in {"MOCK_ASR_FRAME_EMITTED", "MOCK_THINKER_FRAME_EMITTED"}:
+        if output_mode != "mock":
+            raise ValueError(f"{event_name} must use output_mode=mock")
+        return
+    if event_name == "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED":
+        if output_mode not in {"real", "fallback", "degraded"}:
+            raise ValueError(f"{event_name} must use output_mode=real, fallback, or degraded")
+        if event.get("normalization_status") != "normalized":
+            raise ValueError(f"{event_name} must be normalized before Router use")
+        if event.get("semantic_frame_schema") != "voice_agent.semantic_frame.v1":
+            raise ValueError(f"{event_name} must use the SemanticFrame-compatible schema")
+        return
+    raise ValueError(f"Unsupported understanding event: {event_name}")
 
 
 def _infer_mvp1_task_focus(

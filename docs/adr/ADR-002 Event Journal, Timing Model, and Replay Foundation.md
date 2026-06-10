@@ -145,6 +145,7 @@ Text input ingress policy for event journal:
 | Model adapter events | `ADAPTER_OUTPUT_VALIDATION_FAILED` | Adapter / Schema Validator | `adapter_id`, `adapter_type`, `adapter_request_id`, `schema_name`, `failure_reasons`, `output_mode` | caused by model/provider output failing system schema validation | false |
 | Model adapter events | `ADAPTER_OUTPUT_DEGRADED` | Adapter / Runtime | `adapter_id`, `adapter_type`, `adapter_request_id` optional, `degraded_reason`, `missing_capability` optional, `fallback_adapter_id` optional, `output_mode` | caused by unsupported capability, fallback, or degraded provider output | false |
 | Model adapter events | `ASR_TRANSCRIPT_OUTPUT_EMITTED` | ASR Adapter | `adapter_id`, `adapter_type=asr`, `adapter_request_id`, `turn_id`, `utterance_id`, `input_modality=audio`, `audio_span_id`, `asr_frame_ref`, `text_ref`, `transcript_finality=final`, `timestamp_status`, `streaming_status`, `output_mode=real|fallback|degraded` | caused by `TURN_INGRESS_COMMITTED`; missing timestamp or streaming capability must be paired with `ADAPTER_OUTPUT_DEGRADED` | false |
+| Model adapter events | `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED` | Thinker Adapter | `adapter_id`, `adapter_type=thinker`, `adapter_request_id`, `turn_id`, `utterance_id`, `input_modality`, `semantic_frame_schema`, `normalization_status=normalized`, `semantic_frame_ref`, `semantic_summary_ref`, `semantic_close_status`, `assistant_directedness_status`, `emotion_status`, `audio_caption_status`, `output_mode=real|fallback|degraded` | caused by `TURN_INGRESS_COMMITTED`; missing semantic close, assistant-directedness, emotion, or audio caption must be paired with `ADAPTER_OUTPUT_DEGRADED` and must not be silently defaulted | false |
 | Model adapter events | `MOCK_ASR_FRAME_EMITTED` | ASR Adapter | `turn_id`, `utterance_id`, `input_modality`, `asr_frame_ref`, `output_mode=mock` | caused by `TURN_INGRESS_COMMITTED` when ASR mock is used | true |
 | Model adapter events | `MOCK_THINKER_FRAME_EMITTED` | Thinker Adapter | `turn_id`, `utterance_id`, `semantic_frame_ref`, `output_mode=mock` | caused by `TURN_INGRESS_COMMITTED` when Thinker mock is used | true |
 | SlowTask events | `SLOWTASK_CREATED` | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `initial_goal_ref` | caused by `ROUTER_DECISION_EMITTED` with spawn decision | false |
@@ -252,6 +253,7 @@ MVP-1 / MVP-2 canonical addendum:
 MVP-3 canonical addendum:
 
 - ASR adapter contract event: `ASR_TRANSCRIPT_OUTPUT_EMITTED` for final transcript or equivalent text projection refs. Replay uses recorded refs and metadata only; it does not require raw audio or rerun the ASR provider.
+- Thinker adapter contract event: `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED` for normalized SemanticFrame-compatible refs and metadata. Replay uses recorded refs and metadata only; it does not rerun the Thinker provider, and missing semantic close, assistant-directedness, emotion, or audio caption must be explicit degraded metadata rather than default values.
 
 后续 ADR 若新增 MVP-relevant event，必须同时更新本 registry 或明确声明该名称只是 payload enum / state value，而不是 journal event name。
 
