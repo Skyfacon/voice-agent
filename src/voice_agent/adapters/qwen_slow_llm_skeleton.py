@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import Any
 
 from voice_agent.adapters.capabilities import (
@@ -337,6 +338,62 @@ class QwenSlowLLMLiveProviderCodePathResult:
 
 
 @dataclass(frozen=True)
+class QwenSlowLLMSyntheticLiveEvalGate:
+    model_alias: str
+    max_request_count: int
+    per_request_timeout_ms: int
+    retry_budget: int
+    output_storage_path: str
+    cleanup_policy: str
+    aggregate_metadata_commit_policy: str
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "model_alias": self.model_alias,
+            "provider_transport_allowance": "direct_http_only",
+            "max_request_count": self.max_request_count,
+            "per_request_timeout_ms": self.per_request_timeout_ms,
+            "retry_budget": self.retry_budget,
+            "output_storage_path": self.output_storage_path,
+            "redaction_policy": "metadata_only_no_raw_provider_body",
+            "cleanup_policy": self.cleanup_policy,
+            "aggregate_metadata_commit_policy": self.aggregate_metadata_commit_policy,
+            "approval_gate_passed": True,
+            "credential_present": True,
+            "secret_materialized": False,
+        }
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMSyntheticLiveEvalSummary:
+    request_count: int
+    success_count: int
+    validation_failed_count: int
+    retry_count: int
+    request_failed_count: int
+    output_storage_path: str
+    cleanup_status: str
+    aggregate_metadata_commit_policy: str
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "request_count": self.request_count,
+            "success_count": self.success_count,
+            "validation_failed_count": self.validation_failed_count,
+            "retry_count": self.retry_count,
+            "request_failed_count": self.request_failed_count,
+            "output_storage_path": self.output_storage_path,
+            "cleanup_status": self.cleanup_status,
+            "aggregate_metadata_commit_policy": self.aggregate_metadata_commit_policy,
+            "raw_provider_body_included": False,
+            "raw_provider_request_included": False,
+            "raw_provider_response_included": False,
+            "headers_included": False,
+            "secret_included": False,
+        }
+
+
+@dataclass(frozen=True)
 class QwenSlowLLMLiveEvalApprovalMetadata:
     required_fields: tuple[str, ...]
     approval_packet_complete: bool
@@ -532,12 +589,18 @@ def request_qwen_slow_llm_provider_text(
     request_payload: Mapping[str, Any],
     adapter_request_id: str,
     timeout_ms: int,
+    credential_value: str | None = None,
+    model_alias: str | None = None,
 ) -> QwenSlowLLMProviderTextCandidate:
     """Adapter-internal fake-transport seam; this function has no network code."""
 
     credential_handle = validate_qwen_slow_llm_credential_handle(credential_handle)
     adapter_request_id = _require_safe_ref(adapter_request_id, "adapter_request_id")
     _require_positive_int(timeout_ms, "timeout_ms")
+    if credential_value is not None:
+        _require_present_credential_value(credential_value)
+    if model_alias is not None:
+        _require_safe_ref(model_alias, "model_alias")
     _reject_forbidden_ownership_fields(request_payload)
     _reject_raw_artifact_retention_fields(request_payload)
     _reject_unsafe_payload_text(request_payload)
@@ -545,12 +608,17 @@ def request_qwen_slow_llm_provider_text(
     complete = getattr(transport, "complete", None)
     if not callable(complete):
         raise QwenSlowLLMAdapterSkeletonError("transport must provide a complete method")
-    provider_text = complete(
-        request_payload=deepcopy(dict(request_payload)),
-        credential_handle=credential_handle,
-        adapter_request_id=adapter_request_id,
-        timeout_ms=timeout_ms,
-    )
+    complete_kwargs: dict[str, Any] = {
+        "request_payload": deepcopy(dict(request_payload)),
+        "credential_handle": credential_handle,
+        "adapter_request_id": adapter_request_id,
+        "timeout_ms": timeout_ms,
+    }
+    if credential_value is not None:
+        complete_kwargs["credential_value"] = credential_value
+    if model_alias is not None:
+        complete_kwargs["model_alias"] = model_alias
+    provider_text = complete(**complete_kwargs)
     if not isinstance(provider_text, str) or provider_text == "":
         raise QwenSlowLLMAdapterSkeletonError("transport must return transient provider text")
     return QwenSlowLLMProviderTextCandidate(
@@ -612,6 +680,8 @@ def emit_qwen_slow_llm_live_provider_result(
     slowtask_event: Mapping[str, Any],
     untrusted_web_evidence_refs: Sequence[str] = (),
     ref_namespace: str = "qwen-slow-llm",
+    credential_value: str | None = None,
+    model_alias: str | None = None,
 ) -> QwenSlowLLMLiveProviderCodePathResult:
     """Exercise the live-provider adapter path with an injected provider-free transport."""
 
@@ -632,6 +702,8 @@ def emit_qwen_slow_llm_live_provider_result(
         request_payload=request_payload,
         adapter_request_id=binding.adapter_request_id,
         timeout_ms=transport_config.per_request_timeout_ms,
+        credential_value=credential_value,
+        model_alias=model_alias,
     )
     emission_result = emit_qwen_slow_llm_provider_text_result(
         contract=contract,
@@ -648,6 +720,198 @@ def emit_qwen_slow_llm_live_provider_result(
     return QwenSlowLLMLiveProviderCodePathResult(
         request_plan=request_plan,
         emission_result=emission_result,
+    )
+
+
+def load_qwen_slow_llm_synthetic_live_eval_inputs(
+    fixture_path: str | Path,
+) -> tuple[dict[str, Any], ...]:
+    path = Path(fixture_path)
+    if path.as_posix() != "tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl":
+        _fail("synthetic live eval input path is not approved")
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        parsed = json.loads(line)
+        if not isinstance(parsed, dict):
+            _fail("synthetic live eval record must be an object")
+        records.append(parsed)
+    return tuple(records)
+
+
+def validate_qwen_slow_llm_synthetic_live_eval_gate(
+    *,
+    approval_packet: Mapping[str, Any],
+    credential_value: str | None,
+    input_records: Sequence[Mapping[str, Any]],
+) -> QwenSlowLLMSyntheticLiveEvalGate:
+    validate_qwen_slow_llm_live_eval_approval_packet(approval_packet)
+    if approval_packet.get("approval_status") != "approved_for_synthetic_live_eval":
+        _fail("live eval approval status is not approved")
+
+    model_alias = str(approval_packet["model_alias"])
+    if _model_alias_requires_human_repin(model_alias):
+        _fail("model_alias requires human re-pin")
+    if approval_packet["provider_transport_allowance"] != "direct_http_only":
+        _fail("provider_transport_allowance must be direct_http_only")
+    if approval_packet["redaction_policy"] != "metadata_only_no_raw_provider_body":
+        _fail("redaction_policy must be metadata_only_no_raw_provider_body")
+
+    max_request_count = int(approval_packet["max_request_count"])
+    if max_request_count > 3:
+        _fail("max_request_count must not exceed 3")
+    if max_request_count < 1:
+        _fail("max_request_count must be positive")
+
+    _require_present_credential_value(credential_value)
+    _validate_synthetic_live_eval_records(input_records, max_request_count=max_request_count)
+
+    return QwenSlowLLMSyntheticLiveEvalGate(
+        model_alias=model_alias,
+        max_request_count=max_request_count,
+        per_request_timeout_ms=int(approval_packet["per_request_timeout_ms"]),
+        retry_budget=int(approval_packet["retry_budget"]),
+        output_storage_path=str(approval_packet["output_storage_path"]),
+        cleanup_policy=str(approval_packet["cleanup_policy"]),
+        aggregate_metadata_commit_policy=str(
+            approval_packet["aggregate_metadata_commit_policy"]
+        ),
+    )
+
+
+def run_qwen_slow_llm_synthetic_live_eval(
+    *,
+    approval_packet: Mapping[str, Any],
+    input_records: Sequence[Mapping[str, Any]],
+    transport: object,
+    credential_handle: QwenSlowLLMCredentialHandle,
+    credential_value: str | None,
+    contract: SlowLLMStructuredOutputContract,
+    boundary: AdapterCallbackAppendBoundary,
+    slowtask_event: Mapping[str, Any],
+    binding: QwenSlowLLMRequestBinding,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+) -> QwenSlowLLMSyntheticLiveEvalSummary:
+    gate = validate_qwen_slow_llm_synthetic_live_eval_gate(
+        approval_packet=approval_packet,
+        credential_value=credential_value,
+        input_records=input_records,
+    )
+    credential_handle = validate_qwen_slow_llm_credential_handle(credential_handle)
+    _require_present_credential_value(credential_value)
+
+    success_count = 0
+    validation_failed_count = 0
+    retry_count = 0
+    request_failed_count = 0
+    attempted_request_count = 0
+    selected_records = tuple(input_records[: gate.max_request_count])
+    transport_config = QwenSlowLLMDirectHTTPTransportConfig(
+        endpoint_ref="endpoint://dashscope/qwen/slow-llm",
+        model_alias=gate.model_alias,
+        per_request_timeout_ms=gate.per_request_timeout_ms,
+        retry_budget=gate.retry_budget,
+    )
+
+    for record_index, record in enumerate(selected_records, start=1):
+        attempted_request_count += 1
+        case_slug = _safe_ref_slug(str(record["case_id"]))
+        caused_by_event_id = str(slowtask_event["event_id"])
+        request_succeeded_or_validated = False
+
+        for attempt_index in range(gate.retry_budget + 1):
+            try:
+                result = emit_qwen_slow_llm_live_provider_result(
+                    transport=transport,
+                    credential_handle=credential_handle,
+                    credential_value=credential_value,
+                    model_alias=gate.model_alias,
+                    transport_config=transport_config,
+                    binding=binding,
+                    task_evidence_ref=str(record["task_evidence_ref"]),
+                    untrusted_web_evidence_refs=tuple(
+                        str(ref) for ref in record.get("untrusted_web_evidence_refs", ())
+                    ),
+                    contract=contract,
+                    success_event_id=(
+                        f"evt_qwen_slow_llm_live_eval_{case_slug}_output_{attempt_index + 1}"
+                    ),
+                    validation_failed_event_id=(
+                        f"evt_qwen_slow_llm_live_eval_{case_slug}_validation_failed_{attempt_index + 1}"
+                    ),
+                    caused_by_event_id=str(slowtask_event["event_id"]),
+                    created_monotonic_ms=created_monotonic_ms
+                    + (record_index * 10)
+                    + attempt_index,
+                    created_wall_clock_ms=created_wall_clock_ms
+                    + (record_index * 10)
+                    + attempt_index,
+                    slowtask_event=slowtask_event,
+                )
+            except QwenSlowLLMAdapterSkeletonError as exc:
+                safe_reason = _normalize_failure_reasons(exc.failure_reasons)[0]
+                if attempt_index < gate.retry_budget:
+                    retry_event = emit_qwen_slow_llm_request_retrying(
+                        boundary=boundary,
+                        event_id=(
+                            f"evt_qwen_slow_llm_live_eval_{case_slug}_retry_{attempt_index + 1}"
+                        ),
+                        caused_by_event_id=caused_by_event_id,
+                        created_monotonic_ms=created_monotonic_ms
+                        + (record_index * 10)
+                        + attempt_index,
+                        created_wall_clock_ms=created_wall_clock_ms
+                        + (record_index * 10)
+                        + attempt_index,
+                        adapter_request_id=binding.adapter_request_id,
+                        retry_count=attempt_index + 1,
+                        retry_reason=safe_reason,
+                        timeout_ms=gate.per_request_timeout_ms,
+                    )
+                    caused_by_event_id = str(retry_event["event_id"])
+                    retry_count += 1
+                    continue
+
+                emit_qwen_slow_llm_request_failed(
+                    boundary=boundary,
+                    event_id=f"evt_qwen_slow_llm_live_eval_{case_slug}_failed",
+                    caused_by_event_id=caused_by_event_id,
+                    created_monotonic_ms=created_monotonic_ms
+                    + (record_index * 10)
+                    + attempt_index,
+                    created_wall_clock_ms=created_wall_clock_ms
+                    + (record_index * 10)
+                    + attempt_index,
+                    adapter_request_id=binding.adapter_request_id,
+                    failure_reason=safe_reason,
+                    retryable=False,
+                    timeout_ms=gate.per_request_timeout_ms,
+                )
+                request_failed_count += 1
+                request_succeeded_or_validated = True
+                break
+
+            if result.emission_result.success:
+                success_count += 1
+            else:
+                validation_failed_count += 1
+            request_succeeded_or_validated = True
+            break
+
+        if not request_succeeded_or_validated:
+            request_failed_count += 1
+
+    return QwenSlowLLMSyntheticLiveEvalSummary(
+        request_count=attempted_request_count,
+        success_count=success_count,
+        validation_failed_count=validation_failed_count,
+        retry_count=retry_count,
+        request_failed_count=request_failed_count,
+        output_storage_path=gate.output_storage_path,
+        cleanup_status=gate.cleanup_policy,
+        aggregate_metadata_commit_policy=gate.aggregate_metadata_commit_policy,
     )
 
 
@@ -1235,6 +1499,50 @@ def _contains_credential_like_text(value: str) -> bool:
         or " sk-" in lowered
         or CREDENTIAL_LIKE_REF_PATTERN.search(value) is not None
     )
+
+
+def _model_alias_requires_human_repin(value: str) -> bool:
+    lowered = value.lower()
+    return "human-repin-required" in lowered or "placeholder" in lowered
+
+
+def _require_present_credential_value(value: str | None) -> None:
+    if not isinstance(value, str) or value == "":
+        _fail("credential value missing")
+
+
+def _validate_synthetic_live_eval_records(
+    input_records: Sequence[Mapping[str, Any]],
+    *,
+    max_request_count: int,
+) -> None:
+    if (
+        not isinstance(input_records, Sequence)
+        or isinstance(input_records, (str, bytes))
+        or not input_records
+    ):
+        _fail("synthetic live eval inputs must be a non-empty sequence")
+    if len(input_records) > max_request_count:
+        input_records = input_records[:max_request_count]
+    for record in input_records:
+        if not isinstance(record, Mapping):
+            _fail("synthetic live eval record must be an object")
+        _reject_raw_artifact_retention_fields(record)
+        _reject_unsafe_payload_text(record)
+        if record.get("redaction_status") != "synthetic_minimal":
+            _fail("synthetic live eval record must be synthetic minimal")
+        if record.get("real_input") is not False:
+            _fail("synthetic live eval record must not include real input")
+        if record.get("provider_output_included") is not False:
+            _fail("synthetic live eval record must not include provider output")
+        if record.get("artifact_retention") != "metadata_refs_only":
+            _fail("synthetic live eval record must retain metadata refs only")
+        _require_safe_ref(str(record.get("task_evidence_ref", "")), "task_evidence_ref")
+        refs = record.get("untrusted_web_evidence_refs", ())
+        if not _is_string_sequence(refs):
+            _fail("untrusted_web_evidence_refs must be a sequence of strings")
+        for ref in refs:
+            _require_safe_ref(ref, "untrusted_web_evidence_refs")
 
 
 def _safe_ref_slug(value: str) -> str:

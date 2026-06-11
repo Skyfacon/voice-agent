@@ -25,11 +25,17 @@ from voice_agent.adapters.qwen_slow_llm_skeleton import (
     emit_qwen_slow_llm_request_failed,
     emit_qwen_slow_llm_request_retrying,
     emit_qwen_slow_llm_structured_output,
+    load_qwen_slow_llm_synthetic_live_eval_inputs,
     parse_qwen_slow_llm_evidence_json,
     request_qwen_slow_llm_provider_text,
+    run_qwen_slow_llm_synthetic_live_eval,
     validate_qwen_slow_llm_credential_handle,
     validate_qwen_slow_llm_evidence,
     validate_qwen_slow_llm_live_eval_approval_packet,
+    validate_qwen_slow_llm_synthetic_live_eval_gate,
+)
+from voice_agent.adapters.qwen_slow_llm_live_transport import (
+    QwenSlowLLMLiveDirectHTTPTransport,
 )
 from voice_agent.adapters.slow_llm_contract import SlowLLMStructuredOutputContract
 from voice_agent.events.journal import InMemoryEventJournal
@@ -865,6 +871,282 @@ def test_slice8a_live_provider_code_path_invalid_output_emits_validation_failed_
     ]
 
 
+def test_slice8b_live_eval_gate_fails_closed_for_placeholder_model_alias() -> None:
+    packet = _approved_live_eval_packet()
+    packet["model_alias"] = "qwen-plus-human-repin-required"
+    transport = _FakeProviderTextTransport(json.dumps(_valid_qwen_output()))
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError) as captured:
+        validate_qwen_slow_llm_synthetic_live_eval_gate(
+            approval_packet=packet,
+            credential_value="runtime-credential-value-for-test-only",
+            input_records=load_qwen_slow_llm_synthetic_live_eval_inputs(
+                Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+            ),
+        )
+
+    assert captured.value.failure_reasons == ["model_alias requires human re-pin"]
+    assert transport.calls == []
+
+
+def test_slice8b_live_eval_gate_fails_closed_without_credential_value() -> None:
+    packet = _approved_live_eval_packet()
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError) as captured:
+        validate_qwen_slow_llm_synthetic_live_eval_gate(
+            approval_packet=packet,
+            credential_value=None,
+            input_records=load_qwen_slow_llm_synthetic_live_eval_inputs(
+                Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+            ),
+        )
+
+    assert captured.value.failure_reasons == ["credential value missing"]
+    assert "DASHSCOPE_API_KEY" not in repr(captured.value)
+    assert "runtime-credential-value-for-test-only" not in repr(captured.value)
+
+
+def test_slice8b_synthetic_live_eval_inputs_fail_closed_for_unsafe_records() -> None:
+    records = load_qwen_slow_llm_synthetic_live_eval_inputs(
+        Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+    )
+
+    assert len(records) == 3
+    assert all(record["redaction_status"] == "synthetic_minimal" for record in records)
+
+    unsafe = dict(records[0])
+    unsafe["real_input"] = True
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError, match="synthetic"):
+        validate_qwen_slow_llm_synthetic_live_eval_gate(
+            approval_packet=_approved_live_eval_packet(),
+            credential_value="runtime-credential-value-for-test-only",
+            input_records=(unsafe,),
+        )
+
+
+def test_slice8b_direct_http_transport_uses_injected_opener_without_sdk_or_raw_retention() -> None:
+    provider_text = json.dumps(_valid_qwen_output())
+    opener = _FakeHTTPOpener(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": provider_text,
+                    }
+                }
+            ]
+        }
+    )
+    transport = QwenSlowLLMLiveDirectHTTPTransport(
+        provider_url="https://example.invalid/compatible-mode/v1/chat/completions",
+        opener=opener,
+    )
+
+    returned_text = transport.complete(
+        request_payload=build_qwen_slow_llm_request_payload(
+            binding=_binding(),
+            task_evidence_ref="evidence://synthetic/qwen-slow-llm/slice8b-http",
+        ),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+        adapter_request_id="adapter-request-qwen-001",
+        timeout_ms=30000,
+        model_alias="qwen-plus-approved-synthetic",
+    )
+
+    assert returned_text == provider_text
+    assert opener.calls == [
+        {
+            "url": "https://example.invalid/compatible-mode/v1/chat/completions",
+            "timeout": 30.0,
+        }
+    ]
+    metadata = transport.to_metadata()
+    assert metadata == {
+        "provider_transport": "direct_http",
+        "provider_url_ref": "provider-url://dashscope/qwen/openai-compatible-chat-completions",
+        "raw_provider_request_included": False,
+        "raw_provider_response_included": False,
+        "headers_included": False,
+        "authorization_header_included": False,
+        "secret_materialized": False,
+    }
+    assert "runtime-credential-value-for-test-only" not in repr(metadata)
+    assert "Bearer " not in repr(metadata)
+
+    source = Path("src/voice_agent/adapters/qwen_slow_llm_live_transport.py").read_text(
+        encoding="utf-8",
+    )
+    imported_modules = _imported_modules(source)
+    assert "dashscope" not in imported_modules
+    assert "requests" not in imported_modules
+
+
+def test_slice8b_synthetic_live_eval_runner_success_summary_is_redacted() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    boundary = AdapterCallbackAppendBoundary(journal)
+
+    summary = run_qwen_slow_llm_synthetic_live_eval(
+        approval_packet=_approved_live_eval_packet(),
+        input_records=load_qwen_slow_llm_synthetic_live_eval_inputs(
+            Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+        ),
+        transport=_BindingAwareFakeTransport(outcomes=("success", "success", "success")),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+        contract=SlowLLMStructuredOutputContract(
+            boundary=boundary,
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        boundary=boundary,
+        slowtask_event=slowtask_event,
+        binding=_binding(),
+        created_monotonic_ms=401,
+        created_wall_clock_ms=1700000000401,
+    )
+
+    metadata = summary.to_metadata()
+    assert metadata == {
+        "request_count": 3,
+        "success_count": 3,
+        "validation_failed_count": 0,
+        "retry_count": 0,
+        "request_failed_count": 0,
+        "output_storage_path": "diagnostics/qwen-slow-llm/live-eval",
+        "cleanup_status": "delete_local_outputs_after_summary",
+        "aggregate_metadata_commit_policy": "allowed_if_redacted_metadata_only",
+        "raw_provider_body_included": False,
+        "raw_provider_request_included": False,
+        "raw_provider_response_included": False,
+        "headers_included": False,
+        "secret_included": False,
+    }
+    assert "runtime-credential-value-for-test-only" not in repr(metadata)
+    assert "raw_provider_body" not in repr(journal.events())
+    assert [event["event_name"] for event in journal.events()].count(
+        "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED"
+    ) == 3
+
+
+def test_slice8b_synthetic_live_eval_runner_invalid_output_emits_validation_failed_only() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    boundary = AdapterCallbackAppendBoundary(journal)
+
+    summary = run_qwen_slow_llm_synthetic_live_eval(
+        approval_packet=_approved_live_eval_packet(max_request_count=1),
+        input_records=load_qwen_slow_llm_synthetic_live_eval_inputs(
+            Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+        ),
+        transport=_BindingAwareFakeTransport(outcomes=("invalid",)),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+        contract=SlowLLMStructuredOutputContract(
+            boundary=boundary,
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        boundary=boundary,
+        slowtask_event=slowtask_event,
+        binding=_binding(),
+        created_monotonic_ms=401,
+        created_wall_clock_ms=1700000000401,
+    )
+
+    metadata = summary.to_metadata()
+    assert metadata["request_count"] == 1
+    assert metadata["success_count"] == 0
+    assert metadata["validation_failed_count"] == 1
+    assert "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" not in [
+        event["event_name"] for event in journal.events()
+    ]
+    assert "ADAPTER_OUTPUT_VALIDATION_FAILED" in [
+        event["event_name"] for event in journal.events()
+    ]
+
+
+def test_slice8b_synthetic_live_eval_runner_retries_timeout_with_existing_events() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    boundary = AdapterCallbackAppendBoundary(journal)
+
+    summary = run_qwen_slow_llm_synthetic_live_eval(
+        approval_packet=_approved_live_eval_packet(max_request_count=1),
+        input_records=load_qwen_slow_llm_synthetic_live_eval_inputs(
+            Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+        ),
+        transport=_BindingAwareFakeTransport(outcomes=("timeout", "success")),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+        contract=SlowLLMStructuredOutputContract(
+            boundary=boundary,
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        boundary=boundary,
+        slowtask_event=slowtask_event,
+        binding=_binding(),
+        created_monotonic_ms=401,
+        created_wall_clock_ms=1700000000401,
+    )
+
+    event_names = [event["event_name"] for event in journal.events()]
+    assert "ADAPTER_REQUEST_RETRYING" in event_names
+    assert "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" in event_names
+    assert "ADAPTER_REQUEST_FAILED" not in event_names
+    assert summary.to_metadata()["retry_count"] == 1
+
+
+def test_slice8b_synthetic_live_eval_runner_final_failure_is_redacted() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    boundary = AdapterCallbackAppendBoundary(journal)
+
+    summary = run_qwen_slow_llm_synthetic_live_eval(
+        approval_packet=_approved_live_eval_packet(max_request_count=1),
+        input_records=load_qwen_slow_llm_synthetic_live_eval_inputs(
+            Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+        ),
+        transport=_BindingAwareFakeTransport(outcomes=("timeout", "timeout")),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+        contract=SlowLLMStructuredOutputContract(
+            boundary=boundary,
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        boundary=boundary,
+        slowtask_event=slowtask_event,
+        binding=_binding(),
+        created_monotonic_ms=401,
+        created_wall_clock_ms=1700000000401,
+    )
+
+    events = journal.events()
+    assert [event["event_name"] for event in events if event["event_name"].startswith("ADAPTER_")] == [
+        "ADAPTER_REQUEST_RETRYING",
+        "ADAPTER_REQUEST_FAILED",
+    ]
+    failed_event = events[-1]
+    assert failed_event["event_name"] == "ADAPTER_REQUEST_FAILED"
+    assert failed_event["failure_reason"] == "provider_timeout"
+    assert "runtime-credential-value-for-test-only" not in repr(events)
+    assert "authorization" not in repr(events).lower()
+    assert summary.to_metadata()["request_failed_count"] == 1
+
+
 def _binding() -> QwenSlowLLMRequestBinding:
     return QwenSlowLLMRequestBinding(
         task_id="task_qwen_001",
@@ -974,6 +1256,66 @@ class _FakeProviderTextTransport:
         return self._provider_text
 
 
+class _BindingAwareFakeTransport:
+    def __init__(self, *, outcomes: tuple[str, ...]) -> None:
+        self._outcomes = list(outcomes)
+
+    def complete(
+        self,
+        *,
+        request_payload: dict[str, object],
+        credential_handle: QwenSlowLLMCredentialHandle,
+        adapter_request_id: str,
+        timeout_ms: int,
+        credential_value: str,
+        model_alias: str,
+    ) -> str:
+        assert credential_handle.credential_ref == "secret-ref://local/qwen-slow-llm/synthetic"
+        assert credential_value == "runtime-credential-value-for-test-only"
+        assert model_alias == "qwen-plus-approved-synthetic"
+        assert timeout_ms == 30000
+        outcome = self._outcomes.pop(0)
+        if outcome == "timeout":
+            raise QwenSlowLLMAdapterSkeletonError(
+                "provider timeout",
+                failure_reasons=("provider_timeout",),
+            )
+        if outcome == "invalid":
+            return "not json"
+        output = _valid_qwen_output()
+        output["task_binding"] = request_payload["request_metadata"]  # type: ignore[index]
+        return json.dumps(output)
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> "_FakeHTTPResponse":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
+
+
+class _FakeHTTPOpener:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+        self.calls: list[dict[str, object]] = []
+
+    def open(self, request: object, *, timeout: float) -> _FakeHTTPResponse:
+        self.calls.append(
+            {
+                "url": getattr(request, "full_url"),
+                "timeout": timeout,
+            }
+        )
+        return _FakeHTTPResponse(self._payload)
+
+
 def _imported_modules(source: str) -> set[str]:
     tree = ast.parse(source)
     imported: set[str] = set()
@@ -1003,6 +1345,16 @@ def _valid_live_eval_approval_packet() -> dict[str, object]:
         "aggregate_metadata_commit_policy": "allowed_if_redacted_metadata_only",
         "forbidden_commit_artifacts_acknowledged": True,
     }
+
+
+def _approved_live_eval_packet(*, max_request_count: int = 3) -> dict[str, object]:
+    packet = _valid_live_eval_approval_packet()
+    packet["approval_status"] = "approved_for_synthetic_live_eval"
+    packet["model_alias"] = "qwen-plus-approved-synthetic"
+    packet["provider_transport_allowance"] = "direct_http_only"
+    packet["max_request_count"] = max_request_count
+    packet["max_cost_quota"] = "minimal_human_approved_quota"
+    return packet
 
 
 def _parse_markdown_packet_fields(text: str) -> dict[str, object]:
