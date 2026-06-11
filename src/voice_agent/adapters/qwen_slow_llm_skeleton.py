@@ -34,6 +34,7 @@ QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS = (
     "model_alias_repin_date",
     "provider_transport_allowance",
     "credential_source",
+    "credential_loading_command",
     "max_request_count",
     "max_cost_quota",
     "per_request_timeout_ms",
@@ -223,6 +224,115 @@ class QwenSlowLLMProviderTextEmissionResult:
             metadata["structured_output_event_id"] = self.structured_output_event["event_id"]
         if self.validation_failed_event is not None:
             metadata["validation_failed_event_id"] = self.validation_failed_event["event_id"]
+        return metadata
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMDirectHTTPTransportConfig:
+    endpoint_ref: str
+    model_alias: str
+    per_request_timeout_ms: int
+    retry_budget: int
+    network_call_allowed: bool = False
+
+    def __post_init__(self) -> None:
+        _require_safe_ref(self.endpoint_ref, "endpoint_ref")
+        _require_safe_ref(self.model_alias, "model_alias")
+        _require_positive_int(self.per_request_timeout_ms, "per_request_timeout_ms")
+        _require_non_negative_int(self.retry_budget, "retry_budget")
+        if not isinstance(self.network_call_allowed, bool):
+            raise QwenSlowLLMAdapterSkeletonError("network_call_allowed must be a boolean")
+        if self.network_call_allowed:
+            raise QwenSlowLLMAdapterSkeletonError(
+                "network calls are not allowed in the Slice 8A provider-free code path"
+            )
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "provider_transport": "direct_http",
+            "endpoint_ref": self.endpoint_ref,
+            "model_alias": self.model_alias,
+            "network_call_allowed": False,
+            "per_request_timeout_ms": self.per_request_timeout_ms,
+            "retry_budget": self.retry_budget,
+            "request_body_included": False,
+            "raw_provider_request_included": False,
+            "raw_provider_response_included": False,
+            "headers_included": False,
+            "authorization_header_included": False,
+        }
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMDirectHTTPRequestPlan:
+    adapter_request_id: str
+    endpoint_ref: str
+    model_alias: str
+    request_metadata_ref: str
+    credential_ref: str
+    per_request_timeout_ms: int
+    retry_budget: int
+
+    def __post_init__(self) -> None:
+        _require_safe_ref(self.adapter_request_id, "adapter_request_id")
+        _require_safe_ref(self.endpoint_ref, "endpoint_ref")
+        _require_safe_ref(self.model_alias, "model_alias")
+        _require_safe_ref(self.request_metadata_ref, "request_metadata_ref")
+        _require_safe_ref(self.credential_ref, "credential_ref")
+        _require_positive_int(self.per_request_timeout_ms, "per_request_timeout_ms")
+        _require_non_negative_int(self.retry_budget, "retry_budget")
+
+    def __repr__(self) -> str:
+        return (
+            "QwenSlowLLMDirectHTTPRequestPlan("
+            f"adapter_request_id={self.adapter_request_id!r}, "
+            "provider_transport='direct_http', "
+            "request_metadata_ref_present=True, credential_present=True, "
+            "network_call_allowed=False)"
+        )
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "adapter_request_id": self.adapter_request_id,
+            "provider_transport": "direct_http",
+            "endpoint_ref": self.endpoint_ref,
+            "model_alias": self.model_alias,
+            "request_metadata_ref": self.request_metadata_ref,
+            "credential_ref": self.credential_ref,
+            "credential_present": True,
+            "credential_materialized": False,
+            "network_call_allowed": False,
+            "per_request_timeout_ms": self.per_request_timeout_ms,
+            "retry_budget": self.retry_budget,
+            "request_body_included": False,
+            "raw_provider_request_included": False,
+            "raw_provider_response_included": False,
+            "headers_included": False,
+            "authorization_header_included": False,
+        }
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMLiveProviderCodePathResult:
+    request_plan: QwenSlowLLMDirectHTTPRequestPlan
+    emission_result: QwenSlowLLMProviderTextEmissionResult
+
+    def to_metadata(self) -> dict[str, Any]:
+        metadata = {
+            "adapter_request_id": self.request_plan.adapter_request_id,
+            "provider_transport": "direct_http",
+            "network_call_allowed": False,
+            "success": self.emission_result.success,
+            "raw_provider_body_included": False,
+        }
+        if self.emission_result.structured_output_event is not None:
+            metadata["structured_output_event_id"] = self.emission_result.structured_output_event[
+                "event_id"
+            ]
+        if self.emission_result.validation_failed_event is not None:
+            metadata["validation_failed_event_id"] = self.emission_result.validation_failed_event[
+                "event_id"
+            ]
         return metadata
 
 
@@ -447,6 +557,97 @@ def request_qwen_slow_llm_provider_text(
         text=provider_text,
         adapter_request_id=adapter_request_id,
         output_mode="real",
+    )
+
+
+def build_qwen_slow_llm_direct_http_request_plan(
+    *,
+    config: QwenSlowLLMDirectHTTPTransportConfig,
+    credential_handle: QwenSlowLLMCredentialHandle,
+    request_payload: Mapping[str, Any],
+    binding: QwenSlowLLMRequestBinding,
+) -> QwenSlowLLMDirectHTTPRequestPlan:
+    """Build adapter-internal direct HTTP metadata without creating a request body."""
+
+    if not isinstance(config, QwenSlowLLMDirectHTTPTransportConfig):
+        raise QwenSlowLLMAdapterSkeletonError("config must be a direct HTTP transport config")
+    credential_handle = validate_qwen_slow_llm_credential_handle(credential_handle)
+    if not isinstance(request_payload, Mapping):
+        _fail("request_payload must be an object")
+    if request_payload.get("request_metadata") != binding.to_dict():
+        _fail("request metadata must match binding")
+    _reject_forbidden_ownership_fields(request_payload)
+    _reject_raw_artifact_retention_fields(request_payload)
+    _reject_unsafe_payload_text(request_payload)
+
+    request_slug = _safe_ref_slug(binding.adapter_request_id)
+    request_metadata_ref = _require_safe_ref(
+        f"request-metadata://synthetic/qwen-slow-llm/{request_slug}",
+        "request_metadata_ref",
+    )
+    return QwenSlowLLMDirectHTTPRequestPlan(
+        adapter_request_id=binding.adapter_request_id,
+        endpoint_ref=config.endpoint_ref,
+        model_alias=config.model_alias,
+        request_metadata_ref=request_metadata_ref,
+        credential_ref=credential_handle.credential_ref,
+        per_request_timeout_ms=config.per_request_timeout_ms,
+        retry_budget=config.retry_budget,
+    )
+
+
+def emit_qwen_slow_llm_live_provider_result(
+    *,
+    transport: object,
+    credential_handle: QwenSlowLLMCredentialHandle,
+    transport_config: QwenSlowLLMDirectHTTPTransportConfig,
+    binding: QwenSlowLLMRequestBinding,
+    task_evidence_ref: str,
+    contract: SlowLLMStructuredOutputContract,
+    success_event_id: str,
+    validation_failed_event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    slowtask_event: Mapping[str, Any],
+    untrusted_web_evidence_refs: Sequence[str] = (),
+    ref_namespace: str = "qwen-slow-llm",
+) -> QwenSlowLLMLiveProviderCodePathResult:
+    """Exercise the live-provider adapter path with an injected provider-free transport."""
+
+    request_payload = build_qwen_slow_llm_request_payload(
+        binding=binding,
+        task_evidence_ref=task_evidence_ref,
+        untrusted_web_evidence_refs=untrusted_web_evidence_refs,
+    )
+    request_plan = build_qwen_slow_llm_direct_http_request_plan(
+        config=transport_config,
+        credential_handle=credential_handle,
+        request_payload=request_payload,
+        binding=binding,
+    )
+    provider_text = request_qwen_slow_llm_provider_text(
+        transport=transport,
+        credential_handle=credential_handle,
+        request_payload=request_payload,
+        adapter_request_id=binding.adapter_request_id,
+        timeout_ms=transport_config.per_request_timeout_ms,
+    )
+    emission_result = emit_qwen_slow_llm_provider_text_result(
+        contract=contract,
+        provider_text=provider_text.text,
+        expected_binding=binding,
+        success_event_id=success_event_id,
+        validation_failed_event_id=validation_failed_event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        slowtask_event=slowtask_event,
+        ref_namespace=ref_namespace,
+    )
+    return QwenSlowLLMLiveProviderCodePathResult(
+        request_plan=request_plan,
+        emission_result=emission_result,
     )
 
 
@@ -1053,6 +1254,11 @@ def _require_non_empty_string(value: str, field: str) -> str:
 def _require_positive_int(value: int, field: str) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise QwenSlowLLMAdapterSkeletonError(f"{field} must be a positive integer")
+
+
+def _require_non_negative_int(value: int, field: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise QwenSlowLLMAdapterSkeletonError(f"{field} must be a non-negative integer")
 
 
 def _is_string_sequence(value: Any) -> bool:

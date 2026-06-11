@@ -10,13 +10,16 @@ from voice_agent.adapters.capabilities import validate_capability_matrix
 from voice_agent.adapters.qwen_slow_llm_skeleton import (
     QWEN_SLOW_LLM_MAX_REPAIR_ATTEMPTS,
     QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS,
+    QwenSlowLLMDirectHTTPTransportConfig,
     QwenSlowLLMCredentialHandle,
     QwenSlowLLMAdapterSkeletonError,
     QwenSlowLLMRequestBinding,
+    build_qwen_slow_llm_direct_http_request_plan,
     build_qwen_slow_llm_capability,
     build_qwen_slow_llm_request_payload,
     classify_qwen_slow_llm_arrival,
     decide_qwen_slow_llm_repair,
+    emit_qwen_slow_llm_live_provider_result,
     emit_qwen_slow_llm_output_degraded,
     emit_qwen_slow_llm_provider_text_result,
     emit_qwen_slow_llm_request_failed,
@@ -642,6 +645,226 @@ def test_live_eval_approval_packet_validation_is_provider_free_and_fail_closed()
         validate_qwen_slow_llm_live_eval_approval_packet(unsafe)
 
 
+def test_slice8a_approval_packet_draft_is_submission_safe_and_provider_free() -> None:
+    packet_path = Path(
+        "docs/implementation/qwen-slow-llm-live-provider-eval-approval-packet.md"
+    )
+    text = packet_path.read_text(encoding="utf-8")
+    packet = _parse_markdown_packet_fields(text)
+
+    metadata = validate_qwen_slow_llm_live_eval_approval_packet(packet).to_dict()
+
+    assert metadata["approval_packet_complete"] is True
+    assert packet["approval_status"] == "pending_human_live_eval_approval"
+    assert packet["model_alias"] == "qwen-plus-human-repin-required"
+    assert packet["model_alias_repin_date"] == "2026-06-11"
+    assert packet["provider_transport_allowance"] == "direct_http_only"
+    assert packet["credential_source"] == "human_provided_runtime_env_script"
+    assert (
+        packet["credential_loading_command"]
+        == 'source ~/.voice-agent-secrets/dashscope.env && test -n "$DASHSCOPE_API_KEY" && echo "DASHSCOPE_API_KEY present"'
+    )
+    assert packet["max_request_count"] == 3
+    assert packet["max_cost_quota"] == "minimal_human_approved_quota"
+    assert packet["per_request_timeout_ms"] == 30000
+    assert packet["retry_budget"] == 1
+    assert (
+        packet["synthetic_input_set_path"]
+        == "tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"
+    )
+    assert packet["output_storage_path"] == "diagnostics/qwen-slow-llm/live-eval"
+    assert packet["redaction_policy"] == "metadata_only_no_raw_provider_body"
+    assert packet["cleanup_policy"] == "delete_local_outputs_after_summary"
+    assert (
+        packet["aggregate_metadata_commit_policy"]
+        == "allowed_if_redacted_metadata_only"
+    )
+    assert packet["forbidden_commit_artifacts_acknowledged"] is True
+    assert "DASHSCOPE_API_KEY=" not in text
+    assert "api_key=" not in text.lower()
+    assert "Bearer " not in text
+
+
+def test_slice8a_synthetic_input_fixture_is_minimal_and_redacted() -> None:
+    fixture_path = Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl")
+    records = [
+        json.loads(line)
+        for line in fixture_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert len(records) == 3
+    for record in records:
+        assert record["redaction_status"] == "synthetic_minimal"
+        assert record["real_input"] is False
+        assert record["provider_output_included"] is False
+        assert record["artifact_retention"] == "metadata_refs_only"
+        assert str(record["task_evidence_ref"]).startswith(
+            "evidence://synthetic/qwen-slow-llm/live-eval/"
+        )
+
+    fixture_text = fixture_path.read_text(encoding="utf-8")
+    forbidden_markers = (
+        "api_key=",
+        "authorization=",
+        "Bearer ",
+        "token=",
+        "password=",
+        "raw_provider_body",
+        "raw_audio",
+        "traces/",
+        "diagnostics/",
+        "replays/local",
+    )
+    assert not any(marker.lower() in fixture_text.lower() for marker in forbidden_markers)
+
+
+def test_slice8a_direct_http_request_plan_is_metadata_only_and_network_inert() -> None:
+    config = QwenSlowLLMDirectHTTPTransportConfig(
+        endpoint_ref="endpoint://dashscope/qwen/slow-llm",
+        model_alias="qwen-plus-human-repin-required",
+        per_request_timeout_ms=30000,
+        retry_budget=1,
+    )
+    handle = QwenSlowLLMCredentialHandle(
+        credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+    )
+    request_payload = build_qwen_slow_llm_request_payload(
+        binding=_binding(),
+        task_evidence_ref="evidence://synthetic/qwen-slow-llm/slice8a-plan",
+    )
+
+    plan = build_qwen_slow_llm_direct_http_request_plan(
+        config=config,
+        credential_handle=handle,
+        request_payload=request_payload,
+        binding=_binding(),
+    )
+    metadata = plan.to_metadata()
+
+    assert metadata == {
+        "adapter_request_id": "adapter-request-qwen-001",
+        "provider_transport": "direct_http",
+        "endpoint_ref": "endpoint://dashscope/qwen/slow-llm",
+        "model_alias": "qwen-plus-human-repin-required",
+        "request_metadata_ref": "request-metadata://synthetic/qwen-slow-llm/adapter-request-qwen-001",
+        "credential_ref": "secret-ref://local/qwen-slow-llm/synthetic",
+        "credential_present": True,
+        "credential_materialized": False,
+        "network_call_allowed": False,
+        "per_request_timeout_ms": 30000,
+        "retry_budget": 1,
+        "request_body_included": False,
+        "raw_provider_request_included": False,
+        "raw_provider_response_included": False,
+        "headers_included": False,
+        "authorization_header_included": False,
+    }
+    assert "synthetic redacted task summary" not in repr(plan)
+    assert "provider_text" not in repr(metadata)
+    assert "raw_provider_body" not in repr(metadata)
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError, match="network calls are not allowed"):
+        QwenSlowLLMDirectHTTPTransportConfig(
+            endpoint_ref="endpoint://dashscope/qwen/slow-llm",
+            model_alias="qwen-plus-human-repin-required",
+            per_request_timeout_ms=30000,
+            retry_budget=1,
+            network_call_allowed=True,
+        )
+
+
+def test_slice8a_live_provider_code_path_uses_fake_transport_and_validates_before_emit() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    transport = _FakeProviderTextTransport(json.dumps(_valid_qwen_output()))
+
+    result = emit_qwen_slow_llm_live_provider_result(
+        transport=transport,
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        transport_config=QwenSlowLLMDirectHTTPTransportConfig(
+            endpoint_ref="endpoint://dashscope/qwen/slow-llm",
+            model_alias="qwen-plus-human-repin-required",
+            per_request_timeout_ms=30000,
+            retry_budget=1,
+        ),
+        binding=_binding(),
+        task_evidence_ref="evidence://synthetic/qwen-slow-llm/slice8a-success",
+        contract=SlowLLMStructuredOutputContract(
+            boundary=AdapterCallbackAppendBoundary(journal),
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        success_event_id="evt_qwen_slow_llm_slice8a_output_001",
+        validation_failed_event_id="evt_qwen_slow_llm_slice8a_failed_001",
+        caused_by_event_id=str(slowtask_event["event_id"]),
+        created_monotonic_ms=301,
+        created_wall_clock_ms=1700000000301,
+        slowtask_event=slowtask_event,
+    )
+
+    assert transport.calls == [
+        {
+            "adapter_request_id": "adapter-request-qwen-001",
+            "credential_ref": "secret-ref://local/qwen-slow-llm/synthetic",
+            "timeout_ms": 30000,
+        }
+    ]
+    assert result.emission_result.success is True
+    assert result.emission_result.structured_output_event is not None
+    assert result.emission_result.validation_failed_event is None
+    assert result.emission_result.structured_output_event["event_name"] == (
+        "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED"
+    )
+    assert result.request_plan.to_metadata()["network_call_allowed"] is False
+    assert result.to_metadata()["raw_provider_body_included"] is False
+    assert "provider_text" not in result.to_metadata()
+    assert "raw_provider_body" not in repr(result.emission_result.structured_output_event)
+
+
+def test_slice8a_live_provider_code_path_invalid_output_emits_validation_failed_only() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+
+    result = emit_qwen_slow_llm_live_provider_result(
+        transport=_FakeProviderTextTransport("not json"),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        transport_config=QwenSlowLLMDirectHTTPTransportConfig(
+            endpoint_ref="endpoint://dashscope/qwen/slow-llm",
+            model_alias="qwen-plus-human-repin-required",
+            per_request_timeout_ms=30000,
+            retry_budget=1,
+        ),
+        binding=_binding(),
+        task_evidence_ref="evidence://synthetic/qwen-slow-llm/slice8a-invalid",
+        contract=SlowLLMStructuredOutputContract(
+            boundary=AdapterCallbackAppendBoundary(journal),
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        success_event_id="evt_qwen_slow_llm_slice8a_output_invalid_001",
+        validation_failed_event_id="evt_qwen_slow_llm_slice8a_failed_invalid_001",
+        caused_by_event_id=str(slowtask_event["event_id"]),
+        created_monotonic_ms=301,
+        created_wall_clock_ms=1700000000301,
+        slowtask_event=slowtask_event,
+    )
+
+    assert result.emission_result.success is False
+    assert result.emission_result.structured_output_event is None
+    assert result.emission_result.validation_failed_event is not None
+    assert result.emission_result.validation_failed_event["event_name"] == (
+        "ADAPTER_OUTPUT_VALIDATION_FAILED"
+    )
+    assert "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" not in [
+        event["event_name"] for event in journal.events()
+    ]
+
+
 def _binding() -> QwenSlowLLMRequestBinding:
     return QwenSlowLLMRequestBinding(
         task_id="task_qwen_001",
@@ -768,6 +991,7 @@ def _valid_live_eval_approval_packet() -> dict[str, object]:
         "model_alias_repin_date": "2026-06-11",
         "provider_transport_allowance": "direct_http_or_sdk_requires_future_approval",
         "credential_source": "human_approved_runtime_env_script",
+        "credential_loading_command": 'source ~/.voice-agent-secrets/dashscope.env && test -n "$DASHSCOPE_API_KEY" && echo "DASHSCOPE_API_KEY present"',
         "max_request_count": 3,
         "max_cost_quota": "human-approved bounded quota",
         "per_request_timeout_ms": 30000,
@@ -779,3 +1003,23 @@ def _valid_live_eval_approval_packet() -> dict[str, object]:
         "aggregate_metadata_commit_policy": "allowed_if_redacted_metadata_only",
         "forbidden_commit_artifacts_acknowledged": True,
     }
+
+
+def _parse_markdown_packet_fields(text: str) -> dict[str, object]:
+    fields: dict[str, object] = {}
+    for line in text.splitlines():
+        if not line.startswith("- "):
+            continue
+        key, separator, raw_value = line[2:].partition(":")
+        if separator != ":":
+            continue
+        value = raw_value.strip()
+        if value == "true":
+            fields[key] = True
+        elif value == "false":
+            fields[key] = False
+        elif value.isdigit():
+            fields[key] = int(value)
+        else:
+            fields[key] = value
+    return fields
