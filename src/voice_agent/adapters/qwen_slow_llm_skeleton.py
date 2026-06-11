@@ -11,7 +11,9 @@ from voice_agent.adapters.capabilities import (
     BOOLEAN_CAPABILITY_FIELDS,
     CREDENTIAL_LIKE_REF_PATTERN,
 )
+from voice_agent.adapters.event_harness import FakeRealAdapterEventHarness
 from voice_agent.adapters.slow_llm_contract import SlowLLMStructuredOutputContract
+from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 
 
 class QwenSlowLLMAdapterSkeletonError(ValueError):
@@ -27,6 +29,22 @@ QWEN_SLOW_LLM_ARRIVAL_STALE = "stale_old_plan_evidence"
 QWEN_SLOW_LLM_ARRIVAL_TERMINAL = "terminal_task_late_evidence"
 QWEN_SLOW_LLM_ARRIVAL_TASK_MISMATCH = "task_mismatch_ignored"
 QWEN_SLOW_LLM_MAX_REPAIR_ATTEMPTS = 2
+QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS = (
+    "model_alias",
+    "model_alias_repin_date",
+    "provider_transport_allowance",
+    "credential_source",
+    "max_request_count",
+    "max_cost_quota",
+    "per_request_timeout_ms",
+    "retry_budget",
+    "synthetic_input_set_path",
+    "output_storage_path",
+    "redaction_policy",
+    "cleanup_policy",
+    "aggregate_metadata_commit_policy",
+    "forbidden_commit_artifacts_acknowledged",
+)
 
 _REPAIRABLE_FAILURE_CATEGORIES = frozenset(
     {
@@ -96,6 +114,12 @@ _DISALLOWED_RAW_ARTIFACT_FIELDS = frozenset(
         "raw_provider_body",
         "raw_audio",
         "raw_trace",
+        "headers",
+        "authorization",
+        "cookies",
+        "provider_request",
+        "provider_response",
+        "provider_sdk_response",
         "raw_provider_request",
         "raw_provider_response",
         "raw_request_body",
@@ -103,6 +127,29 @@ _DISALLOWED_RAW_ARTIFACT_FIELDS = frozenset(
         "large_raw_web_content",
     }
 )
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMCredentialHandle:
+    credential_ref: str
+
+    def __post_init__(self) -> None:
+        _require_safe_ref(self.credential_ref, "credential_ref")
+
+    def __repr__(self) -> str:
+        return f"QwenSlowLLMCredentialHandle(credential_ref={self.credential_ref!r})"
+
+    def __str__(self) -> str:
+        raise QwenSlowLLMAdapterSkeletonError(
+            "Qwen Slow LLM credential handle is opaque and not string serializable"
+        )
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "credential_ref": self.credential_ref,
+            "credential_present": True,
+            "secret_materialized": False,
+        }
 
 
 @dataclass(frozen=True)
@@ -128,6 +175,70 @@ class QwenSlowLLMRepairDecision:
             "provider_call_allowed": False,
             "raw_prompt_constructed": False,
             "failure_terminal": self.failure_terminal,
+        }
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMProviderTextCandidate:
+    text: str
+    adapter_request_id: str
+    output_mode: str = "real"
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.text, "provider_text")
+        _require_safe_ref(self.adapter_request_id, "adapter_request_id")
+        if self.output_mode not in QWEN_SLOW_LLM_OUTPUT_MODES:
+            raise QwenSlowLLMAdapterSkeletonError(
+                "output_mode must be real, fallback, or degraded"
+            )
+
+    def __repr__(self) -> str:
+        return (
+            "QwenSlowLLMProviderTextCandidate("
+            f"adapter_request_id={self.adapter_request_id!r}, "
+            f"output_mode={self.output_mode!r}, text_present=True)"
+        )
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "adapter_request_id": self.adapter_request_id,
+            "output_mode": self.output_mode,
+            "text_present": True,
+            "raw_provider_body_included": False,
+        }
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMProviderTextEmissionResult:
+    success: bool
+    structured_output_event: dict[str, Any] | None
+    validation_failed_event: dict[str, Any] | None
+
+    def to_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "success": self.success,
+            "raw_provider_body_included": False,
+        }
+        if self.structured_output_event is not None:
+            metadata["structured_output_event_id"] = self.structured_output_event["event_id"]
+        if self.validation_failed_event is not None:
+            metadata["validation_failed_event_id"] = self.validation_failed_event["event_id"]
+        return metadata
+
+
+@dataclass(frozen=True)
+class QwenSlowLLMLiveEvalApprovalMetadata:
+    required_fields: tuple[str, ...]
+    approval_packet_complete: bool
+    output_storage_local_only: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "required_fields": list(self.required_fields),
+            "approval_packet_complete": self.approval_packet_complete,
+            "provider_call_allowed": False,
+            "secret_read_allowed": False,
+            "output_storage_local_only": self.output_storage_local_only,
         }
 
 
@@ -291,6 +402,147 @@ def build_qwen_slow_llm_request_payload(
             "json_output_schema": QWEN_SLOW_LLM_EVIDENCE_SCHEMA_VERSION,
         },
     }
+
+
+def validate_qwen_slow_llm_credential_handle(
+    credential_handle: object,
+) -> QwenSlowLLMCredentialHandle:
+    if not isinstance(credential_handle, QwenSlowLLMCredentialHandle):
+        raise QwenSlowLLMAdapterSkeletonError(
+            "credential_handle must be an opaque credential handle"
+        )
+    _require_safe_ref(credential_handle.credential_ref, "credential_ref")
+    return credential_handle
+
+
+def request_qwen_slow_llm_provider_text(
+    *,
+    transport: object,
+    credential_handle: QwenSlowLLMCredentialHandle,
+    request_payload: Mapping[str, Any],
+    adapter_request_id: str,
+    timeout_ms: int,
+) -> QwenSlowLLMProviderTextCandidate:
+    """Adapter-internal fake-transport seam; this function has no network code."""
+
+    credential_handle = validate_qwen_slow_llm_credential_handle(credential_handle)
+    adapter_request_id = _require_safe_ref(adapter_request_id, "adapter_request_id")
+    _require_positive_int(timeout_ms, "timeout_ms")
+    _reject_forbidden_ownership_fields(request_payload)
+    _reject_raw_artifact_retention_fields(request_payload)
+    _reject_unsafe_payload_text(request_payload)
+
+    complete = getattr(transport, "complete", None)
+    if not callable(complete):
+        raise QwenSlowLLMAdapterSkeletonError("transport must provide a complete method")
+    provider_text = complete(
+        request_payload=deepcopy(dict(request_payload)),
+        credential_handle=credential_handle,
+        adapter_request_id=adapter_request_id,
+        timeout_ms=timeout_ms,
+    )
+    if not isinstance(provider_text, str) or provider_text == "":
+        raise QwenSlowLLMAdapterSkeletonError("transport must return transient provider text")
+    return QwenSlowLLMProviderTextCandidate(
+        text=provider_text,
+        adapter_request_id=adapter_request_id,
+        output_mode="real",
+    )
+
+
+def emit_qwen_slow_llm_request_retrying(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    adapter_request_id: str,
+    retry_count: int,
+    retry_reason: str,
+    timeout_ms: int | None = None,
+    adapter_id: str = "slow_llm_qwen_mvp3_skeleton",
+) -> dict[str, Any]:
+    return FakeRealAdapterEventHarness(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        adapter_type="slow_llm",
+        output_mode="real",
+        source_module="slow_llm_adapter",
+    ).emit_request_retrying(
+        event_id=event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        adapter_request_id=_require_safe_ref(adapter_request_id, "adapter_request_id"),
+        retry_count=retry_count,
+        retry_reason=_safe_failure_reason(retry_reason),
+        timeout_ms=timeout_ms,
+    )
+
+
+def emit_qwen_slow_llm_request_failed(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    adapter_request_id: str,
+    failure_reason: str,
+    retryable: bool,
+    timeout_ms: int | None = None,
+    adapter_id: str = "slow_llm_qwen_mvp3_skeleton",
+) -> dict[str, Any]:
+    if not isinstance(retryable, bool):
+        raise QwenSlowLLMAdapterSkeletonError("retryable must be a boolean")
+    return FakeRealAdapterEventHarness(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        adapter_type="slow_llm",
+        output_mode="real",
+        source_module="slow_llm_adapter",
+    ).emit_request_failed(
+        event_id=event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        adapter_request_id=_require_safe_ref(adapter_request_id, "adapter_request_id"),
+        failure_reason=_safe_failure_reason(failure_reason),
+        retryable=retryable,
+        timeout_ms=timeout_ms,
+    )
+
+
+def emit_qwen_slow_llm_output_degraded(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    degraded_reason: str,
+    adapter_request_id: str | None = None,
+    missing_capability: str | None = None,
+    fallback_adapter_id: str | None = None,
+    adapter_id: str = "slow_llm_qwen_mvp3_skeleton",
+) -> dict[str, Any]:
+    return FakeRealAdapterEventHarness(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        adapter_type="slow_llm",
+        output_mode="degraded",
+        source_module="slow_llm_adapter",
+    ).emit_output_degraded(
+        event_id=event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        adapter_request_id=_optional_safe_ref(adapter_request_id, "adapter_request_id"),
+        degraded_reason=_safe_failure_reason(degraded_reason),
+        missing_capability=_optional_safe_ref(missing_capability, "missing_capability"),
+        fallback_adapter_id=_optional_safe_ref(fallback_adapter_id, "fallback_adapter_id"),
+    )
 
 
 def decide_qwen_slow_llm_repair(
@@ -479,6 +731,55 @@ def emit_qwen_slow_llm_structured_output(
     )
 
 
+def emit_qwen_slow_llm_provider_text_result(
+    *,
+    contract: SlowLLMStructuredOutputContract,
+    provider_text: str,
+    expected_binding: QwenSlowLLMRequestBinding,
+    success_event_id: str,
+    validation_failed_event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    slowtask_event: Mapping[str, Any],
+    ref_namespace: str = "qwen-slow-llm",
+) -> QwenSlowLLMProviderTextEmissionResult:
+    try:
+        parsed = parse_qwen_slow_llm_evidence_json(provider_text)
+        emission = emit_qwen_slow_llm_structured_output(
+            contract=contract,
+            output=parsed,
+            expected_binding=expected_binding,
+            event_id=success_event_id,
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            slowtask_event=slowtask_event,
+            ref_namespace=ref_namespace,
+        )
+    except QwenSlowLLMAdapterSkeletonError as exc:
+        validation_failed = contract.emit_output_validation_failed(
+            event_id=validation_failed_event_id,
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            slowtask_event=slowtask_event,
+            adapter_request_id=expected_binding.adapter_request_id,
+            failure_reasons=tuple(_normalize_failure_reasons(exc.failure_reasons)),
+        )
+        return QwenSlowLLMProviderTextEmissionResult(
+            success=False,
+            structured_output_event=None,
+            validation_failed_event=validation_failed,
+        )
+
+    return QwenSlowLLMProviderTextEmissionResult(
+        success=True,
+        structured_output_event=emission.structured_output_event,
+        validation_failed_event=None,
+    )
+
+
 def classify_qwen_slow_llm_arrival(
     binding: QwenSlowLLMRequestBinding,
     *,
@@ -498,6 +799,62 @@ def classify_qwen_slow_llm_arrival(
     if binding.plan_version != current_plan_version:
         return QWEN_SLOW_LLM_ARRIVAL_STALE
     return QWEN_SLOW_LLM_ARRIVAL_CURRENT
+
+
+def validate_qwen_slow_llm_live_eval_approval_packet(
+    packet: Mapping[str, Any],
+) -> QwenSlowLLMLiveEvalApprovalMetadata:
+    if not isinstance(packet, Mapping):
+        _fail("approval packet must be an object")
+    missing_fields = [
+        field
+        for field in QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS
+        if field not in packet
+    ]
+    if missing_fields:
+        _fail(f"missing approval field: {missing_fields[0]}")
+
+    for field in QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS:
+        value = packet[field]
+        if field in {
+            "max_request_count",
+            "per_request_timeout_ms",
+            "retry_budget",
+        }:
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                _fail(f"approval field must be a non-negative integer: {field}")
+            if field != "retry_budget" and value < 1:
+                _fail(f"approval field must be positive: {field}")
+            continue
+        if field == "forbidden_commit_artifacts_acknowledged":
+            if value is not True:
+                _fail("forbidden commit artifacts must be acknowledged")
+            continue
+        if not isinstance(value, str) or value == "":
+            _fail(f"approval field must be a non-empty string: {field}")
+        if field != "output_storage_path" and _contains_credential_like_text(value):
+            raise QwenSlowLLMAdapterSkeletonError(
+                f"approval field must not contain credential-like content: {field}",
+                failure_reasons=(f"credential-like approval field: {field}",),
+            )
+
+    output_storage_path = str(packet["output_storage_path"])
+    if _contains_credential_like_text(output_storage_path):
+        raise QwenSlowLLMAdapterSkeletonError(
+            "approval field must not contain credential-like content: output_storage_path",
+            failure_reasons=("credential-like approval field: output_storage_path",),
+        )
+    output_storage_local_only = output_storage_path.startswith(
+        ("diagnostics/", "traces/", "replays/local/")
+    )
+    if not output_storage_local_only:
+        _fail("output_storage_path must be local-only")
+
+    return QwenSlowLLMLiveEvalApprovalMetadata(
+        required_fields=QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS,
+        approval_packet_complete=True,
+        output_storage_local_only=True,
+    )
 
 
 def _validate_task_analysis(value: Any) -> None:
@@ -598,6 +955,12 @@ def _require_safe_ref(value: str, field: str) -> str:
     return value
 
 
+def _optional_safe_ref(value: str | None, field: str) -> str | None:
+    if value is None:
+        return None
+    return _require_safe_ref(value, field)
+
+
 def _require_safe_payload_text(value: str) -> None:
     lowered = value.lower()
     if any(marker in lowered for marker in _DISALLOWED_RAW_ARTIFACT_MARKERS):
@@ -617,6 +980,13 @@ def _require_safe_payload_text(value: str) -> None:
         raise QwenSlowLLMAdapterSkeletonError("payload must not contain credential-like content")
     if lowered.startswith("sk-") or " sk-" in lowered:
         raise QwenSlowLLMAdapterSkeletonError("payload must not contain credential-like content")
+
+
+def _safe_failure_reason(value: str) -> str:
+    value = _require_non_empty_string(value, "failure_reason")
+    if _contains_unsafe_payload_text(value):
+        return "unsafe failure reason redacted"
+    return value
 
 
 def _normalize_failure_reasons(failure_reasons: Sequence[str]) -> tuple[str, ...]:
@@ -641,7 +1011,14 @@ def _contains_unsafe_payload_text(value: str) -> bool:
     lowered = value.lower()
     return (
         any(marker in lowered for marker in _DISALLOWED_RAW_ARTIFACT_MARKERS)
-        or any(
+        or _contains_credential_like_text(value)
+    )
+
+
+def _contains_credential_like_text(value: str) -> bool:
+    lowered = value.lower()
+    return (
+        any(
             marker in lowered
             for marker in (
                 "bearer ",

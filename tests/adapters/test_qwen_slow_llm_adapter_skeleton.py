@@ -1,21 +1,32 @@
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
 from voice_agent.adapters.capabilities import validate_capability_matrix
 from voice_agent.adapters.qwen_slow_llm_skeleton import (
     QWEN_SLOW_LLM_MAX_REPAIR_ATTEMPTS,
+    QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS,
+    QwenSlowLLMCredentialHandle,
     QwenSlowLLMAdapterSkeletonError,
     QwenSlowLLMRequestBinding,
     build_qwen_slow_llm_capability,
     build_qwen_slow_llm_request_payload,
     classify_qwen_slow_llm_arrival,
     decide_qwen_slow_llm_repair,
+    emit_qwen_slow_llm_output_degraded,
+    emit_qwen_slow_llm_provider_text_result,
+    emit_qwen_slow_llm_request_failed,
+    emit_qwen_slow_llm_request_retrying,
     emit_qwen_slow_llm_structured_output,
     parse_qwen_slow_llm_evidence_json,
+    request_qwen_slow_llm_provider_text,
+    validate_qwen_slow_llm_credential_handle,
     validate_qwen_slow_llm_evidence,
+    validate_qwen_slow_llm_live_eval_approval_packet,
 )
 from voice_agent.adapters.slow_llm_contract import SlowLLMStructuredOutputContract
 from voice_agent.events.journal import InMemoryEventJournal
@@ -414,6 +425,223 @@ def test_successful_emission_helper_does_not_emit_when_validation_fails() -> Non
     ]
 
 
+def test_credential_handle_is_opaque_metadata_and_not_string_serializable() -> None:
+    handle = QwenSlowLLMCredentialHandle(
+        credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+    )
+
+    metadata = validate_qwen_slow_llm_credential_handle(handle).to_metadata()
+
+    assert metadata == {
+        "credential_ref": "secret-ref://local/qwen-slow-llm/synthetic",
+        "credential_present": True,
+        "secret_materialized": False,
+    }
+    assert "api_key" not in repr(handle).lower()
+    assert "token" not in repr(handle).lower()
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError, match="not string serializable"):
+        str(handle)
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError, match="opaque credential handle"):
+        validate_qwen_slow_llm_credential_handle("api_key=synthetic")
+
+
+def test_provider_client_boundary_uses_fake_transport_without_network_or_sdk_imports() -> None:
+    source = Path("src/voice_agent/adapters/qwen_slow_llm_skeleton.py").read_text(
+        encoding="utf-8",
+    )
+    imported_modules = _imported_modules(source)
+
+    assert "dashscope" not in imported_modules
+    assert "requests" not in imported_modules
+    assert "urllib.request" not in imported_modules
+    assert "http.client" not in imported_modules
+    assert "socket" not in imported_modules
+    assert "os" not in imported_modules
+
+    transport = _FakeProviderTextTransport(json.dumps(_valid_qwen_output()))
+    handle = QwenSlowLLMCredentialHandle(
+        credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+    )
+    candidate = request_qwen_slow_llm_provider_text(
+        transport=transport,
+        credential_handle=handle,
+        request_payload=build_qwen_slow_llm_request_payload(
+            binding=_binding(),
+            task_evidence_ref="evidence://synthetic/qwen-slow-llm/provider-boundary",
+        ),
+        adapter_request_id="adapter-request-qwen-001",
+        timeout_ms=5000,
+    )
+
+    assert transport.calls == [
+        {
+            "adapter_request_id": "adapter-request-qwen-001",
+            "credential_ref": "secret-ref://local/qwen-slow-llm/synthetic",
+            "timeout_ms": 5000,
+        }
+    ]
+    assert candidate.text.startswith("{")
+    assert candidate.to_metadata() == {
+        "adapter_request_id": "adapter-request-qwen-001",
+        "output_mode": "real",
+        "text_present": True,
+        "raw_provider_body_included": False,
+    }
+    assert "synthetic redacted task summary" not in repr(candidate)
+
+
+@pytest.mark.parametrize(
+    "unsafe_field",
+    (
+        "raw_provider_request",
+        "raw_provider_response",
+        "raw_request_body",
+        "raw_response_body",
+        "headers",
+        "authorization",
+        "cookies",
+        "provider_sdk_response",
+    ),
+)
+def test_validator_rejects_provider_raw_body_and_header_retention_fields(
+    unsafe_field: str,
+) -> None:
+    invalid = _valid_qwen_output()
+    invalid["validation_metadata"][unsafe_field] = {"value": "redacted-but-forbidden"}  # type: ignore[index]
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError) as captured:
+        validate_qwen_slow_llm_evidence(invalid, expected_binding=_binding())
+
+    assert captured.value.failure_reasons == ["payload must not retain raw provider artifacts"]
+
+
+def test_qwen_request_failure_paths_emit_existing_canonical_events_only() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    boundary = AdapterCallbackAppendBoundary(journal)
+
+    retrying = emit_qwen_slow_llm_request_retrying(
+        boundary=boundary,
+        event_id="evt_qwen_slow_llm_retrying_001",
+        caused_by_event_id=str(slowtask_event["event_id"]),
+        created_monotonic_ms=201,
+        created_wall_clock_ms=1700000000201,
+        adapter_request_id="adapter-request-qwen-001",
+        retry_count=1,
+        retry_reason="synthetic_retryable_timeout",
+        timeout_ms=5000,
+    )
+    failed = emit_qwen_slow_llm_request_failed(
+        boundary=boundary,
+        event_id="evt_qwen_slow_llm_failed_001",
+        caused_by_event_id=str(retrying["event_id"]),
+        created_monotonic_ms=202,
+        created_wall_clock_ms=1700000000202,
+        adapter_request_id="adapter-request-qwen-001",
+        failure_reason="synthetic_final_timeout",
+        retryable=False,
+        timeout_ms=5000,
+    )
+    degraded = emit_qwen_slow_llm_output_degraded(
+        boundary=boundary,
+        event_id="evt_qwen_slow_llm_degraded_001",
+        caused_by_event_id=str(failed["event_id"]),
+        created_monotonic_ms=203,
+        created_wall_clock_ms=1700000000203,
+        adapter_request_id="adapter-request-qwen-001",
+        degraded_reason="synthetic_fallback_required",
+        fallback_adapter_id="slow_llm_qwen_metadata_only_fallback",
+    )
+
+    assert [retrying["event_name"], failed["event_name"], degraded["event_name"]] == [
+        "ADAPTER_REQUEST_RETRYING",
+        "ADAPTER_REQUEST_FAILED",
+        "ADAPTER_OUTPUT_DEGRADED",
+    ]
+    assert [retrying["adapter_callback_seq"], failed["adapter_callback_seq"], degraded["adapter_callback_seq"]] == [
+        1,
+        2,
+        3,
+    ]
+    assert all("raw_provider_body" not in event for event in (retrying, failed, degraded))
+
+
+def test_provider_text_normalization_emits_success_only_after_validation() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    result = emit_qwen_slow_llm_provider_text_result(
+        contract=SlowLLMStructuredOutputContract(
+            boundary=AdapterCallbackAppendBoundary(journal),
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        provider_text=json.dumps(_valid_qwen_output()),
+        expected_binding=_binding(),
+        success_event_id="evt_qwen_slow_llm_provider_text_output_001",
+        validation_failed_event_id="evt_qwen_slow_llm_provider_text_failed_001",
+        caused_by_event_id=str(slowtask_event["event_id"]),
+        created_monotonic_ms=201,
+        created_wall_clock_ms=1700000000201,
+        slowtask_event=slowtask_event,
+    )
+
+    assert result.success is True
+    assert result.structured_output_event is not None
+    assert result.validation_failed_event is None
+    assert result.structured_output_event["event_name"] == "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED"
+    assert "provider_text" not in result.to_metadata()
+
+
+def test_provider_text_normalization_emits_validation_failure_for_malformed_text() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    result = emit_qwen_slow_llm_provider_text_result(
+        contract=SlowLLMStructuredOutputContract(
+            boundary=AdapterCallbackAppendBoundary(journal),
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        provider_text="not json",
+        expected_binding=_binding(),
+        success_event_id="evt_qwen_slow_llm_provider_text_output_invalid_001",
+        validation_failed_event_id="evt_qwen_slow_llm_provider_text_failed_invalid_001",
+        caused_by_event_id=str(slowtask_event["event_id"]),
+        created_monotonic_ms=201,
+        created_wall_clock_ms=1700000000201,
+        slowtask_event=slowtask_event,
+    )
+
+    assert result.success is False
+    assert result.structured_output_event is None
+    assert result.validation_failed_event is not None
+    assert result.validation_failed_event["event_name"] == "ADAPTER_OUTPUT_VALIDATION_FAILED"
+    assert "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" not in [
+        event["event_name"] for event in journal.events()
+    ]
+
+
+def test_live_eval_approval_packet_validation_is_provider_free_and_fail_closed() -> None:
+    packet = _valid_live_eval_approval_packet()
+
+    metadata = validate_qwen_slow_llm_live_eval_approval_packet(packet).to_dict()
+
+    assert tuple(metadata["required_fields"]) == QWEN_SLOW_LLM_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS
+    assert metadata["approval_packet_complete"] is True
+    assert metadata["provider_call_allowed"] is False
+    assert metadata["secret_read_allowed"] is False
+    assert metadata["output_storage_local_only"] is True
+
+    missing = dict(packet)
+    del missing["model_alias"]
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError, match="missing approval field"):
+        validate_qwen_slow_llm_live_eval_approval_packet(missing)
+
+    unsafe = dict(packet)
+    unsafe["credential_source"] = "api_key=synthetic"
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError, match="credential-like"):
+        validate_qwen_slow_llm_live_eval_approval_packet(unsafe)
+
+
 def _binding() -> QwenSlowLLMRequestBinding:
     return QwenSlowLLMRequestBinding(
         task_id="task_qwen_001",
@@ -497,3 +725,57 @@ def _append_slowtask_event(journal: InMemoryEventJournal) -> dict[str, object]:
         evidence_refs=("evidence://synthetic/qwen-slow-llm/reviewed-001",),
         review_result="sufficient_for_slow_llm_skeleton_validation_failure",
     )
+
+
+class _FakeProviderTextTransport:
+    def __init__(self, provider_text: str) -> None:
+        self._provider_text = provider_text
+        self.calls: list[dict[str, object]] = []
+
+    def complete(
+        self,
+        *,
+        request_payload: dict[str, object],
+        credential_handle: QwenSlowLLMCredentialHandle,
+        adapter_request_id: str,
+        timeout_ms: int,
+    ) -> str:
+        assert request_payload["task_evidence"]["raw_content_included"] is False  # type: ignore[index]
+        self.calls.append(
+            {
+                "adapter_request_id": adapter_request_id,
+                "credential_ref": credential_handle.credential_ref,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return self._provider_text
+
+
+def _imported_modules(source: str) -> set[str]:
+    tree = ast.parse(source)
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported.add(node.module)
+    return imported
+
+
+def _valid_live_eval_approval_packet() -> dict[str, object]:
+    return {
+        "model_alias": "qwen-plus-synthetic-placeholder",
+        "model_alias_repin_date": "2026-06-11",
+        "provider_transport_allowance": "direct_http_or_sdk_requires_future_approval",
+        "credential_source": "human_approved_runtime_env_script",
+        "max_request_count": 3,
+        "max_cost_quota": "human-approved bounded quota",
+        "per_request_timeout_ms": 30000,
+        "retry_budget": 1,
+        "synthetic_input_set_path": "tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl",
+        "output_storage_path": "diagnostics/qwen-slow-llm/live-eval",
+        "redaction_policy": "metadata_only_no_raw_provider_body",
+        "cleanup_policy": "delete_local_outputs_after_summary",
+        "aggregate_metadata_commit_policy": "allowed_if_redacted_metadata_only",
+        "forbidden_commit_artifacts_acknowledged": True,
+    }
