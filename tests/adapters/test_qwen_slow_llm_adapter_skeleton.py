@@ -37,6 +37,12 @@ from voice_agent.adapters.qwen_slow_llm_skeleton import (
 from voice_agent.adapters.qwen_slow_llm_live_transport import (
     QwenSlowLLMLiveDirectHTTPTransport,
 )
+from voice_agent.adapters.qwen_slow_llm_live_eval_entrypoint import (
+    QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_APPROVAL_PACKET_PATH,
+    QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_INPUT_PATH,
+    parse_qwen_slow_llm_approval_packet_markdown,
+    run_qwen_slow_llm_live_eval_entrypoint,
+)
 from voice_agent.adapters.slow_llm_contract import SlowLLMStructuredOutputContract
 from voice_agent.events.journal import InMemoryEventJournal
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
@@ -651,18 +657,16 @@ def test_live_eval_approval_packet_validation_is_provider_free_and_fail_closed()
         validate_qwen_slow_llm_live_eval_approval_packet(unsafe)
 
 
-def test_slice8a_approval_packet_draft_is_submission_safe_and_provider_free() -> None:
-    packet_path = Path(
-        "docs/implementation/qwen-slow-llm-live-provider-eval-approval-packet.md"
-    )
+def test_slice8c_handoff_repins_approval_packet_for_gated_synthetic_live_eval() -> None:
+    packet_path = QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_APPROVAL_PACKET_PATH
     text = packet_path.read_text(encoding="utf-8")
-    packet = _parse_markdown_packet_fields(text)
+    packet = parse_qwen_slow_llm_approval_packet_markdown(text)
 
     metadata = validate_qwen_slow_llm_live_eval_approval_packet(packet).to_dict()
 
     assert metadata["approval_packet_complete"] is True
-    assert packet["approval_status"] == "pending_human_live_eval_approval"
-    assert packet["model_alias"] == "qwen-plus-human-repin-required"
+    assert packet["approval_status"] == "approved_for_synthetic_live_eval"
+    assert packet["model_alias"] == "qwen3.6-plus"
     assert packet["model_alias_repin_date"] == "2026-06-11"
     assert packet["provider_transport_allowance"] == "direct_http_only"
     assert packet["credential_source"] == "human_provided_runtime_env_script"
@@ -689,6 +693,8 @@ def test_slice8a_approval_packet_draft_is_submission_safe_and_provider_free() ->
     assert "DASHSCOPE_API_KEY=" not in text
     assert "api_key=" not in text.lower()
     assert "Bearer " not in text
+    assert "qwen-plus-human-repin-required" not in text
+    assert "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions" in text
 
 
 def test_slice8a_synthetic_input_fixture_is_minimal_and_redacted() -> None:
@@ -953,7 +959,7 @@ def test_slice8b_direct_http_transport_uses_injected_opener_without_sdk_or_raw_r
         credential_value="runtime-credential-value-for-test-only",
         adapter_request_id="adapter-request-qwen-001",
         timeout_ms=30000,
-        model_alias="qwen-plus-approved-synthetic",
+        model_alias="qwen3.6-plus",
     )
 
     assert returned_text == provider_text
@@ -1147,6 +1153,103 @@ def test_slice8b_synthetic_live_eval_runner_final_failure_is_redacted() -> None:
     assert summary.to_metadata()["request_failed_count"] == 1
 
 
+def test_slice8c_live_eval_entrypoint_fails_closed_without_env_credential() -> None:
+    transport = _BindingAwareFakeTransport(outcomes=("success",))
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError) as captured:
+        run_qwen_slow_llm_live_eval_entrypoint(
+            approval_packet_path=QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_APPROVAL_PACKET_PATH,
+            input_path=QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_INPUT_PATH,
+            env={},
+            transport=transport,
+        )
+
+    assert captured.value.failure_reasons == ["credential value missing"]
+    assert transport.calls == []
+    assert "DASHSCOPE_API_KEY" not in repr(captured.value)
+    assert "runtime-credential-value-for-test-only" not in repr(captured.value)
+
+
+def test_slice8c_live_eval_entrypoint_fails_closed_for_placeholder_model_alias(
+    tmp_path: Path,
+) -> None:
+    placeholder_packet = _approved_live_eval_packet()
+    placeholder_packet["model_alias"] = "qwen-plus-human-repin-required"
+    packet_path = tmp_path / "approval-packet.md"
+    packet_path.write_text(_markdown_packet_text(placeholder_packet), encoding="utf-8")
+    transport = _BindingAwareFakeTransport(outcomes=("success",))
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError) as captured:
+        run_qwen_slow_llm_live_eval_entrypoint(
+            approval_packet_path=packet_path,
+            input_path=QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_INPUT_PATH,
+            env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+            transport=transport,
+        )
+
+    assert captured.value.failure_reasons == ["model_alias requires human re-pin"]
+    assert transport.calls == []
+    assert "runtime-credential-value-for-test-only" not in repr(captured.value)
+
+
+def test_slice8c_live_eval_entrypoint_runs_with_fake_transport_and_redacted_summary() -> None:
+    transport = _BindingAwareFakeTransport(outcomes=("success", "invalid", "timeout", "success"))
+
+    metadata = run_qwen_slow_llm_live_eval_entrypoint(
+        approval_packet_path=QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_APPROVAL_PACKET_PATH,
+        input_path=QWEN_SLOW_LLM_LIVE_EVAL_DEFAULT_INPUT_PATH,
+        env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+        transport=transport,
+    )
+
+    assert metadata == {
+        "request_count": 3,
+        "success_count": 2,
+        "validation_failed_count": 1,
+        "retry_count": 1,
+        "request_failed_count": 0,
+        "output_storage_path": "diagnostics/qwen-slow-llm/live-eval",
+        "cleanup_status": "delete_local_outputs_after_summary",
+        "aggregate_metadata_commit_policy": "allowed_if_redacted_metadata_only",
+        "raw_provider_body_included": False,
+        "raw_provider_request_included": False,
+        "raw_provider_response_included": False,
+        "headers_included": False,
+        "secret_included": False,
+    }
+    assert [call["model_alias"] for call in transport.calls] == [
+        "qwen3.6-plus",
+        "qwen3.6-plus",
+        "qwen3.6-plus",
+        "qwen3.6-plus",
+    ]
+    assert "runtime-credential-value-for-test-only" not in repr(metadata)
+    assert "Bearer " not in repr(metadata)
+    assert "raw_provider_body" in repr(metadata)
+
+
+def test_slice8c_entrypoint_is_adapter_internal_direct_http_without_sdk_imports() -> None:
+    entrypoint_source = Path(
+        "src/voice_agent/adapters/qwen_slow_llm_live_eval_entrypoint.py"
+    ).read_text(encoding="utf-8")
+    script_text = Path("scripts/qwen-slow-llm-live-eval").read_text(encoding="utf-8")
+
+    imported_modules = _imported_modules(entrypoint_source)
+    assert "dashscope" not in imported_modules
+    assert "requests" not in imported_modules
+    assert "DASHSCOPE_API_KEY=" not in entrypoint_source
+    assert "DASHSCOPE_API_KEY=" not in script_text
+    assert "Bearer " not in entrypoint_source
+
+    business_sources = [
+        path
+        for path in Path("src/voice_agent").rglob("*.py")
+        if "adapters" not in path.parts
+    ]
+    for path in business_sources:
+        assert "qwen_slow_llm_live_transport" not in path.read_text(encoding="utf-8")
+
+
 def _binding() -> QwenSlowLLMRequestBinding:
     return QwenSlowLLMRequestBinding(
         task_id="task_qwen_001",
@@ -1259,6 +1362,7 @@ class _FakeProviderTextTransport:
 class _BindingAwareFakeTransport:
     def __init__(self, *, outcomes: tuple[str, ...]) -> None:
         self._outcomes = list(outcomes)
+        self.calls: list[dict[str, object]] = []
 
     def complete(
         self,
@@ -1272,8 +1376,15 @@ class _BindingAwareFakeTransport:
     ) -> str:
         assert credential_handle.credential_ref == "secret-ref://local/qwen-slow-llm/synthetic"
         assert credential_value == "runtime-credential-value-for-test-only"
-        assert model_alias == "qwen-plus-approved-synthetic"
+        assert model_alias == "qwen3.6-plus"
         assert timeout_ms == 30000
+        self.calls.append(
+            {
+                "adapter_request_id": adapter_request_id,
+                "timeout_ms": timeout_ms,
+                "model_alias": model_alias,
+            }
+        )
         outcome = self._outcomes.pop(0)
         if outcome == "timeout":
             raise QwenSlowLLMAdapterSkeletonError(
@@ -1350,28 +1461,19 @@ def _valid_live_eval_approval_packet() -> dict[str, object]:
 def _approved_live_eval_packet(*, max_request_count: int = 3) -> dict[str, object]:
     packet = _valid_live_eval_approval_packet()
     packet["approval_status"] = "approved_for_synthetic_live_eval"
-    packet["model_alias"] = "qwen-plus-approved-synthetic"
+    packet["model_alias"] = "qwen3.6-plus"
     packet["provider_transport_allowance"] = "direct_http_only"
     packet["max_request_count"] = max_request_count
     packet["max_cost_quota"] = "minimal_human_approved_quota"
     return packet
 
 
-def _parse_markdown_packet_fields(text: str) -> dict[str, object]:
-    fields: dict[str, object] = {}
-    for line in text.splitlines():
-        if not line.startswith("- "):
-            continue
-        key, separator, raw_value = line[2:].partition(":")
-        if separator != ":":
-            continue
-        value = raw_value.strip()
-        if value == "true":
-            fields[key] = True
-        elif value == "false":
-            fields[key] = False
-        elif value.isdigit():
-            fields[key] = int(value)
+def _markdown_packet_text(packet: dict[str, object]) -> str:
+    lines = ["# Synthetic Approval Packet", ""]
+    for key, value in packet.items():
+        if isinstance(value, bool):
+            rendered_value = str(value).lower()
         else:
-            fields[key] = value
-    return fields
+            rendered_value = str(value)
+        lines.append(f"- {key}: {rendered_value}")
+    return "\n".join(lines) + "\n"
