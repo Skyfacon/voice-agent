@@ -153,7 +153,8 @@ def _build_openai_compatible_request_body(
             },
         ],
         "response_format": {"type": "json_object"},
-        "max_tokens": 800,
+        "enable_thinking": False,
+        "max_completion_tokens": 800,
         "temperature": 0,
     }
 

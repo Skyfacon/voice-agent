@@ -1105,7 +1105,9 @@ def test_live_eval_request_body_uses_compact_prompt_and_schema_skeleton_without_
 
     assert request_body["model"] == "qwen3.6-plus"
     assert request_body["response_format"] == {"type": "json_object"}
-    assert request_body["max_tokens"] == 800
+    assert request_body["enable_thinking"] is False
+    assert request_body["max_completion_tokens"] == 800
+    assert "max_tokens" not in request_body
     assert len(system_message) < 500
     assert "Return only one JSON object" in system_message
     assert user_message["request_payload"]["request_metadata"] == _binding().to_dict()
