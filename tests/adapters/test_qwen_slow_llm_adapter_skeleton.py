@@ -699,6 +699,44 @@ def test_slice8c_handoff_repins_approval_packet_for_gated_synthetic_live_eval() 
     assert "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions" in text
 
 
+def test_qwen_live_provider_closeout_documents_merge_readiness_scope() -> None:
+    closeout_path = Path(
+        "docs/implementation/qwen-slow-llm-live-provider-closeout.md"
+    )
+
+    assert closeout_path.exists()
+    text = closeout_path.read_text(encoding="utf-8")
+    normalized = text.lower()
+
+    for required_text in (
+        "qwen3.6-plus",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        'response_format={"type":"json_object"}',
+        "enable_thinking=false",
+        "max_completion_tokens=800",
+        "temperature=0",
+        "3/3",
+        "smoke eval profile",
+        "deliberative profile",
+        "not connected to business slowtask runtime",
+        "no new canonical event",
+        "no sdk import",
+        "no adr/spec change",
+    ):
+        assert required_text in normalized
+
+    for forbidden_action in (
+        "does not advance slowtask",
+        "does not authorize or execute tools",
+        "does not patch ui",
+        "does not generate semanticcommitment",
+        "does not generate spokenplan",
+        "does not generate checker verdict",
+        "does not trigger playback",
+    ):
+        assert forbidden_action in normalized
+
+
 def test_slice8a_synthetic_input_fixture_is_minimal_and_redacted() -> None:
     fixture_path = Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl")
     records = [
