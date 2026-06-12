@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -371,6 +372,11 @@ class QwenSlowLLMSyntheticLiveEvalSummary:
     validation_failed_count: int
     retry_count: int
     request_failed_count: int
+    failure_category_counts: tuple[tuple[str, int], ...]
+    retry_reason_counts: tuple[tuple[str, int], ...]
+    validation_failure_category_counts: tuple[tuple[str, int], ...]
+    response_shape_category_counts: tuple[tuple[str, int], ...]
+    timeout_count: int
     output_storage_path: str
     cleanup_status: str
     aggregate_metadata_commit_policy: str
@@ -382,6 +388,13 @@ class QwenSlowLLMSyntheticLiveEvalSummary:
             "validation_failed_count": self.validation_failed_count,
             "retry_count": self.retry_count,
             "request_failed_count": self.request_failed_count,
+            "failure_category_counts": dict(self.failure_category_counts),
+            "retry_reason_counts": dict(self.retry_reason_counts),
+            "validation_failure_category_counts": dict(
+                self.validation_failure_category_counts
+            ),
+            "response_shape_category_counts": dict(self.response_shape_category_counts),
+            "timeout_count": self.timeout_count,
             "output_storage_path": self.output_storage_path,
             "cleanup_status": self.cleanup_status,
             "aggregate_metadata_commit_policy": self.aggregate_metadata_commit_policy,
@@ -807,6 +820,11 @@ def run_qwen_slow_llm_synthetic_live_eval(
     retry_count = 0
     request_failed_count = 0
     attempted_request_count = 0
+    failure_category_counts: Counter[str] = Counter()
+    retry_reason_counts: Counter[str] = Counter()
+    validation_failure_category_counts: Counter[str] = Counter()
+    response_shape_category_counts: Counter[str] = Counter()
+    timeout_count = 0
     selected_records = tuple(input_records[: gate.max_request_count])
     transport_config = QwenSlowLLMDirectHTTPTransportConfig(
         endpoint_ref="endpoint://dashscope/qwen/slow-llm",
@@ -851,8 +869,20 @@ def run_qwen_slow_llm_synthetic_live_eval(
                     slowtask_event=slowtask_event,
                 )
             except QwenSlowLLMAdapterSkeletonError as exc:
-                safe_reason = _normalize_failure_reasons(exc.failure_reasons)[0]
+                safe_reasons = _normalize_failure_reasons(exc.failure_reasons)
+                failure_categories = tuple(
+                    _classify_qwen_slow_llm_failure_reason(reason)
+                    for reason in safe_reasons
+                )
+                _add_failure_categories(failure_category_counts, failure_categories)
+                _add_response_shape_categories(
+                    response_shape_category_counts,
+                    failure_categories,
+                )
+                timeout_count += failure_categories.count("provider_timeout")
+                safe_reason = failure_categories[0]
                 if attempt_index < gate.retry_budget:
+                    retry_reason_counts[safe_reason] += 1
                     retry_event = emit_qwen_slow_llm_request_retrying(
                         boundary=boundary,
                         event_id=(
@@ -897,6 +927,23 @@ def run_qwen_slow_llm_synthetic_live_eval(
                 success_count += 1
             else:
                 validation_failed_count += 1
+                failure_reasons = ()
+                if result.emission_result.validation_failed_event is not None:
+                    failure_reasons = tuple(
+                        result.emission_result.validation_failed_event.get(
+                            "failure_reasons",
+                            (),
+                        )
+                    )
+                validation_categories = tuple(
+                    _classify_qwen_slow_llm_failure_reason(reason)
+                    for reason in _normalize_failure_reasons(failure_reasons)
+                )
+                _add_failure_categories(failure_category_counts, validation_categories)
+                _add_failure_categories(
+                    validation_failure_category_counts,
+                    validation_categories,
+                )
             request_succeeded_or_validated = True
             break
 
@@ -909,6 +956,13 @@ def run_qwen_slow_llm_synthetic_live_eval(
         validation_failed_count=validation_failed_count,
         retry_count=retry_count,
         request_failed_count=request_failed_count,
+        failure_category_counts=_counter_items(failure_category_counts),
+        retry_reason_counts=_counter_items(retry_reason_counts),
+        validation_failure_category_counts=_counter_items(
+            validation_failure_category_counts
+        ),
+        response_shape_category_counts=_counter_items(response_shape_category_counts),
+        timeout_count=timeout_count,
         output_storage_path=gate.output_storage_path,
         cleanup_status=gate.cleanup_policy,
         aggregate_metadata_commit_policy=gate.aggregate_metadata_commit_policy,
@@ -1470,6 +1524,64 @@ def _normalize_failure_reasons(failure_reasons: Sequence[str]) -> tuple[str, ...
         else:
             normalized.append(reason)
     return tuple(normalized)
+
+
+def _classify_qwen_slow_llm_failure_reason(reason: str) -> str:
+    reason = _safe_failure_reason(reason)
+    lowered = reason.lower()
+    if lowered.startswith("provider_response_shape_"):
+        return reason
+    if lowered.startswith("provider_http_status_class_"):
+        return reason
+    if lowered in {
+        "parse_failure",
+        "missing_required_field",
+        "task_binding_mismatch",
+        "boundary_assertion_failure",
+        "ownership_claim",
+        "raw_artifact_retention",
+        "credential_like_content",
+        "provider_timeout",
+        "provider_request_failed",
+        "provider_response_parse_failed",
+        "provider_response_text_missing",
+        "credential value missing",
+        "model_alias requires human re-pin",
+    }:
+        return reason
+    if lowered.startswith("parse failure") or "single json object" in lowered:
+        return "parse_failure"
+    if lowered.startswith("missing required field"):
+        return "missing_required_field"
+    if "task binding" in lowered:
+        return "task_binding_mismatch"
+    if "boundary assertion" in lowered:
+        return "boundary_assertion_failure"
+    if "forbidden ownership" in lowered:
+        return "ownership_claim"
+    if "raw provider artifacts" in lowered or "raw local artifacts" in lowered:
+        return "raw_artifact_retention"
+    if "credential-like" in lowered:
+        return "credential_like_content"
+    return "other_failure"
+
+
+def _add_failure_categories(counter: Counter[str], categories: Sequence[str]) -> None:
+    for category in categories:
+        counter[_classify_qwen_slow_llm_failure_reason(category)] += 1
+
+
+def _add_response_shape_categories(
+    counter: Counter[str],
+    categories: Sequence[str],
+) -> None:
+    for category in categories:
+        if category.startswith("provider_response_shape_"):
+            counter[category] += 1
+
+
+def _counter_items(counter: Counter[str]) -> tuple[tuple[str, int], ...]:
+    return tuple(sorted((category, count) for category, count in counter.items() if count))
 
 
 def _contains_unsafe_payload_text(value: str) -> bool:

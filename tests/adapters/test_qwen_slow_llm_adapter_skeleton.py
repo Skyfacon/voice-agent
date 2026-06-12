@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 from pathlib import Path
+import urllib.error
 
 import pytest
 
@@ -990,7 +992,81 @@ def test_slice8b_direct_http_transport_uses_injected_opener_without_sdk_or_raw_r
     assert "requests" not in imported_modules
 
 
-def test_live_eval_request_body_includes_schema_contract_without_secret_material() -> None:
+def test_direct_http_transport_classifies_http_status_without_raw_body_retention() -> None:
+    transport = QwenSlowLLMLiveDirectHTTPTransport(
+        provider_url="https://example.invalid/compatible-mode/v1/chat/completions",
+        opener=_RaisingHTTPOpener(
+            urllib.error.HTTPError(
+                url="https://example.invalid/compatible-mode/v1/chat/completions",
+                code=429,
+                msg="Too Many Requests",
+                hdrs={},
+                fp=io.BytesIO(b"raw_provider_body api_key=synthetic-secret"),
+            )
+        ),
+    )
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError) as captured:
+        transport.complete(
+            request_payload=build_qwen_slow_llm_request_payload(
+                binding=_binding(),
+                task_evidence_ref="evidence://synthetic/qwen-slow-llm/http-status",
+            ),
+            credential_handle=QwenSlowLLMCredentialHandle(
+                credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+            ),
+            credential_value="runtime-credential-value-for-test-only",
+            adapter_request_id="adapter-request-qwen-001",
+            timeout_ms=30000,
+            model_alias="qwen3.6-plus",
+        )
+
+    assert captured.value.failure_reasons == [
+        "provider_request_failed",
+        "provider_http_status_class_4xx",
+    ]
+    assert "raw_provider_body" not in repr(captured.value)
+    assert "api_key" not in repr(captured.value).lower()
+    assert "runtime-credential-value-for-test-only" not in repr(captured.value)
+
+
+def test_direct_http_transport_classifies_response_shape_without_raw_body_retention() -> None:
+    transport = QwenSlowLLMLiveDirectHTTPTransport(
+        provider_url="https://example.invalid/compatible-mode/v1/chat/completions",
+        opener=_FakeHTTPOpener(
+            {
+                "choices": [{"message": {"role": "assistant"}}],
+                "output": {},
+                "raw_provider_body": "forbidden body marker",
+            }
+        ),
+    )
+
+    with pytest.raises(QwenSlowLLMAdapterSkeletonError) as captured:
+        transport.complete(
+            request_payload=build_qwen_slow_llm_request_payload(
+                binding=_binding(),
+                task_evidence_ref="evidence://synthetic/qwen-slow-llm/shape-missing",
+            ),
+            credential_handle=QwenSlowLLMCredentialHandle(
+                credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+            ),
+            credential_value="runtime-credential-value-for-test-only",
+            adapter_request_id="adapter-request-qwen-001",
+            timeout_ms=30000,
+            model_alias="qwen3.6-plus",
+        )
+
+    assert captured.value.failure_reasons == [
+        "provider_response_text_missing",
+        "provider_response_shape_choices_message_content_missing",
+        "provider_response_shape_output_text_missing",
+    ]
+    assert "raw_provider_body" not in repr(captured.value)
+    assert "forbidden body marker" not in repr(captured.value)
+
+
+def test_live_eval_request_body_uses_compact_prompt_and_schema_skeleton_without_secret_material() -> None:
     provider_text = json.dumps(_valid_qwen_output())
     opener = _FakeHTTPOpener(
         {
@@ -1024,11 +1100,16 @@ def test_live_eval_request_body_includes_schema_contract_without_secret_material
 
     request_body = opener.request_bodies[0]
     system_message = request_body["messages"][0]["content"]
+    user_message = json.loads(request_body["messages"][1]["content"])
     body_repr = repr(request_body)
 
     assert request_body["model"] == "qwen3.6-plus"
     assert request_body["response_format"] == {"type": "json_object"}
-    assert "Copy request_payload.request_metadata exactly into task_binding" in system_message
+    assert request_body["max_tokens"] == 800
+    assert len(system_message) < 500
+    assert "Return only one JSON object" in system_message
+    assert user_message["request_payload"]["request_metadata"] == _binding().to_dict()
+    assert user_message["required_output_skeleton"]["task_binding"] == _binding().to_dict()
     for required_field in (
         "schema_version",
         "task_binding",
@@ -1041,7 +1122,7 @@ def test_live_eval_request_body_includes_schema_contract_without_secret_material
         "validation_metadata",
         "boundary_assertions",
     ):
-        assert required_field in system_message
+        assert required_field in user_message["required_output_skeleton"]
     for boundary_assertion in (
         "no_tool_authorization",
         "no_tool_execution",
@@ -1050,7 +1131,16 @@ def test_live_eval_request_body_includes_schema_contract_without_secret_material
         "no_checker_verdict",
         "no_playback_action",
     ):
-        assert boundary_assertion in system_message
+        assert user_message["required_output_skeleton"]["boundary_assertions"][
+            boundary_assertion
+        ] is True
+    assert user_message["output_rules"] == [
+        "copy required_output_skeleton.task_binding exactly",
+        "return evidence candidate only",
+        "do not execute tools or patch UI",
+        "do not wrap JSON in markdown",
+        "keep string fields short",
+    ]
     assert "runtime-credential-value-for-test-only" not in body_repr
     assert "Authorization" not in body_repr
     assert "Bearer " not in body_repr
@@ -1090,6 +1180,11 @@ def test_slice8b_synthetic_live_eval_runner_success_summary_is_redacted() -> Non
         "validation_failed_count": 0,
         "retry_count": 0,
         "request_failed_count": 0,
+        "failure_category_counts": {},
+        "retry_reason_counts": {},
+        "validation_failure_category_counts": {},
+        "response_shape_category_counts": {},
+        "timeout_count": 0,
         "output_storage_path": "diagnostics/qwen-slow-llm/live-eval",
         "cleanup_status": "delete_local_outputs_after_summary",
         "aggregate_metadata_commit_policy": "allowed_if_redacted_metadata_only",
@@ -1137,6 +1232,8 @@ def test_slice8b_synthetic_live_eval_runner_invalid_output_emits_validation_fail
     assert metadata["request_count"] == 1
     assert metadata["success_count"] == 0
     assert metadata["validation_failed_count"] == 1
+    assert metadata["validation_failure_category_counts"] == {"parse_failure": 1}
+    assert metadata["failure_category_counts"] == {"parse_failure": 1}
     assert "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" not in [
         event["event_name"] for event in journal.events()
     ]
@@ -1177,6 +1274,8 @@ def test_slice8b_synthetic_live_eval_runner_retries_timeout_with_existing_events
     assert "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED" in event_names
     assert "ADAPTER_REQUEST_FAILED" not in event_names
     assert summary.to_metadata()["retry_count"] == 1
+    assert summary.to_metadata()["retry_reason_counts"] == {"provider_timeout": 1}
+    assert summary.to_metadata()["timeout_count"] == 1
 
 
 def test_slice8b_synthetic_live_eval_runner_final_failure_is_redacted() -> None:
@@ -1216,7 +1315,60 @@ def test_slice8b_synthetic_live_eval_runner_final_failure_is_redacted() -> None:
     assert failed_event["failure_reason"] == "provider_timeout"
     assert "runtime-credential-value-for-test-only" not in repr(events)
     assert "authorization" not in repr(events).lower()
-    assert summary.to_metadata()["request_failed_count"] == 1
+    metadata = summary.to_metadata()
+    assert metadata["request_failed_count"] == 1
+    assert metadata["failure_category_counts"] == {"provider_timeout": 2}
+    assert metadata["retry_reason_counts"] == {"provider_timeout": 1}
+    assert metadata["timeout_count"] == 2
+
+
+def test_synthetic_live_eval_summary_counts_response_shape_and_validation_categories() -> None:
+    journal = _started_journal()
+    slowtask_event = _append_slowtask_event(journal)
+    boundary = AdapterCallbackAppendBoundary(journal)
+
+    summary = run_qwen_slow_llm_synthetic_live_eval(
+        approval_packet=_approved_live_eval_packet(max_request_count=2),
+        input_records=load_qwen_slow_llm_synthetic_live_eval_inputs(
+            Path("tests/fixtures/synthetic/qwen-slow-llm-inputs.jsonl"),
+        ),
+        transport=_BindingAwareFakeTransport(
+            outcomes=("response_shape_missing", "response_shape_missing", "invalid")
+        ),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+        contract=SlowLLMStructuredOutputContract(
+            boundary=boundary,
+            adapter_id="slow_llm_qwen_mvp3_skeleton",
+            output_mode="real",
+        ),
+        boundary=boundary,
+        slowtask_event=slowtask_event,
+        binding=_binding(),
+        created_monotonic_ms=401,
+        created_wall_clock_ms=1700000000401,
+    )
+
+    metadata = summary.to_metadata()
+    assert metadata["request_count"] == 2
+    assert metadata["validation_failed_count"] == 1
+    assert metadata["request_failed_count"] == 1
+    assert metadata["failure_category_counts"] == {
+        "parse_failure": 1,
+        "provider_response_text_missing": 2,
+        "provider_response_shape_choices_message_content_missing": 2,
+        "provider_response_shape_output_text_missing": 2,
+    }
+    assert metadata["validation_failure_category_counts"] == {"parse_failure": 1}
+    assert metadata["retry_reason_counts"] == {"provider_response_text_missing": 1}
+    assert metadata["response_shape_category_counts"] == {
+        "provider_response_shape_choices_message_content_missing": 2,
+        "provider_response_shape_output_text_missing": 2,
+    }
+    assert "runtime-credential-value-for-test-only" not in repr(metadata)
+    assert "raw_provider_body" not in repr(journal.events())
 
 
 def test_slice8c_live_eval_entrypoint_fails_closed_without_env_credential() -> None:
@@ -1274,6 +1426,14 @@ def test_slice8c_live_eval_entrypoint_runs_with_fake_transport_and_redacted_summ
         "validation_failed_count": 1,
         "retry_count": 1,
         "request_failed_count": 0,
+        "failure_category_counts": {
+            "parse_failure": 1,
+            "provider_timeout": 1,
+        },
+        "retry_reason_counts": {"provider_timeout": 1},
+        "validation_failure_category_counts": {"parse_failure": 1},
+        "response_shape_category_counts": {},
+        "timeout_count": 1,
         "output_storage_path": "diagnostics/qwen-slow-llm/live-eval",
         "cleanup_status": "delete_local_outputs_after_summary",
         "aggregate_metadata_commit_policy": "allowed_if_redacted_metadata_only",
@@ -1457,6 +1617,15 @@ class _BindingAwareFakeTransport:
                 "provider timeout",
                 failure_reasons=("provider_timeout",),
             )
+        if outcome == "response_shape_missing":
+            raise QwenSlowLLMAdapterSkeletonError(
+                "provider response text missing",
+                failure_reasons=(
+                    "provider_response_text_missing",
+                    "provider_response_shape_choices_message_content_missing",
+                    "provider_response_shape_output_text_missing",
+                ),
+            )
         if outcome == "invalid":
             return "not json"
         output = _valid_qwen_output()
@@ -1494,6 +1663,21 @@ class _FakeHTTPOpener:
             }
         )
         return _FakeHTTPResponse(self._payload)
+
+
+class _RaisingHTTPOpener:
+    def __init__(self, exception: BaseException) -> None:
+        self._exception = exception
+        self.calls: list[dict[str, object]] = []
+
+    def open(self, request: object, *, timeout: float) -> object:
+        self.calls.append(
+            {
+                "url": getattr(request, "full_url"),
+                "timeout": timeout,
+            }
+        )
+        raise self._exception
 
 
 def _imported_modules(source: str) -> set[str]:
