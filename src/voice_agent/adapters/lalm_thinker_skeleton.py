@@ -11,6 +11,11 @@ from voice_agent.adapters.lalm_thinker_binding import (
     LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
     LALMThinkerRequestBinding,
 )
+from voice_agent.adapters.thinker_contract import (
+    ThinkerAdapterContract,
+    ThinkerSemanticFrameEmission,
+)
+from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 
 
 class LALMThinkerCandidateParseError(ValueError):
@@ -46,6 +51,10 @@ class LALMThinkerValidatedCandidate:
     validation_ref: str
     evidence_only: bool = True
     may_emit_contract_event: bool = False
+    task_like: bool | None = None
+    complexity_hint: str | None = None
+    focus_confidence: float | None = None
+    evidence_uncertainty: str | None = None
 
 
 OPTIONAL_EVIDENCE_FIELDS = {
@@ -221,7 +230,9 @@ def validate_lalm_thinker_candidate(
     if missing_capabilities and output_mode != "degraded":
         _fail("degraded_mode_required", "missing optional evidence requires degraded output mode")
 
-    _validate_task_focus_hint(candidate.get("task_focus_hint"))
+    task_like, complexity_hint, focus_confidence, evidence_uncertainty = _validate_task_focus_hint(
+        candidate.get("task_focus_hint")
+    )
 
     return LALMThinkerValidatedCandidate(
         adapter_request_id=expected_binding.adapter_request_id,
@@ -232,21 +243,24 @@ def validate_lalm_thinker_candidate(
         optional_statuses=optional_statuses,
         missing_capabilities=tuple(missing_capabilities),
         validation_ref=validation_ref,
+        task_like=task_like,
+        complexity_hint=complexity_hint,
+        focus_confidence=focus_confidence,
+        evidence_uncertainty=evidence_uncertainty,
     )
 
 
-def fake_lalm_thinker_transport(binding: LALMThinkerRequestBinding) -> str:
+def fake_lalm_thinker_transport(
+    binding: LALMThinkerRequestBinding,
+    *,
+    optional_refs_available: bool = False,
+) -> str:
     """Return deterministic synthetic candidate text without provider access."""
 
     slug = _slug(binding.turn_id)
-    candidate = {
-        "schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
-        "request_binding": binding.to_dict(),
-        "candidate_role": "evidence_only",
-        "output_mode": "real",
-        "semantic_frame_ref": f"semantic-frame://synthetic/lalm-thinker/{slug}/frame",
-        "semantic_summary_ref": f"summary://synthetic/lalm-thinker/{slug}/summary",
-        "optional_evidence_refs": {
+    if optional_refs_available:
+        output_mode = "real"
+        optional_evidence_refs = {
             "semantic_close": {
                 "status": "available",
                 "ref": f"semantic-close://synthetic/lalm-thinker/{slug}/closed",
@@ -263,7 +277,24 @@ def fake_lalm_thinker_transport(binding: LALMThinkerRequestBinding) -> str:
                 "status": "available",
                 "ref": f"audio-caption://synthetic/lalm-thinker/{slug}/caption",
             },
-        },
+        }
+    else:
+        output_mode = "degraded"
+        optional_evidence_refs = {
+            "semantic_close": {"status": "unavailable"},
+            "assistant_directedness": {"status": "unavailable"},
+            "emotion": {"status": "unavailable"},
+            "audio_caption": {"status": "unavailable"},
+        }
+
+    candidate = {
+        "schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
+        "request_binding": binding.to_dict(),
+        "candidate_role": "evidence_only",
+        "output_mode": output_mode,
+        "semantic_frame_ref": f"semantic-frame://synthetic/lalm-thinker/{slug}/frame",
+        "semantic_summary_ref": f"summary://synthetic/lalm-thinker/{slug}/summary",
+        "optional_evidence_refs": optional_evidence_refs,
         "task_focus_hint": {
             "task_like": True,
             "complexity_hint": "complex",
@@ -278,6 +309,49 @@ def fake_lalm_thinker_transport(binding: LALMThinkerRequestBinding) -> str:
         "validation_ref": f"validation://synthetic/lalm-thinker/{slug}/candidate",
     }
     return json.dumps(candidate, separators=(",", ":"), sort_keys=True)
+
+
+def emit_lalm_thinker_semantic_frame(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    adapter_id: str,
+    event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    turn_committed_event: Mapping[str, Any],
+    validated_candidate: LALMThinkerValidatedCandidate,
+    source_module: str = "lalm_thinker_adapter",
+    trace_redaction_level: str = "metadata_only",
+) -> ThinkerSemanticFrameEmission:
+    """Emit a validated provider-free LALM Thinker candidate through the contract."""
+
+    contract = ThinkerAdapterContract(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        output_mode=validated_candidate.output_mode,
+        source_module=source_module,
+        trace_redaction_level=trace_redaction_level,
+    )
+    return contract.emit_semantic_frame(
+        event_id=event_id,
+        caused_by_event_id=str(turn_committed_event["event_id"]),
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        turn_committed_event=turn_committed_event,
+        adapter_request_id=validated_candidate.adapter_request_id,
+        semantic_frame_ref=validated_candidate.semantic_frame_ref,
+        semantic_summary_ref=validated_candidate.semantic_summary_ref,
+        semantic_close_ref=validated_candidate.optional_refs.get("semantic_close_ref"),
+        assistant_directedness_ref=validated_candidate.optional_refs.get(
+            "assistant_directedness_ref"
+        ),
+        emotion_ref=validated_candidate.optional_refs.get("emotion_ref"),
+        audio_caption_ref=validated_candidate.optional_refs.get("audio_caption_ref"),
+        task_like=validated_candidate.task_like,
+        complexity_hint=validated_candidate.complexity_hint,
+        focus_confidence=validated_candidate.focus_confidence,
+        evidence_uncertainty=validated_candidate.evidence_uncertainty,
+    )
 
 
 def _validate_optional_evidence_refs(value: object) -> tuple[dict[str, str], dict[str, str], list[str]]:
@@ -305,9 +379,9 @@ def _validate_optional_evidence_refs(value: object) -> tuple[dict[str, str], dic
     return optional_refs, optional_statuses, missing_capabilities
 
 
-def _validate_task_focus_hint(value: object) -> None:
+def _validate_task_focus_hint(value: object) -> tuple[bool | None, str | None, float | None, str | None]:
     if value is None:
-        return
+        return None, None, None, None
     if not isinstance(value, Mapping):
         _fail("schema_shape", "task focus hint must be an object")
     if not isinstance(value.get("task_like"), bool):
@@ -319,6 +393,12 @@ def _validate_task_focus_hint(value: object) -> None:
         _fail("schema_shape", "focus_confidence must be between 0 and 1")
     for field in ("complexity_hint", "evidence_uncertainty"):
         _require_safe_token(value.get(field), field)
+    return (
+        bool(value["task_like"]),
+        str(value["complexity_hint"]),
+        float(confidence),
+        str(value["evidence_uncertainty"]),
+    )
 
 
 def _reject_forbidden_candidate_content(value: object) -> None:

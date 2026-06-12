@@ -9,6 +9,8 @@ import urllib.request
 
 import pytest
 
+from tests.adapters.test_mvp3_adapter_profiles import valid_mvp3_real_profiles
+from voice_agent.adapters.lalm_thinker_profile import build_lalm_thinker_capability
 from voice_agent.adapters.lalm_thinker_binding import (
     LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
     bind_lalm_thinker_request,
@@ -16,10 +18,15 @@ from voice_agent.adapters.lalm_thinker_binding import (
 from voice_agent.adapters.lalm_thinker_skeleton import (
     LALMThinkerCandidateParseError,
     LALMThinkerCandidateValidationError,
+    emit_lalm_thinker_semantic_frame,
     fake_lalm_thinker_transport,
     parse_lalm_thinker_candidate_text,
     validate_lalm_thinker_candidate,
 )
+from voice_agent.replay.runner import run_replay_fixture
+from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
+from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig
+from voice_agent.runtime.session import start_configured_session
 
 
 def test_parser_accepts_exactly_one_candidate_object() -> None:
@@ -151,26 +158,147 @@ def test_fake_transport_returns_provider_neutral_synthetic_candidate_without_run
     assert "authorization" not in rendered
 
 
-def _binding() -> object:
+def test_fake_transport_defaults_to_degraded_contract_emission_for_unsupported_optional_capabilities() -> None:
+    startup = _start_lalm_thinker_session()
+    committed_turn = _append_committed_text_turn(startup.journal)
+    binding = _binding(turn_committed_event=committed_turn)
+
+    parsed = parse_lalm_thinker_candidate_text(fake_lalm_thinker_transport(binding))
+    validated = validate_lalm_thinker_candidate(parsed, expected_binding=binding)
+    emission = emit_lalm_thinker_semantic_frame(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="lalm_thinker_provider_free",
+        event_id="evt_lalm_thinker_default_contract_frame",
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+        validated_candidate=validated,
+    )
+
+    events = startup.journal.events()
+    emitted = events[-5:]
+
+    assert validated.output_mode == "degraded"
+    assert validated.optional_refs == {}
+    assert validated.optional_statuses == {
+        "semantic_close_status": "unavailable",
+        "assistant_directedness_status": "unavailable",
+        "emotion_status": "unavailable",
+        "audio_caption_status": "unavailable",
+    }
+    assert set(validated.missing_capabilities) == {
+        "supports_semantic_close",
+        "supports_assistant_directedness",
+        "supports_emotion",
+        "supports_audio_caption",
+    }
+    assert [event["event_name"] for event in emitted] == [
+        "ADAPTER_OUTPUT_DEGRADED",
+        "ADAPTER_OUTPUT_DEGRADED",
+        "ADAPTER_OUTPUT_DEGRADED",
+        "ADAPTER_OUTPUT_DEGRADED",
+        "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
+    ]
+    assert [event["adapter_callback_seq"] for event in emitted] == [1, 2, 3, 4, 5]
+    assert emission.degraded_events == tuple(emitted[:4])
+    assert emission.thinker_event == emitted[4]
+    assert emission.thinker_event["caused_by_event_id"] == committed_turn["event_id"]
+    assert emission.thinker_event["output_mode"] == "degraded"
+    assert "semantic_close_ref" not in emission.thinker_event
+    assert "assistant_directedness_ref" not in emission.thinker_event
+    assert "emotion_ref" not in emission.thinker_event
+    assert "audio_caption_ref" not in emission.thinker_event
+
+    replay_result = run_replay_fixture(
+        {
+            "replay_manifest": _github_allowed_replay_manifest(),
+            "events": events,
+        }
+    )
+
+    assert replay_result.result_status == "passed"
+    assert (
+        replay_result.adapter_health_state.output_event_modes[emission.thinker_event["event_id"]]
+        == "degraded"
+    )
+    assert replay_result.adapter_health_state.adapters["lalm_thinker_provider_free"].missing_capabilities == (
+        "supports_assistant_directedness",
+        "supports_audio_caption",
+        "supports_emotion",
+        "supports_semantic_close",
+    )
+
+
+def test_fake_transport_explicit_available_refs_emit_real_contract_event_without_degradation() -> None:
+    startup = _start_lalm_thinker_session(session_id="sess_lalm_thinker_available_refs")
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix="evt_lalm_thinker_available_refs",
+    )
+    binding = _binding(turn_committed_event=committed_turn)
+
+    parsed = parse_lalm_thinker_candidate_text(
+        fake_lalm_thinker_transport(binding, optional_refs_available=True)
+    )
+    validated = validate_lalm_thinker_candidate(parsed, expected_binding=binding)
+    emission = emit_lalm_thinker_semantic_frame(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="lalm_thinker_provider_free",
+        event_id="evt_lalm_thinker_available_refs_contract_frame",
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+        validated_candidate=validated,
+    )
+
+    assert validated.output_mode == "real"
+    assert validated.missing_capabilities == ()
+    assert emission.degraded_events == ()
+    assert emission.thinker_event["output_mode"] == "real"
+    assert emission.thinker_event["semantic_close_status"] == "available"
+    assert emission.thinker_event["assistant_directedness_status"] == "available"
+    assert emission.thinker_event["emotion_status"] == "available"
+    assert emission.thinker_event["audio_caption_status"] == "available"
+    assert emission.thinker_event["semantic_close_ref"].startswith(
+        "semantic-close://synthetic/lalm-thinker/"
+    )
+    assert startup.journal.events()[-1] == emission.thinker_event
+    assert run_replay_fixture(
+        {
+            "replay_manifest": _github_allowed_replay_manifest(),
+            "events": startup.journal.events(),
+        }
+    ).adapter_health_state.output_event_modes[emission.thinker_event["event_id"]] == "real"
+
+
+def _binding_for_turn(turn_committed_event: dict[str, object]) -> object:
     return bind_lalm_thinker_request(
-        turn_committed_event={
-            "event_name": "TURN_INGRESS_COMMITTED",
-            "event_id": "evt_turn_committed_text_001",
-            "event_seq": 4,
-            "turn_id": "turn_text_001",
-            "utterance_id": "utt_text_001",
-            "input_modality": "text",
-            "input_span_id": "input_text_001",
-            "text_span_id": "text_span_001",
-            "directedness": "ASSUMED_DIRECTED",
-            "semantic_close": "ASSUMED_CLOSED",
-            "ingress_outcome": "COMMITTED",
-        },
+        turn_committed_event=turn_committed_event,
         adapter_request_id="adapter-request-lalm-thinker-001",
         request_metadata_ref="request-metadata://synthetic/lalm-thinker/text-001",
         input_ref="text://synthetic/lalm-thinker/input-001",
         policy_ref="policy://synthetic/lalm-thinker/evidence-only",
     )
+
+
+def _binding(turn_committed_event: dict[str, object] | None = None) -> object:
+    return _binding_for_turn(turn_committed_event or _committed_text_turn())
+
+
+def _committed_text_turn() -> dict[str, object]:
+    return {
+        "event_name": "TURN_INGRESS_COMMITTED",
+        "event_id": "evt_turn_committed_text_001",
+        "event_seq": 4,
+        "turn_id": "turn_text_001",
+        "utterance_id": "utt_text_001",
+        "input_modality": "text",
+        "input_span_id": "input_text_001",
+        "text_span_id": "text_span_001",
+        "directedness": "ASSUMED_DIRECTED",
+        "semantic_close": "ASSUMED_CLOSED",
+        "ingress_outcome": "COMMITTED",
+    }
 
 
 def _valid_candidate(binding: object | None = None) -> dict[str, object]:
@@ -222,6 +350,116 @@ def _valid_candidate(binding: object | None = None) -> dict[str, object]:
         },
         "validation_ref": "validation://synthetic/lalm-thinker/turn-text-001/candidate",
     }
+
+
+def _start_lalm_thinker_session(
+    *,
+    session_id: str = "sess_lalm_thinker_skeleton_synthetic",
+) -> object:
+    return start_configured_session(
+        session_id=session_id,
+        conversation_id="conv_lalm_thinker_skeleton_synthetic",
+        runtime_config_ref="config://synthetic/lalm-thinker/skeleton",
+        created_monotonic_ms=100,
+        created_wall_clock_ms=1700000000100,
+        assembly_config=RuntimeAdapterAssemblyConfig(
+            stage="mvp3",
+            capability_snapshot_ref="capability://synthetic/lalm-thinker/skeleton",
+            capability_version="mvp3.lalm-thinker.skeleton.v1",
+        ),
+        capabilities=_lalm_thinker_profiles(),
+    )
+
+
+def _append_committed_text_turn(
+    journal: object,
+    *,
+    event_id_prefix: str = "evt_lalm_thinker_skeleton",
+) -> dict[str, object]:
+    snapshot_event_id = str(journal.events()[1]["event_id"])
+    text_received = journal.append(
+        event_name="TEXT_INPUT_RECEIVED",
+        event_id=f"{event_id_prefix}_text_received",
+        source_module="access_layer",
+        caused_by_event_id=snapshot_event_id,
+        created_monotonic_ms=110,
+        created_wall_clock_ms=1700000000110,
+        trace_redaction_level="redacted_fixture",
+        input_span_id="input_lalm_thinker_001",
+        text_span_id="text_lalm_thinker_001",
+        input_modality="text",
+        directedness="ASSUMED_DIRECTED",
+        semantic_close="ASSUMED_CLOSED",
+        text_ref="text://synthetic/lalm-thinker/redacted-input-001",
+    )
+    turn_opened = journal.append(
+        event_name="TURN_OPENED",
+        event_id=f"{event_id_prefix}_turn_opened",
+        source_module="interaction_controller",
+        caused_by_event_id=str(text_received["event_id"]),
+        created_monotonic_ms=111,
+        created_wall_clock_ms=1700000000111,
+        trace_redaction_level="metadata_only",
+        turn_id="turn_lalm_thinker_001",
+        input_span_id="input_lalm_thinker_001",
+        input_modality="text",
+        turn_phase="COLLECTING_INPUT",
+    )
+    accepted = journal.append(
+        event_name="TURN_INGRESS_ACCEPTED",
+        event_id=f"{event_id_prefix}_ingress_accepted",
+        source_module="interaction_controller",
+        caused_by_event_id=str(turn_opened["event_id"]),
+        created_monotonic_ms=112,
+        created_wall_clock_ms=1700000000112,
+        trace_redaction_level="metadata_only",
+        turn_id="turn_lalm_thinker_001",
+        input_span_id="input_lalm_thinker_001",
+        ingress_outcome="ACCEPTED",
+    )
+    return journal.append(
+        event_name="TURN_INGRESS_COMMITTED",
+        event_id=f"{event_id_prefix}_ingress_committed",
+        source_module="interaction_controller",
+        caused_by_event_id=str(accepted["event_id"]),
+        created_monotonic_ms=113,
+        created_wall_clock_ms=1700000000113,
+        trace_redaction_level="metadata_only",
+        turn_id="turn_lalm_thinker_001",
+        utterance_id="utt_lalm_thinker_001",
+        input_span_id="input_lalm_thinker_001",
+        text_span_id="text_lalm_thinker_001",
+        input_modality="text",
+        directedness="ASSUMED_DIRECTED",
+        semantic_close="ASSUMED_CLOSED",
+        ingress_outcome="COMMITTED",
+    )
+
+
+def _github_allowed_replay_manifest() -> dict[str, object]:
+    return {
+        "manifest_schema_version": "1.0",
+        "replay_id": "replay_lalm_thinker_skeleton_synthetic",
+        "source_trace_ref": "fixture://mvp3/lalm-thinker/skeleton",
+        "replay_mode": "deterministic",
+        "event_schema_version_range": ["1.0"],
+        "fixture_domain": "GITHUB_ALLOWED",
+        "generated_from": "hand_written_minimal",
+        "contains_raw_audio": False,
+        "contains_raw_trace": False,
+        "contains_real_user_input": False,
+        "contains_secrets": False,
+        "contains_unredacted_tool_result": False,
+        "contains_large_raw_web_content": False,
+        "allowed_re_eval_components": [],
+    }
+
+
+def _lalm_thinker_profiles() -> tuple[object, ...]:
+    return tuple(
+        build_lalm_thinker_capability() if profile.adapter_type == "thinker" else profile
+        for profile in valid_mvp3_real_profiles()
+    )
 
 
 def _block_provider_runtime(monkeypatch: pytest.MonkeyPatch) -> list[object]:
