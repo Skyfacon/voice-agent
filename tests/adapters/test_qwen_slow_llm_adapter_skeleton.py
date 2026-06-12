@@ -990,6 +990,72 @@ def test_slice8b_direct_http_transport_uses_injected_opener_without_sdk_or_raw_r
     assert "requests" not in imported_modules
 
 
+def test_live_eval_request_body_includes_schema_contract_without_secret_material() -> None:
+    provider_text = json.dumps(_valid_qwen_output())
+    opener = _FakeHTTPOpener(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": provider_text,
+                    }
+                }
+            ]
+        }
+    )
+    transport = QwenSlowLLMLiveDirectHTTPTransport(
+        provider_url="https://example.invalid/compatible-mode/v1/chat/completions",
+        opener=opener,
+    )
+
+    transport.complete(
+        request_payload=build_qwen_slow_llm_request_payload(
+            binding=_binding(),
+            task_evidence_ref="evidence://synthetic/qwen-slow-llm/schema-contract",
+        ),
+        credential_handle=QwenSlowLLMCredentialHandle(
+            credential_ref="secret-ref://local/qwen-slow-llm/synthetic",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+        adapter_request_id="adapter-request-qwen-001",
+        timeout_ms=30000,
+        model_alias="qwen3.6-plus",
+    )
+
+    request_body = opener.request_bodies[0]
+    system_message = request_body["messages"][0]["content"]
+    body_repr = repr(request_body)
+
+    assert request_body["model"] == "qwen3.6-plus"
+    assert request_body["response_format"] == {"type": "json_object"}
+    assert "Copy request_payload.request_metadata exactly into task_binding" in system_message
+    for required_field in (
+        "schema_version",
+        "task_binding",
+        "task_analysis",
+        "missing_fields",
+        "conflicting_fields",
+        "proposed_resolved_arguments_evidence",
+        "tool_proposal",
+        "confirmation_risk_hints",
+        "validation_metadata",
+        "boundary_assertions",
+    ):
+        assert required_field in system_message
+    for boundary_assertion in (
+        "no_tool_authorization",
+        "no_tool_execution",
+        "no_ui_patch",
+        "no_semantic_commitment_event",
+        "no_checker_verdict",
+        "no_playback_action",
+    ):
+        assert boundary_assertion in system_message
+    assert "runtime-credential-value-for-test-only" not in body_repr
+    assert "Authorization" not in body_repr
+    assert "Bearer " not in body_repr
+
+
 def test_slice8b_synthetic_live_eval_runner_success_summary_is_redacted() -> None:
     journal = _started_journal()
     slowtask_event = _append_slowtask_event(journal)
@@ -1416,8 +1482,11 @@ class _FakeHTTPOpener:
     def __init__(self, payload: dict[str, object]) -> None:
         self._payload = payload
         self.calls: list[dict[str, object]] = []
+        self.request_bodies: list[dict[str, object]] = []
 
     def open(self, request: object, *, timeout: float) -> _FakeHTTPResponse:
+        request_data = getattr(request, "data")
+        self.request_bodies.append(json.loads(request_data.decode("utf-8")))
         self.calls.append(
             {
                 "url": getattr(request, "full_url"),
