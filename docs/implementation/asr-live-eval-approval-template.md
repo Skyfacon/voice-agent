@@ -18,6 +18,11 @@ runtime connection, ADR change, or canonical event change.
 - model_alias:
 - model_alias_repin_date:
 - provider_transport_allowance: dry_run_validation_only
+- provider_endpoint_ref:
+- provider_endpoint_shape:
+- docs_source_urls:
+- provider_sdk_assumption:
+- model_alias_basis:
 
 The Goal C command skeleton remains dry-run and validation-only even when this
 packet is complete. Any real HTTP, WebSocket, SDK, or provider transport needs
