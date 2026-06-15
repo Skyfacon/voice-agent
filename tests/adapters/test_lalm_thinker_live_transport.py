@@ -86,23 +86,27 @@ def test_request_provider_text_uses_fake_transport_without_network_or_sdk() -> N
 
 def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body() -> None:
     binding = _binding()
+    expected_provider_text = fake_lalm_thinker_transport(
+        binding,
+        optional_refs_available=True,
+    )
     response_payload = {
         "choices": [
             {
-                "message": {
-                    "content": fake_lalm_thinker_transport(
-                        binding,
-                        optional_refs_available=True,
-                    )
+                "delta": {
+                    "content": expected_provider_text,
                 }
             }
         ]
     }
-    opener = _CapturingOpener(response_payload=response_payload)
+    opener = _CapturingOpener(response_lines=_streaming_response_lines(response_payload))
     transport = LALMThinkerLiveDirectHTTPTransport(opener=opener)
 
     provider_text = transport.complete(
-        request_payload=build_lalm_thinker_live_request_payload(binding=binding),
+        request_payload=build_lalm_thinker_live_request_payload(
+            binding=binding,
+            transient_input_text="turn on the desk lamp",
+        ),
         credential_handle=LALMThinkerCredentialHandle(
             credential_ref="secret-ref://runtime-env/dashscope-api-key",
         ),
@@ -112,7 +116,7 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
         model_alias="qwen3.5-omni-plus",
     )
 
-    assert provider_text == response_payload["choices"][0]["message"]["content"]
+    assert provider_text == expected_provider_text
     assert opener.timeout == 60
     captured_request = opener.request
     assert captured_request is not None
@@ -122,6 +126,9 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
     )
     request_body = json.loads(captured_request.data.decode("utf-8"))
     assert request_body["model"] == "qwen3.5-omni-plus"
+    assert request_body["stream"] is True
+    assert request_body["stream_options"] == {"include_usage": True}
+    assert request_body["modalities"] == ["text"]
     assert request_body["messages"][0]["role"] == "system"
     assert request_body["messages"][1]["role"] == "user"
     assert "lalm_thinker_semantic_frame_candidate.v1" in request_body["messages"][0]["content"]
@@ -146,9 +153,22 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
         "express only evidence availability, short safe labels, and normalized hints",
         "do not include final event refs; adapter owns deterministic provider-neutral refs",
         "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+        "use transient_input_evidence only as input evidence; do not copy its text into labels",
         "do not call tools, request native tool execution, or include tool_calls/function_call",
         "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
     ]
+    assert user_payload["request_payload"]["transient_input_evidence"] == {
+        "input_modality": "text",
+        "input_ref": "text://synthetic/lalm-thinker/live-001",
+        "retention": "transient_adapter_memory_only",
+        "event_journal_retention": False,
+        "summary_retention": False,
+        "text": {
+            "present": True,
+            "content": "turn on the desk lamp",
+            "max_chars": 1000,
+        },
+    }
     assert "raw_provider_request" not in repr(request_body)
     assert "runtime-secret-value-for-test-only" not in repr(request_body)
 

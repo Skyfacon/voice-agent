@@ -20,6 +20,9 @@ from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig
 from voice_agent.runtime.session import start_configured_session
 
 
+_SYNTHETIC_TEXT = "turn on the desk lamp"
+
+
 def main() -> int:
     metadata = run_lalm_thinker_real_runtime_smoke(repo_root=Path.cwd())
     print(json.dumps(metadata, sort_keys=True))
@@ -61,6 +64,7 @@ def run_lalm_thinker_real_runtime_smoke(
         committed_turn,
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,
+        transient_input_text=_SYNTHETIC_TEXT,
     )
 
     safe_refs: tuple[dict[str, str], ...] = ()

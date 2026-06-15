@@ -217,6 +217,7 @@ def run_lalm_thinker_synthetic_live_eval(
                     created_monotonic_ms=300 + record_index * 10 + attempt_index,
                     created_wall_clock_ms=1700000000300 + record_index * 10 + attempt_index,
                     turn_committed_event=turn,
+                    transient_input_text=str(record["transient_input_text"]),
                 )
             except LALMThinkerLiveTransportError as exc:
                 latency_buckets[_latency_bucket(time.monotonic() - start)] += 1
@@ -324,6 +325,7 @@ def _build_synthetic_live_eval_records(max_request_count: int) -> tuple[dict[str
             "case_id": f"synthetic_metadata_only_{index:03d}",
             "adapter_request_id": f"adapter-request-lalm-thinker-live-eval-{index:03d}",
             "input_ref": f"text://synthetic/lalm-thinker/live-eval/{index:03d}",
+            "transient_input_text": f"turn on the synthetic desk lamp {index:03d}",
             "request_metadata_ref": (
                 f"request-metadata://synthetic/lalm-thinker/live-eval/{index:03d}"
             ),

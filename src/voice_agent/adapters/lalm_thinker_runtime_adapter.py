@@ -127,6 +127,7 @@ class LALMThinkerRuntimeAdapter:
         *,
         created_monotonic_ms: int,
         created_wall_clock_ms: int,
+        transient_input_text: str | None = None,
     ) -> LALMThinkerRuntimeAdapterResult:
         event_id = str(turn_committed_event.get("event_id", "unknown"))
         event_slug = _slug(event_id)
@@ -150,6 +151,26 @@ class LALMThinkerRuntimeAdapter:
                 failure_category="credential_missing",
                 timeout_ms=None,
             )
+        if turn_committed_event.get("input_modality") != "text":
+            return self._emit_request_failed_result(
+                adapter_request_id=adapter_request_id,
+                caused_by_event_id=event_id,
+                created_monotonic_ms=created_monotonic_ms,
+                created_wall_clock_ms=created_wall_clock_ms,
+                event_slug=event_slug,
+                failure_category="provider_request_failed",
+                timeout_ms=self._timeout_ms,
+            )
+        if not isinstance(transient_input_text, str) or transient_input_text.strip() == "":
+            return self._emit_request_failed_result(
+                adapter_request_id=adapter_request_id,
+                caused_by_event_id=event_id,
+                created_monotonic_ms=created_monotonic_ms,
+                created_wall_clock_ms=created_wall_clock_ms,
+                event_slug=event_slug,
+                failure_category="provider_request_failed",
+                timeout_ms=self._timeout_ms,
+            )
 
         credential_handle = LALMThinkerCredentialHandle(
             credential_ref=LALM_THINKER_RUNTIME_CREDENTIAL_REF,
@@ -172,6 +193,7 @@ class LALMThinkerRuntimeAdapter:
                 created_monotonic_ms=created_monotonic_ms,
                 created_wall_clock_ms=created_wall_clock_ms,
                 turn_committed_event=turn_committed_event,
+                transient_input_text=transient_input_text,
             )
         except LALMThinkerLiveTransportError as exc:
             return self._emit_request_failed_result(

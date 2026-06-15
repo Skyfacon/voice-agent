@@ -83,6 +83,31 @@ def test_missing_dashscope_api_key_fails_fast_before_transport_call() -> None:
     assert "runtime-secret-value-for-test-only" not in repr(startup.journal.events())
 
 
+def test_runtime_adapter_requires_transient_text_before_transport_call() -> None:
+    startup = _start_session(session_id="sess_lalm_thinker_runtime_missing_input")
+    committed_turn = _append_committed_text_turn(startup.journal)
+    transport = _RuntimeFakeTransport(mode="valid")
+    adapter = LALMThinkerRuntimeAdapter(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+    )
+
+    result = adapter.handle_turn_ingress_committed(
+        committed_turn,
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+    )
+
+    assert result.success is False
+    assert result.failure_category == "provider_request_failed"
+    assert transport.call_count == 0
+    assert result.request_failed_event is not None
+    assert result.request_failed_event["event_name"] == "ADAPTER_REQUEST_FAILED"
+    assert "runtime-secret-value-for-test-only" not in repr(startup.journal.events())
+    assert "turn on the desk lamp" not in repr(startup.journal.events())
+
+
 def test_valid_provider_text_emits_normalized_thinker_contract_event() -> None:
     startup = _start_session(session_id="sess_lalm_thinker_runtime_valid")
     committed_turn = _append_committed_text_turn(startup.journal)
@@ -97,6 +122,7 @@ def test_valid_provider_text_emits_normalized_thinker_contract_event() -> None:
         committed_turn,
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
     )
 
     assert result.success is True
@@ -130,6 +156,7 @@ def test_invalid_provider_text_emits_validation_failure_without_thinker_event() 
         committed_turn,
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
     )
 
     assert result.success is False
@@ -155,6 +182,7 @@ def test_transport_failure_emits_safe_request_failed_metadata() -> None:
         committed_turn,
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
     )
 
     assert result.success is False
@@ -241,6 +269,10 @@ class _RuntimeFakeTransport:
         model_alias: str,
     ) -> str:
         assert isinstance(request_payload, dict)
+        assert request_payload["transient_input_evidence"]["text"]["content"] == (
+            "turn on the desk lamp"
+        )
+        assert "turn on the desk lamp" not in repr(request_payload["request_metadata"])
         assert credential_value == "runtime-secret-value-for-test-only"
         assert adapter_request_id.startswith("adapter-request-lalm-thinker-runtime-")
         assert timeout_ms == 60_000

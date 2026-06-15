@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
+import math
 import os
 from pathlib import Path
+import shutil
+import struct
 import subprocess
 import time
 from typing import Any
+import wave
 
 from voice_agent.adapters.capabilities import AdapterCapability, BOOLEAN_CAPABILITY_FIELDS
 from voice_agent.adapters.lalm_thinker_binding import bind_lalm_thinker_request
@@ -318,19 +322,39 @@ def _generate_local_synthetic_speech_wav(output_dir: Path) -> bytes:
     output_dir.mkdir(parents=True, exist_ok=True)
     aiff_path = output_dir / "synthetic-speech.aiff"
     wav_path = output_dir / "synthetic-speech.wav"
-    subprocess.run(
-        ["say", "-o", str(aiff_path), _SYNTHETIC_AUDIO_TEXT],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", str(aiff_path), str(wav_path)],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    if shutil.which("say") is not None and shutil.which("afconvert") is not None:
+        try:
+            subprocess.run(
+                ["say", "-o", str(aiff_path), _SYNTHETIC_AUDIO_TEXT],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", str(aiff_path), str(wav_path)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return wav_path.read_bytes()
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass
+    _generate_portable_synthetic_wav(wav_path)
     return wav_path.read_bytes()
+
+
+def _generate_portable_synthetic_wav(wav_path: Path) -> None:
+    sample_rate = 16_000
+    duration_seconds = 1.0
+    amplitude = 0.25
+    frame_count = int(sample_rate * duration_seconds)
+    with wave.open(str(wav_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        for index in range(frame_count):
+            value = int(amplitude * 32767 * math.sin(2 * math.pi * 440 * index / sample_rate))
+            wav_file.writeframes(struct.pack("<h", value))
 
 
 def _supporting_capability(adapter_type: str) -> AdapterCapability:

@@ -166,6 +166,20 @@ def test_validator_accepts_unavailable_optional_evidence_as_degraded_evidence() 
         (lambda candidate: candidate.update(provider_schema={"choices": []}), "raw_artifact_retention"),
         (lambda candidate: candidate.update(raw_semantic_frame={"intent": "book"}), "raw_artifact_retention"),
         (
+            lambda candidate: candidate["task_focus_hint"].update(focus_confidence=float("nan")),
+            "schema_shape",
+        ),
+        (
+            lambda candidate: candidate["task_focus_hint"].update(
+                complexity_hint="summarize the user request in detail"
+            ),
+            "schema_shape",
+        ),
+        (
+            lambda candidate: candidate["task_focus_hint"].update(evidence_uncertainty="maybe"),
+            "schema_shape",
+        ),
+        (
             lambda candidate: candidate.update(
                 semantic_frame_ref="semantic-frame://synthetic/lalm-thinker?api_key=sk-synthetic"
             ),
@@ -449,10 +463,35 @@ def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candi
         "express only evidence availability, short safe labels, and normalized hints",
         "do not include final event refs; adapter owns deterministic provider-neutral refs",
         "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+        "use transient_input_evidence only as input evidence; do not copy its text into labels",
         "do not call tools, request native tool execution, or include tool_calls/function_call",
         "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
     ]
     assert _forbidden_request_terms_are_absent(payload)
+
+
+def test_live_request_payload_can_include_adapter_private_transient_input_text() -> None:
+    binding = _binding()
+
+    payload = build_lalm_thinker_live_request_payload(
+        binding=binding,
+        transient_input_text="turn on the desk lamp",
+    )
+
+    assert payload["request_metadata"]["request_binding"] == binding.to_dict()
+    assert payload["transient_input_evidence"] == {
+        "input_modality": "text",
+        "input_ref": "text://synthetic/lalm-thinker/input-001",
+        "retention": "transient_adapter_memory_only",
+        "event_journal_retention": False,
+        "summary_retention": False,
+        "text": {
+            "present": True,
+            "content": "turn on the desk lamp",
+            "max_chars": 1000,
+        },
+    }
+    assert "turn on the desk lamp" not in repr(payload["request_metadata"])
 
 
 def test_valid_live_provider_text_emits_only_normalized_contract_events() -> None:
@@ -554,6 +593,7 @@ def test_live_provider_path_uses_injected_transport_and_keeps_secret_out_of_meta
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,
         turn_committed_event=committed_turn,
+        transient_input_text="turn on the desk lamp",
     )
 
     metadata = result.to_metadata()
@@ -580,6 +620,9 @@ class _FakeLiveTransport:
         model_alias: str,
     ) -> str:
         assert isinstance(request_payload, dict)
+        assert request_payload["transient_input_evidence"]["text"]["content"] == (
+            "turn on the desk lamp"
+        )
         assert credential_handle.to_metadata()["secret_materialized"] is False
         assert credential_value == "runtime-secret-value-for-test-only"
         assert adapter_request_id

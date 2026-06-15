@@ -128,7 +128,7 @@ class LALMThinkerLiveDirectHTTPTransport:
             model_alias=model_alias,
             request_payload=request_payload,
         )
-        return self._complete_request_body(
+        return self._complete_streaming_request_body(
             request_body=request_body,
             credential_value=credential_value,
             timeout_ms=timeout_ms,
@@ -346,6 +346,7 @@ def _build_openai_compatible_request_body(
             "express only evidence availability, short safe labels, and normalized hints",
             "do not include final event refs; adapter owns deterministic provider-neutral refs",
             "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+            "use transient_input_evidence only as input evidence; do not copy its text into labels",
             "do not call tools, request native tool execution, or include tool_calls/function_call",
             "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
         ],
@@ -362,6 +363,9 @@ def _build_openai_compatible_request_body(
                 "content": json.dumps(user_payload, separators=(",", ":"), sort_keys=True),
             },
         ],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "modalities": ["text"],
         "max_tokens": 900,
         "temperature": 0.1,
     }

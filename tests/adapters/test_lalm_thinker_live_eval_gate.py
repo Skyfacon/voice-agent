@@ -402,6 +402,9 @@ class _SequenceTransport:
         if outcome == "invalid":
             return "not json"
         assert isinstance(request_payload, dict)
+        assert request_payload["transient_input_evidence"]["text"]["content"].startswith(
+            "turn on the synthetic desk lamp "
+        )
         skeleton = request_payload["required_output_skeleton"]
         return json.dumps(
             {

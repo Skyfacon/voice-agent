@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 import json
+import math
 from typing import Any
 from urllib.parse import unquote
 
@@ -128,6 +129,9 @@ OPTIONAL_EVIDENCE_FIELDS = {
 }
 
 _OUTPUT_MODES = frozenset({"real", "fallback", "degraded"})
+_ALLOWED_COMPLEXITY_HINTS = frozenset({"simple", "medium", "moderate", "complex", "unknown"})
+_ALLOWED_EVIDENCE_UNCERTAINTIES = frozenset({"low", "medium", "moderate", "high", "unknown"})
+_TRANSIENT_INPUT_TEXT_MAX_CHARS = 1000
 _SAFE_FAILURE_CATEGORIES = frozenset(
     {
         "credential_missing",
@@ -438,6 +442,7 @@ def fake_lalm_thinker_transport(
 def build_lalm_thinker_live_request_payload(
     *,
     binding: LALMThinkerRequestBinding,
+    transient_input_text: str | None = None,
 ) -> dict[str, Any]:
     request_metadata = build_lalm_thinker_request_metadata(binding)
     skeleton = {
@@ -481,10 +486,16 @@ def build_lalm_thinker_live_request_payload(
             "express only evidence availability, short safe labels, and normalized hints",
             "do not include final event refs; adapter owns deterministic provider-neutral refs",
             "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+            "use transient_input_evidence only as input evidence; do not copy its text into labels",
             "do not call tools, request native tool execution, or include tool_calls/function_call",
             "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
         ],
     }
+    if transient_input_text is not None:
+        payload["transient_input_evidence"] = _build_transient_input_evidence(
+            binding=binding,
+            transient_input_text=transient_input_text,
+        )
     _reject_unsafe_live_request_payload(payload)
     return payload
 
@@ -548,8 +559,12 @@ def emit_lalm_thinker_live_provider_result(
     created_monotonic_ms: int,
     created_wall_clock_ms: int,
     turn_committed_event: Mapping[str, Any],
+    transient_input_text: str,
 ) -> LALMThinkerProviderTextEmissionResult:
-    request_payload = build_lalm_thinker_live_request_payload(binding=binding)
+    request_payload = build_lalm_thinker_live_request_payload(
+        binding=binding,
+        transient_input_text=transient_input_text,
+    )
     provider_text = request_lalm_thinker_provider_text(
         transport=transport,
         credential_handle=credential_handle,
@@ -849,16 +864,70 @@ def _validate_task_focus_hint(value: object) -> tuple[bool | None, str | None, f
     confidence = value.get("focus_confidence")
     if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
         _fail("schema_shape", "focus_confidence must be numeric")
-    if float(confidence) < 0.0 or float(confidence) > 1.0:
+    confidence_value = float(confidence)
+    if not math.isfinite(confidence_value):
+        _fail("schema_shape", "focus_confidence must be finite")
+    if confidence_value < 0.0 or confidence_value > 1.0:
         _fail("schema_shape", "focus_confidence must be between 0 and 1")
-    for field in ("complexity_hint", "evidence_uncertainty"):
-        _require_safe_token(value.get(field), field)
+    complexity_hint = _validate_task_focus_label(
+        value.get("complexity_hint"),
+        "complexity_hint",
+        _ALLOWED_COMPLEXITY_HINTS,
+    )
+    evidence_uncertainty = _validate_task_focus_label(
+        value.get("evidence_uncertainty"),
+        "evidence_uncertainty",
+        _ALLOWED_EVIDENCE_UNCERTAINTIES,
+    )
     return (
         bool(value["task_like"]),
-        str(value["complexity_hint"]),
-        float(confidence),
-        str(value["evidence_uncertainty"]),
+        complexity_hint,
+        confidence_value,
+        evidence_uncertainty,
     )
+
+
+def _validate_task_focus_label(
+    value: object,
+    field: str,
+    allowed_values: frozenset[str],
+) -> str:
+    token = _require_safe_token(value, field)
+    if len(token) > 32 or token not in allowed_values:
+        _fail("schema_shape", f"{field} must be one of the allowed normalized labels")
+    return token
+
+
+def _build_transient_input_evidence(
+    *,
+    binding: LALMThinkerRequestBinding,
+    transient_input_text: str,
+) -> dict[str, Any]:
+    text = _normalize_transient_input_text(transient_input_text)
+    return {
+        "input_modality": binding.input_modality,
+        "input_ref": binding.input_ref,
+        "retention": "transient_adapter_memory_only",
+        "event_journal_retention": False,
+        "summary_retention": False,
+        "text": {
+            "present": True,
+            "content": text,
+            "max_chars": _TRANSIENT_INPUT_TEXT_MAX_CHARS,
+        },
+    }
+
+
+def _normalize_transient_input_text(value: object) -> str:
+    if not isinstance(value, str):
+        _fail("schema_shape", "transient_input_text must be a string")
+    text = value.strip()
+    if text == "":
+        _fail("schema_shape", "transient_input_text must be non-empty")
+    if len(text) > _TRANSIENT_INPUT_TEXT_MAX_CHARS:
+        _fail("schema_shape", "transient_input_text is too long")
+    _reject_unsafe_text(text)
+    return text
 
 
 def _reject_forbidden_candidate_content(value: object) -> None:
