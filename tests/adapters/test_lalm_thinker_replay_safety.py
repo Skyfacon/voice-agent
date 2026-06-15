@@ -123,6 +123,45 @@ def test_replay_rejects_lalm_thinker_credential_like_ref_tampering() -> None:
         run_replay_fixture(fixture)
 
 
+@pytest.mark.parametrize(
+    ("field", "unsafe_ref"),
+    (
+        (
+            "semantic_frame_ref",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/raw-frame",
+        ),
+        ("semantic_summary_ref", "provider-url://dashscope/raw-summary"),
+        (
+            "semantic_close_ref",
+            "/Users/a123/workspace/voice-agent-lalm-thinker/diagnostics/raw-close.json",
+        ),
+        (
+            "assistant_directedness_ref",
+            "assistant-directedness://synthetic/lalm-thinker/traces/session.jsonl",
+        ),
+        ("emotion_ref", "file:///Users/a123/workspace/voice-agent-lalm-thinker/raw-emotion.json"),
+        (
+            "audio_caption_ref",
+            "audio-caption://synthetic/lalm-thinker/replays%2Flocal%2Fraw-caption.json",
+        ),
+    ),
+)
+def test_replay_rejects_lalm_thinker_provider_specific_or_local_ref_tampering(
+    field: str,
+    unsafe_ref: str,
+) -> None:
+    fixture, thinker_event = _lalm_thinker_fixture(
+        session_id=f"sess_lalm_thinker_replay_{field}_tamper",
+        event_id_prefix=f"evt_lalm_thinker_replay_{field}_tamper",
+        optional_refs_available=True,
+    )
+    thinker = _event_by_id(fixture["events"], str(thinker_event["event_id"]))
+    thinker[field] = unsafe_ref
+
+    with pytest.raises(ReplayValidationError, match="safe ref"):
+        run_replay_fixture(fixture)
+
+
 def test_replay_runner_does_not_import_lalm_thinker_live_transport() -> None:
     source = Path("src/voice_agent/replay/runner.py").read_text(encoding="utf-8")
 

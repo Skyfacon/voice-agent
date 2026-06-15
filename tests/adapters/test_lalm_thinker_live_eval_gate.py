@@ -407,26 +407,30 @@ class _SequenceTransport:
             {
                 **skeleton,
                 "output_mode": "real",
-                "semantic_frame_ref": "semantic-frame://synthetic/lalm-thinker/live-eval/frame",
-                "semantic_summary_ref": "summary://synthetic/lalm-thinker/live-eval/summary",
+                "semantic_frame_hint": {
+                    "status": "available",
+                    "label": "semantic_frame_available",
+                },
+                "semantic_summary_hint": {
+                    "status": "available",
+                    "label": "semantic_summary_available",
+                },
                 "optional_evidence_refs": {
                     "semantic_close": {
                         "status": "available",
-                        "ref": "semantic-close://synthetic/lalm-thinker/live-eval/closed",
+                        "label": "closed",
                     },
                     "assistant_directedness": {
                         "status": "available",
-                        "ref": (
-                            "assistant-directedness://synthetic/lalm-thinker/live-eval/directed"
-                        ),
+                        "label": "directed",
                     },
                     "emotion": {
                         "status": "available",
-                        "ref": "emotion://synthetic/lalm-thinker/live-eval/calm",
+                        "label": "calm",
                     },
                     "audio_caption": {
                         "status": "available",
-                        "ref": "audio-caption://synthetic/lalm-thinker/live-eval/caption",
+                        "label": "caption_available",
                     },
                 },
                 "task_focus_hint": {

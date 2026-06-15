@@ -136,11 +136,25 @@ _BOUNDARY_ASSERTIONS = {
     "may_execute_tools": False,
     "may_control_playback": False,
     "may_emit_coverage_or_truthfulness_verdicts": False,
+    "owns_semantic_commitment": False,
+    "owns_confirmation_state": False,
+    "owns_tool_authorization": False,
+    "owns_tool_execution": False,
+    "owns_playback": False,
+    "owns_coverage_truthfulness_checks": False,
 }
+_PROVIDER_FINAL_REF_FIELDS = frozenset(
+    {
+        "semantic_frame_ref",
+        "semantic_summary_ref",
+        "validation_ref",
+    }
+)
 _FORBIDDEN_OWNERSHIP_FIELDS = frozenset(
     {
         "event_name",
         "semantic_commitment",
+        "SemanticCommitment",
         "semantic_commitment_event",
         "commitment",
         "confirmation",
@@ -163,6 +177,7 @@ _PROVIDER_TOOL_FIELDS = frozenset(
         "function_call",
         "tool_choice",
         "native_tool_execution",
+        "provider_native_tool_execution",
     }
 )
 _RAW_ARTIFACT_FIELDS = frozenset(
@@ -208,6 +223,29 @@ _RAW_ARTIFACT_MARKERS = (
     "traces/",
     "replays/local/",
     "local replay cache",
+)
+_UNSAFE_REF_MARKERS = (
+    "http://",
+    "https://",
+    "file://",
+    "provider-url://",
+    "provider://",
+    "dashscope",
+    "aliyuncs.com",
+)
+_OWNERSHIP_CLAIM_MARKERS = (
+    "semanticcommitment",
+    "semantic commitment",
+    "confirmation state",
+    "accept confirmation",
+    "authorize tool",
+    "tool authorization",
+    "tool execution",
+    "execute tool",
+    "control playback",
+    "playback owner",
+    "coverage verdict",
+    "truthfulness verdict",
 )
 
 
@@ -275,15 +313,27 @@ def validate_lalm_thinker_candidate(
     if artifact_policy.get("raw_artifacts_retained") is not False:
         _fail("raw_artifact_retention", "candidate must not retain raw artifacts")
 
-    semantic_frame_ref = _require_safe_ref(candidate.get("semantic_frame_ref"), "semantic_frame_ref")
-    semantic_summary_ref = _require_safe_ref(
-        candidate.get("semantic_summary_ref"),
-        "semantic_summary_ref",
+    _validate_required_evidence_hint(candidate.get("semantic_frame_hint"), "semantic_frame_hint")
+    _validate_required_evidence_hint(candidate.get("semantic_summary_hint"), "semantic_summary_hint")
+    semantic_frame_ref = _adapter_owned_ref(
+        scheme="semantic-frame",
+        expected_binding=expected_binding,
+        suffix="frame",
     )
-    validation_ref = _require_safe_ref(candidate.get("validation_ref"), "validation_ref")
+    semantic_summary_ref = _adapter_owned_ref(
+        scheme="summary",
+        expected_binding=expected_binding,
+        suffix="summary",
+    )
+    validation_ref = _adapter_owned_ref(
+        scheme="validation",
+        expected_binding=expected_binding,
+        suffix="candidate",
+    )
 
     optional_refs, optional_statuses, missing_capabilities = _validate_optional_evidence_refs(
-        candidate.get("optional_evidence_refs")
+        candidate.get("optional_evidence_refs"),
+        expected_binding=expected_binding,
     )
     if missing_capabilities and output_mode != "degraded":
         _fail("degraded_mode_required", "missing optional evidence requires degraded output mode")
@@ -321,19 +371,19 @@ def fake_lalm_thinker_transport(
         optional_evidence_refs = {
             "semantic_close": {
                 "status": "available",
-                "ref": f"semantic-close://synthetic/lalm-thinker/{slug}/closed",
+                "label": "closed",
             },
             "assistant_directedness": {
                 "status": "available",
-                "ref": f"assistant-directedness://synthetic/lalm-thinker/{slug}/directed",
+                "label": "directed",
             },
             "emotion": {
                 "status": "available",
-                "ref": f"emotion://synthetic/lalm-thinker/{slug}/calm",
+                "label": "calm",
             },
             "audio_caption": {
                 "status": "available",
-                "ref": f"audio-caption://synthetic/lalm-thinker/{slug}/caption",
+                "label": "caption_available",
             },
         }
     else:
@@ -350,8 +400,14 @@ def fake_lalm_thinker_transport(
         "request_binding": binding.to_dict(),
         "candidate_role": "evidence_only",
         "output_mode": output_mode,
-        "semantic_frame_ref": f"semantic-frame://synthetic/lalm-thinker/{slug}/frame",
-        "semantic_summary_ref": f"summary://synthetic/lalm-thinker/{slug}/summary",
+        "semantic_frame_hint": {
+            "status": "available",
+            "label": f"semantic_frame_{slug}",
+        },
+        "semantic_summary_hint": {
+            "status": "available",
+            "label": f"semantic_summary_{slug}",
+        },
         "optional_evidence_refs": optional_evidence_refs,
         "task_focus_hint": {
             "task_like": True,
@@ -364,7 +420,6 @@ def fake_lalm_thinker_transport(
             "retention": "refs_only",
             "raw_artifacts_retained": False,
         },
-        "validation_ref": f"validation://synthetic/lalm-thinker/{slug}/candidate",
     }
     return json.dumps(candidate, separators=(",", ":"), sort_keys=True)
 
@@ -379,8 +434,14 @@ def build_lalm_thinker_live_request_payload(
         "request_binding": binding.to_dict(),
         "candidate_role": "evidence_only",
         "output_mode": "degraded",
-        "semantic_frame_ref": "semantic-frame://synthetic/lalm-thinker/live-eval/frame",
-        "semantic_summary_ref": "summary://synthetic/lalm-thinker/live-eval/summary",
+        "semantic_frame_hint": {
+            "status": "available",
+            "label": "semantic_frame_available",
+        },
+        "semantic_summary_hint": {
+            "status": "available",
+            "label": "semantic_summary_available",
+        },
         "optional_evidence_refs": {
             "semantic_close": {"status": "unavailable"},
             "assistant_directedness": {"status": "unavailable"},
@@ -398,16 +459,19 @@ def build_lalm_thinker_live_request_payload(
             "retention": "refs_only",
             "raw_artifacts_retained": False,
         },
-        "validation_ref": "validation://synthetic/lalm-thinker/live-eval/candidate",
     }
     payload = {
         "request_metadata": request_metadata,
         "required_output_skeleton": skeleton,
         "output_rules": [
-            "return exactly one JSON object",
+            "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
+            "do not wrap JSON in markdown, prose, arrays, or multiple objects",
             "copy required_output_skeleton.request_binding exactly",
-            "use refs only and do not include raw provider request or response",
-            "do not claim tool, playback, confirmation, commitment, or checker ownership",
+            "express only evidence availability, short safe labels, and normalized hints",
+            "do not include final event refs; adapter owns deterministic provider-neutral refs",
+            "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+            "do not call tools, request native tool execution, or include tool_calls/function_call",
+            "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
         ],
     }
     _reject_unsafe_live_request_payload(payload)
@@ -701,7 +765,11 @@ def _emit_lalm_thinker_output_validation_failed(
     )
 
 
-def _validate_optional_evidence_refs(value: object) -> tuple[dict[str, str], dict[str, str], list[str]]:
+def _validate_optional_evidence_refs(
+    value: object,
+    *,
+    expected_binding: LALMThinkerRequestBinding,
+) -> tuple[dict[str, str], dict[str, str], list[str]]:
     if not isinstance(value, Mapping):
         _fail("schema_shape", "optional evidence refs are missing")
 
@@ -718,12 +786,46 @@ def _validate_optional_evidence_refs(value: object) -> tuple[dict[str, str], dic
         optional_statuses[status_field] = str(status)
         ref_value = entry.get("ref")
         if status == "available":
-            optional_refs[ref_field] = _require_safe_ref(ref_value, ref_field)
+            if ref_value not in (None, ""):
+                _reject_unsafe_text(str(ref_value))
+                _fail("unsafe_ref", f"candidate must not include final optional ref: {evidence_name}")
+            _validate_optional_evidence_label(entry.get("label"), evidence_name)
+            optional_refs[ref_field] = _adapter_owned_ref(
+                scheme=_optional_ref_scheme(evidence_name),
+                expected_binding=expected_binding,
+                suffix=evidence_name.replace("_", "-"),
+            )
         else:
             if ref_value not in (None, ""):
+                _reject_unsafe_text(str(ref_value))
                 _fail("schema_shape", f"unavailable evidence must not include ref: {evidence_name}")
+            label_value = entry.get("label")
+            if label_value not in (None, ""):
+                _validate_optional_evidence_label(label_value, evidence_name)
             missing_capabilities.append(missing_capability)
     return optional_refs, optional_statuses, missing_capabilities
+
+
+def _validate_required_evidence_hint(value: object, field: str) -> None:
+    if not isinstance(value, Mapping):
+        _fail("schema_shape", f"{field} must be an object")
+    if value.get("status") != "available":
+        _fail("schema_shape", f"{field} must be available")
+    if "ref" in value:
+        ref_value = value.get("ref")
+        if ref_value not in (None, ""):
+            _reject_unsafe_text(str(ref_value))
+        _fail("unsafe_ref", f"{field} must not include final event refs")
+    _validate_optional_evidence_label(value.get("label"), field)
+
+
+def _validate_optional_evidence_label(value: object, field: str) -> str:
+    if not isinstance(value, str) or value == "":
+        _fail("schema_shape", f"{field} label must be a non-empty string")
+    if len(value) > 80 or "://" in value or "/" in value or "\\" in value:
+        _fail("unsafe_ref", f"{field} label must be a short provider-neutral label")
+    _reject_unsafe_text(value)
+    return value
 
 
 def _validate_task_focus_hint(value: object) -> tuple[bool | None, str | None, float | None, str | None]:
@@ -753,6 +855,11 @@ def _reject_forbidden_candidate_content(value: object) -> None:
         for key, child in value.items():
             if not isinstance(key, str):
                 _fail("schema_shape", "candidate object keys must be strings")
+            if key in _PROVIDER_FINAL_REF_FIELDS:
+                ref_value = child
+                if ref_value not in (None, ""):
+                    _reject_unsafe_text(str(ref_value))
+                _fail("unsafe_ref", f"candidate must not include adapter-owned final ref field: {key}")
             if key in _FORBIDDEN_OWNERSHIP_FIELDS:
                 _fail("ownership_claim", f"forbidden ownership field present: {key}")
             if key in _PROVIDER_TOOL_FIELDS:
@@ -762,6 +869,7 @@ def _reject_forbidden_candidate_content(value: object) -> None:
             _reject_forbidden_candidate_content(child)
     elif isinstance(value, str):
         _reject_unsafe_text(value)
+        _reject_candidate_ownership_claim_text(value)
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         for item in value:
             _reject_forbidden_candidate_content(item)
@@ -787,8 +895,18 @@ def _reject_unsafe_text(value: str) -> None:
         if CREDENTIAL_LIKE_REF_PATTERN.search(variant):
             _fail("unsafe_ref", "credential-like content is not allowed")
         lowered = variant.lower()
+        if lowered.startswith(("/", "~", "\\")):
+            _fail("raw_artifact_retention", "local paths are not allowed")
+        if any(marker in lowered for marker in _UNSAFE_REF_MARKERS):
+            _fail("unsafe_ref", "provider-specific or direct external refs are not allowed")
         if any(marker in lowered for marker in _RAW_ARTIFACT_MARKERS):
             _fail("raw_artifact_retention", "local-only artifact refs are not allowed")
+
+
+def _reject_candidate_ownership_claim_text(value: str) -> None:
+    lowered = value.lower()
+    if any(marker in lowered for marker in _OWNERSHIP_CLAIM_MARKERS):
+        _fail("ownership_claim", "candidate text must not claim forbidden ownership")
 
 
 def _reject_unsafe_live_request_payload(value: object) -> None:
@@ -824,6 +942,28 @@ def _fail(category: str, reason: str) -> None:
 
 def _failure_ref(category: str) -> str:
     return f"validation://synthetic/lalm-thinker/{_slug(category)}"
+
+
+def _adapter_owned_ref(
+    *,
+    scheme: str,
+    expected_binding: LALMThinkerRequestBinding,
+    suffix: str,
+) -> str:
+    return (
+        f"{scheme}://synthetic/lalm-thinker/adapter-owned/"
+        f"{_slug(expected_binding.adapter_request_id)}/"
+        f"{_slug(expected_binding.turn_committed_event_id)}/"
+        f"{_slug(suffix)}"
+    )
+
+
+def _optional_ref_scheme(evidence_name: str) -> str:
+    if evidence_name == "assistant_directedness":
+        return "assistant-directedness"
+    if evidence_name == "audio_caption":
+        return "audio-caption"
+    return evidence_name.replace("_", "-")
 
 
 def _slug(value: str) -> str:

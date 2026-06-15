@@ -68,8 +68,14 @@ def test_validator_accepts_available_optional_evidence_refs() -> None:
     validated = validate_lalm_thinker_candidate(candidate, expected_binding=binding)
 
     assert validated.adapter_request_id == "adapter-request-lalm-thinker-001"
-    assert validated.semantic_frame_ref == "semantic-frame://synthetic/lalm-thinker/turn-text-001/frame"
-    assert validated.semantic_summary_ref == "summary://synthetic/lalm-thinker/turn-text-001/summary"
+    assert validated.semantic_frame_ref == (
+        "semantic-frame://synthetic/lalm-thinker/adapter-owned/"
+        "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/frame"
+    )
+    assert validated.semantic_summary_ref == (
+        "summary://synthetic/lalm-thinker/adapter-owned/"
+        "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/summary"
+    )
     assert validated.optional_statuses == {
         "semantic_close_status": "available",
         "assistant_directedness_status": "available",
@@ -78,6 +84,43 @@ def test_validator_accepts_available_optional_evidence_refs() -> None:
     }
     assert validated.evidence_only is True
     assert validated.may_emit_contract_event is False
+
+
+def test_validator_generates_adapter_owned_refs_from_hint_only_candidate() -> None:
+    binding = _binding()
+    candidate = _valid_hint_only_candidate(binding=binding)
+
+    validated = validate_lalm_thinker_candidate(candidate, expected_binding=binding)
+
+    assert validated.semantic_frame_ref == (
+        "semantic-frame://synthetic/lalm-thinker/adapter-owned/"
+        "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/frame"
+    )
+    assert validated.semantic_summary_ref == (
+        "summary://synthetic/lalm-thinker/adapter-owned/"
+        "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/summary"
+    )
+    assert validated.optional_refs == {
+        "semantic_close_ref": (
+            "semantic-close://synthetic/lalm-thinker/adapter-owned/"
+            "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/semantic-close"
+        ),
+        "assistant_directedness_ref": (
+            "assistant-directedness://synthetic/lalm-thinker/adapter-owned/"
+            "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/assistant-directedness"
+        ),
+        "emotion_ref": (
+            "emotion://synthetic/lalm-thinker/adapter-owned/"
+            "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/emotion"
+        ),
+        "audio_caption_ref": (
+            "audio-caption://synthetic/lalm-thinker/adapter-owned/"
+            "adapter-request-lalm-thinker-001/evt-turn-committed-text-001/audio-caption"
+        ),
+    }
+    rendered = repr(validated)
+    assert "dashscope" not in rendered.lower()
+    assert "provider-url://" not in rendered.lower()
 
 
 def test_validator_accepts_unavailable_optional_evidence_as_degraded_evidence() -> None:
@@ -113,7 +156,14 @@ def test_validator_accepts_unavailable_optional_evidence_as_degraded_evidence() 
         ),
         (lambda candidate: candidate.update(semantic_commitment={"claim": "owned"}), "ownership_claim"),
         (lambda candidate: candidate.update(provider_tool_calls=[{"name": "send"}]), "provider_tool_execution_claim"),
+        (lambda candidate: candidate.update(function_call={"name": "send"}), "provider_tool_execution_claim"),
+        (lambda candidate: candidate.update(native_tool_execution={"name": "send"}), "provider_tool_execution_claim"),
+        (lambda candidate: candidate.update(confirmation_state={"accepted": True}), "ownership_claim"),
+        (lambda candidate: candidate.update(playback_action={"play": True}), "ownership_claim"),
         (lambda candidate: candidate.update(raw_audio="audio/raw/session.wav"), "raw_artifact_retention"),
+        (lambda candidate: candidate.update(raw_provider_response={"choices": []}), "raw_artifact_retention"),
+        (lambda candidate: candidate.update(provider_schema={"choices": []}), "raw_artifact_retention"),
+        (lambda candidate: candidate.update(raw_semantic_frame={"intent": "book"}), "raw_artifact_retention"),
         (
             lambda candidate: candidate.update(
                 semantic_frame_ref="semantic-frame://synthetic/lalm-thinker?api_key=sk-synthetic"
@@ -142,6 +192,67 @@ def test_validator_rejects_invalid_candidates_with_safe_failure_categories(
     assert repr(candidate) not in str(captured.value)
 
 
+@pytest.mark.parametrize(
+    ("mutation", "category"),
+    (
+        (
+            lambda candidate: candidate.update(
+                semantic_frame_ref="https://dashscope.aliyuncs.com/compatible-mode/v1/raw-frame"
+            ),
+            "unsafe_ref",
+        ),
+        (
+            lambda candidate: candidate.update(
+                semantic_summary_ref="provider-url://dashscope/raw-summary"
+            ),
+            "unsafe_ref",
+        ),
+        (
+            lambda candidate: candidate.update(
+                semantic_frame_ref="/Users/a123/workspace/voice-agent-lalm-thinker/diagnostics/raw.json"
+            ),
+            "raw_artifact_retention",
+        ),
+        (
+            lambda candidate: candidate["optional_evidence_refs"]["emotion"].update(
+                ref="https://dashscope.aliyuncs.com/raw-emotion"
+            ),
+            "unsafe_ref",
+        ),
+        (
+            lambda candidate: candidate["optional_evidence_refs"]["audio_caption"].update(
+                ref="audio-caption://synthetic/lalm-thinker/audio%2Fraw%2Fsession.wav"
+            ),
+            "raw_artifact_retention",
+        ),
+        (
+            lambda candidate: candidate["optional_evidence_refs"]["semantic_close"].update(
+                ref="semantic-close://synthetic/lalm-thinker?token=synthetic"
+            ),
+            "unsafe_ref",
+        ),
+    ),
+)
+def test_validator_rejects_provider_specific_local_or_credential_refs_without_echoing_body(
+    mutation: object,
+    category: str,
+) -> None:
+    binding = _binding()
+    candidate = _valid_candidate(binding=binding)
+    mutation(candidate)
+
+    with pytest.raises(LALMThinkerCandidateValidationError) as captured:
+        validate_lalm_thinker_candidate(candidate, expected_binding=binding)
+
+    assert captured.value.category == category
+    assert captured.value.failure_ref.startswith("validation://synthetic/lalm-thinker/")
+    rendered_error = str(captured.value).lower()
+    assert "dashscope" not in rendered_error
+    assert "/users/a123" not in rendered_error
+    assert "token=synthetic" not in rendered_error
+    assert repr(candidate) not in str(captured.value)
+
+
 def test_fake_transport_returns_provider_neutral_synthetic_candidate_without_runtime_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,13 +264,16 @@ def test_fake_transport_returns_provider_neutral_synthetic_candidate_without_run
     validated = validate_lalm_thinker_candidate(parsed, expected_binding=binding)
 
     assert blocked_calls == []
-    assert validated.semantic_frame_ref.startswith("semantic-frame://synthetic/lalm-thinker/")
+    assert validated.semantic_frame_ref.startswith(
+        "semantic-frame://synthetic/lalm-thinker/adapter-owned/"
+    )
     assert validated.may_emit_contract_event is False
     rendered = repr(parsed).lower()
     assert "provider_response" not in rendered
     assert "provider_schema" not in rendered
     assert "raw_audio" not in rendered
-    assert "authorization" not in rendered
+    assert "authorization_header" not in rendered
+    assert "bearer " not in rendered
 
 
 def test_fake_transport_defaults_to_degraded_contract_emission_for_unsupported_optional_capabilities() -> None:
@@ -294,6 +408,14 @@ def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candi
         "instruction_boundary": {
             "candidate_role": "evidence_only",
             "candidate_schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
+            "response_must_be_single_json_object": True,
+            "markdown_or_prose_allowed": False,
+            "provider_native_schema_allowed": False,
+            "raw_payload_allowed": False,
+            "native_tool_execution_allowed": False,
+            "candidate_refs_allowed": False,
+            "final_refs_owned_by_adapter": True,
+            "evidence_hints_only": True,
             "may_emit_event_journal_events": False,
             "may_create_semantic_commitments": False,
             "may_accept_confirmation": False,
@@ -301,17 +423,33 @@ def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candi
             "may_execute_tools": False,
             "may_control_playback": False,
             "may_emit_coverage_or_truthfulness_verdicts": False,
+            "owns_semantic_commitment": False,
+            "owns_confirmation_state": False,
+            "owns_tool_authorization": False,
+            "owns_tool_execution": False,
+            "owns_playback": False,
+            "owns_coverage_truthfulness_checks": False,
         },
     }
     assert payload["required_output_skeleton"]["schema_version"] == (
         LALM_THINKER_CANDIDATE_SCHEMA_VERSION
     )
     assert payload["required_output_skeleton"]["request_binding"] == binding.to_dict()
+    assert "semantic_frame_ref" not in payload["required_output_skeleton"]
+    assert "semantic_summary_ref" not in payload["required_output_skeleton"]
+    assert payload["required_output_skeleton"]["semantic_frame_hint"] == {
+        "status": "available",
+        "label": "semantic_frame_available",
+    }
     assert payload["output_rules"] == [
-        "return exactly one JSON object",
+        "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
+        "do not wrap JSON in markdown, prose, arrays, or multiple objects",
         "copy required_output_skeleton.request_binding exactly",
-        "use refs only and do not include raw provider request or response",
-        "do not claim tool, playback, confirmation, commitment, or checker ownership",
+        "express only evidence availability, short safe labels, and normalized hints",
+        "do not include final event refs; adapter owns deterministic provider-neutral refs",
+        "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+        "do not call tools, request native tool execution, or include tool_calls/function_call",
+        "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
     ]
     assert _forbidden_request_terms_are_absent(payload)
 
@@ -481,30 +619,40 @@ def _committed_text_turn() -> dict[str, object]:
 
 
 def _valid_candidate(binding: object | None = None) -> dict[str, object]:
+    return _valid_hint_only_candidate(binding=binding)
+
+
+def _valid_hint_only_candidate(binding: object | None = None) -> dict[str, object]:
     binding = binding or _binding()
     return {
         "schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
         "request_binding": binding.to_dict(),
         "candidate_role": "evidence_only",
         "output_mode": "real",
-        "semantic_frame_ref": "semantic-frame://synthetic/lalm-thinker/turn-text-001/frame",
-        "semantic_summary_ref": "summary://synthetic/lalm-thinker/turn-text-001/summary",
+        "semantic_frame_hint": {
+            "status": "available",
+            "label": "semantic_frame_available",
+        },
+        "semantic_summary_hint": {
+            "status": "available",
+            "label": "semantic_summary_available",
+        },
         "optional_evidence_refs": {
             "semantic_close": {
                 "status": "available",
-                "ref": "semantic-close://synthetic/lalm-thinker/turn-text-001/closed",
+                "label": "closed",
             },
             "assistant_directedness": {
                 "status": "available",
-                "ref": "assistant-directedness://synthetic/lalm-thinker/turn-text-001/directed",
+                "label": "directed",
             },
             "emotion": {
                 "status": "available",
-                "ref": "emotion://synthetic/lalm-thinker/turn-text-001/calm",
+                "label": "calm",
             },
             "audio_caption": {
                 "status": "available",
-                "ref": "audio-caption://synthetic/lalm-thinker/turn-text-001/caption",
+                "label": "caption_available",
             },
         },
         "task_focus_hint": {
@@ -522,12 +670,17 @@ def _valid_candidate(binding: object | None = None) -> dict[str, object]:
             "may_execute_tools": False,
             "may_control_playback": False,
             "may_emit_coverage_or_truthfulness_verdicts": False,
+            "owns_semantic_commitment": False,
+            "owns_confirmation_state": False,
+            "owns_tool_authorization": False,
+            "owns_tool_execution": False,
+            "owns_playback": False,
+            "owns_coverage_truthfulness_checks": False,
         },
         "artifact_policy": {
             "retention": "refs_only",
             "raw_artifacts_retained": False,
         },
-        "validation_ref": "validation://synthetic/lalm-thinker/turn-text-001/candidate",
     }
 
 
@@ -644,7 +797,7 @@ def _forbidden_request_terms_are_absent(value: object) -> bool:
         "audio_bytes",
         "secret",
         "api_key",
-        "authorization",
+        "authorization_header",
         "bearer ",
         "token=",
         "credential=",

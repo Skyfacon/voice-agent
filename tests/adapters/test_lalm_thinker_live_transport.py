@@ -123,6 +123,31 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
     assert request_body["model"] == "qwen3.6-flash"
     assert request_body["messages"][0]["role"] == "system"
     assert request_body["messages"][1]["role"] == "user"
+    assert "lalm_thinker_semantic_frame_candidate.v1" in request_body["messages"][0]["content"]
+    assert "No markdown" in request_body["messages"][0]["content"]
+    assert "tool_calls" in request_body["messages"][0]["content"]
+    user_payload = json.loads(request_body["messages"][1]["content"])
+    skeleton = user_payload["required_output_skeleton"]
+    assert "semantic_frame_ref" not in skeleton
+    assert "semantic_summary_ref" not in skeleton
+    assert skeleton["semantic_frame_hint"] == {
+        "status": "available",
+        "label": "semantic_frame_available",
+    }
+    assert skeleton["semantic_summary_hint"] == {
+        "status": "available",
+        "label": "semantic_summary_available",
+    }
+    assert user_payload["output_rules"] == [
+        "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
+        "do not wrap JSON in markdown, prose, arrays, or multiple objects",
+        "copy required_output_skeleton.request_binding exactly",
+        "express only evidence availability, short safe labels, and normalized hints",
+        "do not include final event refs; adapter owns deterministic provider-neutral refs",
+        "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+        "do not call tools, request native tool execution, or include tool_calls/function_call",
+        "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
+    ]
     assert "raw_provider_request" not in repr(request_body)
     assert "runtime-secret-value-for-test-only" not in repr(request_body)
 

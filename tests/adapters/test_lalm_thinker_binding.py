@@ -40,6 +40,14 @@ def test_text_turn_binding_preserves_committed_turn_and_uses_safe_metadata_refs(
     assert metadata["instruction_boundary"] == {
         "candidate_role": "evidence_only",
         "candidate_schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
+        "response_must_be_single_json_object": True,
+        "markdown_or_prose_allowed": False,
+        "provider_native_schema_allowed": False,
+        "raw_payload_allowed": False,
+        "native_tool_execution_allowed": False,
+        "candidate_refs_allowed": False,
+        "final_refs_owned_by_adapter": True,
+        "evidence_hints_only": True,
         "may_emit_event_journal_events": False,
         "may_create_semantic_commitments": False,
         "may_accept_confirmation": False,
@@ -47,6 +55,12 @@ def test_text_turn_binding_preserves_committed_turn_and_uses_safe_metadata_refs(
         "may_execute_tools": False,
         "may_control_playback": False,
         "may_emit_coverage_or_truthfulness_verdicts": False,
+        "owns_semantic_commitment": False,
+        "owns_confirmation_state": False,
+        "owns_tool_authorization": False,
+        "owns_tool_execution": False,
+        "owns_playback": False,
+        "owns_coverage_truthfulness_checks": False,
     }
     assert _forbidden_request_terms_are_absent(metadata)
 
@@ -106,6 +120,13 @@ def test_adapter_local_candidate_schema_is_not_a_canonical_journal_event() -> No
     assert LALM_THINKER_CANDIDATE_SCHEMA["schema_kind"] == "adapter_local_candidate_schema"
     assert LALM_THINKER_CANDIDATE_SCHEMA["event_journal_event"] is False
     assert LALM_THINKER_CANDIDATE_SCHEMA["canonical_event_name"] is None
+    assert LALM_THINKER_CANDIDATE_SCHEMA["candidate_final_ref_policy"] == (
+        "adapter_owned_provider_neutral_refs_only"
+    )
+    assert LALM_THINKER_CANDIDATE_SCHEMA["artifact_policy"] == {
+        "retention": "refs_only",
+        "raw_artifacts_retained": False,
+    }
     assert LALM_THINKER_CANDIDATE_SCHEMA_VERSION not in MVP0_EVENT_NAMES
     assert "event_name" not in LALM_THINKER_CANDIDATE_SCHEMA
     assert LALM_THINKER_CANDIDATE_SCHEMA["candidate_role"] == "evidence_only"
@@ -161,7 +182,7 @@ def _forbidden_request_terms_are_absent(value: object) -> bool:
         "audio_bytes",
         "secret",
         "api_key",
-        "authorization",
+        "authorization_header",
         "bearer ",
         "token=",
         "credential=",

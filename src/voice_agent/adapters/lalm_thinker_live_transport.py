@@ -23,9 +23,13 @@ LALM_THINKER_CREDENTIAL_SOURCE_METADATA = (
     "runtime_env_var:DASHSCOPE_API_KEY via ~/.voice-agent-secrets/dashscope.env"
 )
 LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION = (
-    "Return only one JSON object. No markdown or prose. Copy request_binding "
-    "exactly from required_output_skeleton. The output is evidence only and "
-    "must not claim commitment, confirmation, tool, playback, or checker ownership."
+    "Return only one lalm_thinker_semantic_frame_candidate.v1 JSON object. "
+    "No markdown or prose. No arrays or multiple objects. Copy request_binding "
+    "exactly from required_output_skeleton. The output is evidence only: "
+    "availability flags, short safe labels, and normalized hints. Do not include "
+    "final event refs, raw payloads, provider schema, tool_calls/function_call, "
+    "native tool execution, SemanticCommitment, confirmation, playback, or "
+    "coverage/truthfulness ownership claims."
 )
 
 _DISALLOWED_REF_MARKERS = (
@@ -208,12 +212,14 @@ def _build_openai_compatible_request_body(
         "request_payload": request_payload_dict,
         "required_output_skeleton": _build_required_output_skeleton(request_payload_dict),
         "output_rules": [
+            "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
+            "do not wrap JSON in markdown, prose, arrays, or multiple objects",
             "copy required_output_skeleton.request_binding exactly",
-            "return evidence candidate only",
-            "do not execute tools or patch UI",
-            "do not include provider request or response bodies",
-            "do not wrap JSON in markdown",
-            "keep string fields short and ref-like",
+            "express only evidence availability, short safe labels, and normalized hints",
+            "do not include final event refs; adapter owns deterministic provider-neutral refs",
+            "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
+            "do not call tools, request native tool execution, or include tool_calls/function_call",
+            "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
         ],
     }
     return {
@@ -243,8 +249,14 @@ def _build_required_output_skeleton(request_payload: Mapping[str, Any]) -> dict[
         "request_binding": request_binding,
         "candidate_role": "evidence_only",
         "output_mode": "degraded",
-        "semantic_frame_ref": "semantic-frame://synthetic/lalm-thinker/provider-live/frame",
-        "semantic_summary_ref": "summary://synthetic/lalm-thinker/provider-live/summary",
+        "semantic_frame_hint": {
+            "status": "available",
+            "label": "semantic_frame_available",
+        },
+        "semantic_summary_hint": {
+            "status": "available",
+            "label": "semantic_summary_available",
+        },
         "optional_evidence_refs": {
             "semantic_close": {"status": "unavailable"},
             "assistant_directedness": {"status": "unavailable"},
@@ -266,12 +278,17 @@ def _build_required_output_skeleton(request_payload: Mapping[str, Any]) -> dict[
             "may_execute_tools": False,
             "may_control_playback": False,
             "may_emit_coverage_or_truthfulness_verdicts": False,
+            "owns_semantic_commitment": False,
+            "owns_confirmation_state": False,
+            "owns_tool_authorization": False,
+            "owns_tool_execution": False,
+            "owns_playback": False,
+            "owns_coverage_truthfulness_checks": False,
         },
         "artifact_policy": {
             "retention": "refs_only",
             "raw_artifacts_retained": False,
         },
-        "validation_ref": "validation://synthetic/lalm-thinker/provider-live/candidate",
     }
 
 

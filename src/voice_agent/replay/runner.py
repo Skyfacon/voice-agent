@@ -763,6 +763,13 @@ THINKER_UNSAFE_REF_TERMS = (
     "raw_audio",
     "raw_trace",
     "raw_thinker_output",
+    "http://",
+    "https://",
+    "file://",
+    "provider-url://",
+    "provider://",
+    "dashscope",
+    "aliyuncs.com",
 )
 
 
@@ -889,10 +896,14 @@ def _validate_thinker_refs_are_safe(event: Mapping[str, Any]) -> None:
             continue
         if not isinstance(value, str):
             raise ReplayValidationError(f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {field} must be a string ref")
+        if "://" not in value:
+            raise ReplayValidationError(f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {field} must be a safe ref")
         for view in _replay_ref_safety_views(value):
             lowered = view.lower()
-            if CREDENTIAL_LIKE_REF_PATTERN.search(view) or any(
-                term in lowered for term in THINKER_UNSAFE_REF_TERMS
+            if (
+                CREDENTIAL_LIKE_REF_PATTERN.search(view)
+                or lowered.startswith(("/", "~", "\\"))
+                or any(term in lowered for term in THINKER_UNSAFE_REF_TERMS)
             ):
                 raise ReplayValidationError(
                     f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {field} must be a safe ref; unsafe ref content detected"
