@@ -137,7 +137,7 @@ class MVP0Router:
         _validate_turn_committed_event(turn_committed_event)
         _validate_mock_frame(
             asr_frame_event,
-            expected_event_name="MOCK_ASR_FRAME_EMITTED",
+            expected_event_names=("MOCK_ASR_FRAME_EMITTED", "ASR_TRANSCRIPT_OUTPUT_EMITTED"),
             turn_committed_event=turn_committed_event,
         )
         _validate_mock_frame(
@@ -192,7 +192,7 @@ class MVP1Router:
         _validate_turn_committed_event(turn_committed_event)
         _validate_mock_frame(
             asr_frame_event,
-            expected_event_name="MOCK_ASR_FRAME_EMITTED",
+            expected_event_names=("MOCK_ASR_FRAME_EMITTED", "ASR_TRANSCRIPT_OUTPUT_EMITTED"),
             turn_committed_event=turn_committed_event,
         )
         _validate_mock_frame(
@@ -305,6 +305,26 @@ def _validate_understanding_output_mode(event: Mapping[str, Any], *, event_name:
             raise ValueError(f"{event_name} must be normalized before Router use")
         if event.get("semantic_frame_schema") != "voice_agent.semantic_frame.v1":
             raise ValueError(f"{event_name} must use the SemanticFrame-compatible schema")
+        return
+    if event_name == "ASR_TRANSCRIPT_OUTPUT_EMITTED":
+        if output_mode not in {"real", "fallback", "degraded"}:
+            raise ValueError(f"{event_name} must use output_mode=real, fallback, or degraded")
+        if event.get("transcript_finality") != "final":
+            raise ValueError(f"{event_name} must be final before Router use")
+        for field in ("asr_frame_ref", "text_ref"):
+            if not isinstance(event.get(field), str) or event.get(field) == "":
+                raise ValueError(f"{event_name} requires {field}")
+        timestamp_status = event.get("timestamp_status")
+        streaming_status = event.get("streaming_status")
+        if timestamp_status not in {"available", "unavailable"}:
+            raise ValueError(f"{event_name} has invalid timestamp_status")
+        if streaming_status not in {"supported", "unsupported_final_only"}:
+            raise ValueError(f"{event_name} has invalid streaming_status")
+        if (
+            (timestamp_status == "unavailable" or streaming_status == "unsupported_final_only")
+            and output_mode != "degraded"
+        ):
+            raise ValueError(f"{event_name} must be degraded when ASR metadata is unavailable")
         return
     raise ValueError(f"Unsupported understanding event: {event_name}")
 

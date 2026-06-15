@@ -136,6 +136,45 @@ def test_no_active_complex_input_spawns_slowtask_decision_without_creating_task(
     assert "SLOWTASK_CREATED" not in {event["event_name"] for event in startup.journal.events()}
 
 
+def test_mvp1_router_accepts_real_asr_transcript_output_as_asr_evidence() -> None:
+    startup, turn_committed, asr_event, thinker_event = _committed_turn_with_mock_frames(
+        suffix="real_asr_evidence",
+        task_like=True,
+        complexity_hint="complex",
+        task_focus_hint="NEW_TASK_CANDIDATE",
+    )
+    real_asr_event = dict(
+        asr_event,
+        event_name="ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        event_id="evt_mvp1_slice2_real_asr_evidence",
+        source_module="asr_adapter",
+        adapter_id="mvp3_asr",
+        adapter_type="asr",
+        adapter_request_id="adapter_request_mvp1_slice2_real_asr_evidence",
+        text_ref="text://synthetic/mvp1/slice2/real-asr-evidence",
+        transcript_finality="final",
+        timestamp_status="available",
+        streaming_status="supported",
+        output_mode="real",
+    )
+
+    result = MVP1Router(startup.journal).emit_decision(
+        turn_committed_event=turn_committed,
+        asr_frame_event=real_asr_event,
+        thinker_frame_event=thinker_event,
+        router_context=RouterContext(task_focus_snapshot=TaskFocusSnapshot()),
+        event_id="evt_mvp1_slice2_real_asr_router_decision",
+        task_focus_state_event_id="evt_mvp1_slice2_real_asr_focus_state",
+        created_monotonic_ms=1040,
+        created_wall_clock_ms=1700000001040,
+    )
+
+    assert result.router_decision_event["asr_frame_event_id"] == (
+        "evt_mvp1_slice2_real_asr_evidence"
+    )
+    assert result.router_decision_event["router_decision"] == "SPAWN_SLOW_TASK"
+
+
 @pytest.mark.parametrize(
     "hint,expected_decision,expected_focus",
     [

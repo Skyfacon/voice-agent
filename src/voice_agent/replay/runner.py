@@ -592,17 +592,62 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 )
 
 
-def _validate_asr_transcript_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
-    events_by_id: dict[str, Mapping[str, Any]] = {}
-    degraded_by_request_capability: set[tuple[str, str, str]] = set()
-    forbidden_fields = {
+ASR_FORBIDDEN_PAYLOAD_FIELDS = frozenset(
+    {
         "raw_audio",
         "audio_bytes",
         "audio_payload",
         "raw_trace",
         "raw_transcript",
+        "raw_text",
+        "transcript_text",
+        "text",
+        "provider_request",
         "provider_response",
+        "provider_body",
+        "provider_payload",
+        "provider_schema",
+        "provider_specific_schema",
+        "request_body",
+        "response_body",
+        "body",
+        "payload",
     }
+)
+ASR_SAFE_REF_FIELDS = frozenset(
+    {
+        "asr_frame_ref",
+        "text_ref",
+        "audio_timestamps_ref",
+    }
+)
+ASR_UNSAFE_REF_TERMS = frozenset(
+    {
+        "raw_audio",
+        "audio/raw",
+        "raw transcript",
+        "raw_transcript",
+        "provider_request",
+        "provider_response",
+        "provider_payload",
+        "provider schema",
+        "provider_schema",
+        "data:",
+        "file://",
+        "http://",
+        "https://",
+        "traces/",
+        "diagnostics/",
+        "replays/local",
+        "/users/",
+        "\\users\\",
+    }
+)
+
+
+def _validate_asr_transcript_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
+    events_by_id: dict[str, Mapping[str, Any]] = {}
+    degraded_by_request_capability: set[tuple[str, str, str]] = set()
 
     for event in ordered_events:
         event_name = str(event["event_name"])
@@ -619,8 +664,11 @@ def _validate_asr_transcript_output_contract(ordered_events: Sequence[Mapping[st
             events_by_id[event_id] = event
             continue
 
-        if forbidden_fields.intersection(event):
-            raise ReplayValidationError("ASR_TRANSCRIPT_OUTPUT_EMITTED must not contain raw audio or provider payload")
+        if ASR_FORBIDDEN_PAYLOAD_FIELDS.intersection(event):
+            raise ReplayValidationError(
+                "ASR_TRANSCRIPT_OUTPUT_EMITTED must not contain raw audio, transcript, or provider payload"
+            )
+        _validate_asr_safe_refs(event)
         output_mode = str(event["output_mode"])
         if output_mode not in {"real", "fallback", "degraded"}:
             raise ReplayValidationError("ASR_TRANSCRIPT_OUTPUT_EMITTED output_mode must be real, fallback, or degraded")
@@ -661,6 +709,36 @@ def _validate_asr_transcript_output_contract(ordered_events: Sequence[Mapping[st
             missing_capability="supports_streaming_output",
         )
         events_by_id[event_id] = event
+
+
+def _validate_asr_safe_refs(event: Mapping[str, Any]) -> None:
+    for field in ASR_SAFE_REF_FIELDS:
+        value = event.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, str):
+            raise ReplayValidationError(f"ASR_TRANSCRIPT_OUTPUT_EMITTED {field} must be a safe ref string")
+        if any(_contains_unsafe_asr_ref_content(view) for view in _asr_ref_safety_views(value)):
+            raise ReplayValidationError(f"ASR_TRANSCRIPT_OUTPUT_EMITTED {field} must be a safe ref")
+
+
+def _asr_ref_safety_views(value: str) -> tuple[str, ...]:
+    views = [value]
+    decoded = value
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        views.append(next_decoded)
+        decoded = next_decoded
+    return tuple(views)
+
+
+def _contains_unsafe_asr_ref_content(value: str) -> bool:
+    lowered = value.lower()
+    return CREDENTIAL_LIKE_REF_PATTERN.search(value) is not None or any(
+        term in lowered for term in ASR_UNSAFE_REF_TERMS
+    ) or lowered.startswith(("/", "~/"))
 
 
 def _validate_asr_status_enum(
