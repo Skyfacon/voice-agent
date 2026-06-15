@@ -439,8 +439,10 @@ def test_asr_live_eval_closeout_is_aggregate_metadata_only() -> None:
     for required_text in (
         "qwen3-asr-flash",
         "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        "live eval did not run",
-        "credential value missing",
+        "approved synthetic live eval ran successfully",
+        "attempted request count: 2",
+        "success count: 2",
+        "redacted failure categories: none",
         "not connected to business runtime",
         "no new canonical event",
         "no adr change",

@@ -18,16 +18,17 @@ adapter assembly.
 
 ## Live Eval Status
 
-Live eval did not run because the runtime credential gate failed:
+Approved synthetic live eval ran successfully with runtime credential supplied
+from the local shell environment:
 
-- attempted request count: 0
-- success count: 0
+- attempted request count: 2
+- success count: 2
 - request failed count: 0
 - retry count: 0
 - timeout count: 0
-- redacted failure category: credential value missing
+- redacted failure categories: none
 - output directory: diagnostics/asr/live-eval
-- cleanup status: no local outputs created
+- cleanup status: delete_local_outputs_after_summary
 - aggregate metadata commit policy: allowed_if_redacted_metadata_only
 
 ## Artifact Safety
