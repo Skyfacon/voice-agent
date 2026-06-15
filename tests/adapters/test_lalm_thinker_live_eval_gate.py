@@ -217,7 +217,7 @@ def test_live_eval_runner_with_fake_transport_writes_metadata_summary_only(
     assert metadata["validation_failed_count"] == 1
     assert metadata["request_failed_count"] == 0
     assert metadata["retry_count"] == 0
-    assert metadata["provider_model_alias"] == "qwen3.6-flash"
+    assert metadata["provider_model_alias"] == "qwen3.5-omni-plus"
     assert metadata["provider_model_alias_recheck_date"] == "2026-06-15"
     assert metadata["credential_source"] == (
         "runtime_env_var:DASHSCOPE_API_KEY via ~/.voice-agent-secrets/dashscope.env"
@@ -355,7 +355,7 @@ def _valid_live_approval_packet(*, max_request_count: int = 1) -> dict[str, obje
     packet = _valid_approval_packet()
     packet.update(
         {
-            "provider_model_alias": "qwen3.6-flash",
+            "provider_model_alias": "qwen3.5-omni-plus",
             "provider_model_alias_recheck_date": "2026-06-15",
             "cost_quota_time_budget": "Goal D approved budget: max 10 synthetic metadata-only requests",
             "max_request_count": max_request_count,
@@ -389,7 +389,7 @@ class _SequenceTransport:
         self.call_count += 1
         assert credential_value == "runtime-secret-value-for-test-only"
         assert timeout_ms == 60000
-        assert model_alias == "qwen3.6-flash"
+        assert model_alias == "qwen3.5-omni-plus"
         assert adapter_request_id
         assert "runtime-secret-value-for-test-only" not in repr(credential_handle)
         outcome = self._outcomes.pop(0)

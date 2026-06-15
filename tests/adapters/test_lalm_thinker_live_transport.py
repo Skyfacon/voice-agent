@@ -57,7 +57,7 @@ def test_request_provider_text_uses_fake_transport_without_network_or_sdk() -> N
         adapter_request_id=binding.adapter_request_id,
         timeout_ms=60_000,
         credential_value="runtime-secret-value-for-test-only",
-        model_alias="qwen3.6-flash",
+        model_alias="qwen3.5-omni-plus",
     )
 
     assert candidate.adapter_request_id == binding.adapter_request_id
@@ -77,7 +77,7 @@ def test_request_provider_text_uses_fake_transport_without_network_or_sdk() -> N
         {
             "adapter_request_id": binding.adapter_request_id,
             "timeout_ms": 60_000,
-            "model_alias": "qwen3.6-flash",
+            "model_alias": "qwen3.5-omni-plus",
             "credential_handle_metadata": handle.to_metadata(),
         }
     ]
@@ -108,7 +108,7 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
         credential_value="runtime-secret-value-for-test-only",
         adapter_request_id=binding.adapter_request_id,
         timeout_ms=60_000,
-        model_alias="qwen3.6-flash",
+        model_alias="qwen3.5-omni-plus",
     )
 
     assert provider_text == response_payload["choices"][0]["message"]["content"]
@@ -120,7 +120,7 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
         "Bearer runtime-secret-value-for-test-only"
     )
     request_body = json.loads(captured_request.data.decode("utf-8"))
-    assert request_body["model"] == "qwen3.6-flash"
+    assert request_body["model"] == "qwen3.5-omni-plus"
     assert request_body["messages"][0]["role"] == "system"
     assert request_body["messages"][1]["role"] == "user"
     assert "lalm_thinker_semantic_frame_candidate.v1" in request_body["messages"][0]["content"]
@@ -188,7 +188,7 @@ def test_direct_http_transport_maps_http_errors_to_safe_categories() -> None:
             credential_value="runtime-secret-value-for-test-only",
             adapter_request_id="adapter-request-lalm-thinker-001",
             timeout_ms=60_000,
-            model_alias="qwen3.6-flash",
+            model_alias="qwen3.5-omni-plus",
         )
 
     assert captured.value.category == "provider_request_failed"
@@ -213,7 +213,7 @@ def test_direct_http_transport_rejects_missing_credential_before_request() -> No
             credential_value="",
             adapter_request_id="adapter-request-lalm-thinker-001",
             timeout_ms=60_000,
-            model_alias="qwen3.6-flash",
+            model_alias="qwen3.5-omni-plus",
         )
 
     assert captured.value.category == "credential_missing"

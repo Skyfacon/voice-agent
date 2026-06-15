@@ -543,7 +543,7 @@ def test_live_provider_path_uses_injected_transport_and_keeps_secret_out_of_meta
             credential_ref="secret-ref://runtime-env/dashscope-api-key",
         ),
         credential_value="runtime-secret-value-for-test-only",
-        model_alias="qwen3.6-flash",
+        model_alias="qwen3.5-omni-plus",
         timeout_ms=60_000,
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
@@ -584,7 +584,7 @@ class _FakeLiveTransport:
         assert credential_value == "runtime-secret-value-for-test-only"
         assert adapter_request_id
         assert timeout_ms == 60_000
-        assert model_alias == "qwen3.6-flash"
+        assert model_alias == "qwen3.5-omni-plus"
         self.call_count += 1
         return self._provider_text
 

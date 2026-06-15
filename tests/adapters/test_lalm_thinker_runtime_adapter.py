@@ -26,9 +26,10 @@ from voice_agent.runtime.session import start_configured_session
 def test_default_lalm_thinker_runtime_profile_is_real_dashscope_adapter() -> None:
     capability = build_lalm_thinker_capability()
 
+    assert LALM_THINKER_RUNTIME_MODEL_ALIAS == "qwen3.5-omni-plus"
     assert capability.adapter_id == LALM_THINKER_RUNTIME_ADAPTER_ID
     assert capability.provider == "dashscope_bailian"
-    assert capability.model_name == LALM_THINKER_RUNTIME_MODEL_ALIAS
+    assert capability.model_name == "qwen3.5-omni-plus"
     assert capability.deployment_mode == "remote_api"
     assert capability.output_mode == "real"
     assert capability.supports_structured_json is True

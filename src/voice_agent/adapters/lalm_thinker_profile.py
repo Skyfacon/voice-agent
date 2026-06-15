@@ -3,7 +3,7 @@ from __future__ import annotations
 from voice_agent.adapters.capabilities import AdapterCapability, BOOLEAN_CAPABILITY_FIELDS
 
 LALM_THINKER_RUNTIME_ADAPTER_ID = "lalm_thinker_runtime"
-LALM_THINKER_RUNTIME_MODEL_ALIAS = "qwen3.6-flash"
+LALM_THINKER_RUNTIME_MODEL_ALIAS = "qwen3.5-omni-plus"
 
 
 def build_lalm_thinker_capability(
