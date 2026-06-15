@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.adapters.test_mvp3_adapter_profiles import valid_mvp3_real_profiles
@@ -119,6 +121,14 @@ def test_replay_rejects_lalm_thinker_credential_like_ref_tampering() -> None:
 
     with pytest.raises(ReplayValidationError, match="unsafe ref"):
         run_replay_fixture(fixture)
+
+
+def test_replay_runner_does_not_import_lalm_thinker_live_transport() -> None:
+    source = Path("src/voice_agent/replay/runner.py").read_text(encoding="utf-8")
+
+    assert "lalm_thinker_live_transport" not in source
+    assert "DASHSCOPE_API_KEY" not in source
+    assert "dashscope.aliyuncs.com" not in source
 
 
 def _lalm_thinker_fixture(

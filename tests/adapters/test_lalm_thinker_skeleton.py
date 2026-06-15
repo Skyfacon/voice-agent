@@ -18,11 +18,15 @@ from voice_agent.adapters.lalm_thinker_binding import (
 from voice_agent.adapters.lalm_thinker_skeleton import (
     LALMThinkerCandidateParseError,
     LALMThinkerCandidateValidationError,
+    build_lalm_thinker_live_request_payload,
+    emit_lalm_thinker_live_provider_result,
+    emit_lalm_thinker_provider_text_result,
     emit_lalm_thinker_semantic_frame,
     fake_lalm_thinker_transport,
     parse_lalm_thinker_candidate_text,
     validate_lalm_thinker_candidate,
 )
+from voice_agent.adapters.lalm_thinker_live_transport import LALMThinkerCredentialHandle
 from voice_agent.replay.runner import run_replay_fixture
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig
@@ -271,6 +275,181 @@ def test_fake_transport_explicit_available_refs_emit_real_contract_event_without
     ).adapter_health_state.output_event_modes[emission.thinker_event["event_id"]] == "real"
 
 
+def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candidate_only() -> None:
+    binding = _binding()
+
+    payload = build_lalm_thinker_live_request_payload(binding=binding)
+
+    assert payload["request_metadata"] == {
+        "request_binding": binding.to_dict(),
+        "input": {
+            "ref": "text://synthetic/lalm-thinker/input-001",
+            "artifact_retention": "refs_only",
+        },
+        "policy": {
+            "ref": "policy://synthetic/lalm-thinker/evidence-only",
+            "router_field_winner_selector": False,
+            "semantic_commitment_authority": False,
+        },
+        "instruction_boundary": {
+            "candidate_role": "evidence_only",
+            "candidate_schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
+            "may_emit_event_journal_events": False,
+            "may_create_semantic_commitments": False,
+            "may_accept_confirmation": False,
+            "may_authorize_tools": False,
+            "may_execute_tools": False,
+            "may_control_playback": False,
+            "may_emit_coverage_or_truthfulness_verdicts": False,
+        },
+    }
+    assert payload["required_output_skeleton"]["schema_version"] == (
+        LALM_THINKER_CANDIDATE_SCHEMA_VERSION
+    )
+    assert payload["required_output_skeleton"]["request_binding"] == binding.to_dict()
+    assert payload["output_rules"] == [
+        "return exactly one JSON object",
+        "copy required_output_skeleton.request_binding exactly",
+        "use refs only and do not include raw provider request or response",
+        "do not claim tool, playback, confirmation, commitment, or checker ownership",
+    ]
+    assert _forbidden_request_terms_are_absent(payload)
+
+
+def test_valid_live_provider_text_emits_only_normalized_contract_events() -> None:
+    startup = _start_lalm_thinker_session(session_id="sess_lalm_thinker_live_valid")
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix="evt_lalm_thinker_live_valid",
+    )
+    binding = _binding(turn_committed_event=committed_turn)
+    provider_text = fake_lalm_thinker_transport(binding, optional_refs_available=True)
+
+    result = emit_lalm_thinker_provider_text_result(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="lalm_thinker_provider_free",
+        provider_text=provider_text,
+        expected_binding=binding,
+        success_event_id="evt_lalm_thinker_live_valid_frame",
+        validation_failed_event_id="evt_lalm_thinker_live_valid_validation_failed",
+        caused_by_event_id=str(committed_turn["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+    )
+
+    assert result.success is True
+    assert result.thinker_emission is not None
+    assert result.validation_failed_event is None
+    assert result.thinker_emission.thinker_event["event_name"] == (
+        "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"
+    )
+    assert result.to_metadata() == {
+        "success": True,
+        "adapter_request_id": binding.adapter_request_id,
+        "raw_provider_request_included": False,
+        "raw_provider_response_included": False,
+        "thinker_event_id": "evt_lalm_thinker_live_valid_frame",
+    }
+    assert "provider_text" not in repr(result.to_metadata())
+    assert "ADAPTER_OUTPUT_VALIDATION_FAILED" not in [
+        event["event_name"] for event in startup.journal.events()
+    ]
+
+
+def test_invalid_live_provider_text_emits_validation_failure_without_thinker_frame() -> None:
+    startup = _start_lalm_thinker_session(session_id="sess_lalm_thinker_live_invalid")
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix="evt_lalm_thinker_live_invalid",
+    )
+    binding = _binding(turn_committed_event=committed_turn)
+
+    result = emit_lalm_thinker_provider_text_result(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="lalm_thinker_provider_free",
+        provider_text="```json\n{}\n```",
+        expected_binding=binding,
+        success_event_id="evt_lalm_thinker_live_invalid_frame",
+        validation_failed_event_id="evt_lalm_thinker_live_invalid_validation_failed",
+        caused_by_event_id=str(committed_turn["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+    )
+
+    assert result.success is False
+    assert result.thinker_emission is None
+    assert result.validation_failed_event is not None
+    assert result.validation_failed_event["event_name"] == "ADAPTER_OUTPUT_VALIDATION_FAILED"
+    assert result.validation_failed_event["schema_name"] == LALM_THINKER_CANDIDATE_SCHEMA_VERSION
+    assert result.validation_failed_event["failure_reasons"] == ["fenced_markdown"]
+    event_names = [event["event_name"] for event in startup.journal.events()]
+    assert "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED" not in event_names
+    assert "```json" not in repr(result.validation_failed_event)
+
+
+def test_live_provider_path_uses_injected_transport_and_keeps_secret_out_of_metadata() -> None:
+    startup = _start_lalm_thinker_session(session_id="sess_lalm_thinker_live_injected")
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix="evt_lalm_thinker_live_injected",
+    )
+    binding = _binding(turn_committed_event=committed_turn)
+    transport = _FakeLiveTransport(fake_lalm_thinker_transport(binding))
+
+    result = emit_lalm_thinker_live_provider_result(
+        transport=transport,
+        credential_handle=LALMThinkerCredentialHandle(
+            credential_ref="secret-ref://runtime-env/dashscope-api-key",
+        ),
+        credential_value="runtime-secret-value-for-test-only",
+        model_alias="qwen3.6-flash",
+        timeout_ms=60_000,
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id="lalm_thinker_provider_free",
+        binding=binding,
+        success_event_id="evt_lalm_thinker_live_injected_frame",
+        validation_failed_event_id="evt_lalm_thinker_live_injected_validation_failed",
+        caused_by_event_id=str(committed_turn["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+    )
+
+    metadata = result.to_metadata()
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert "runtime-secret-value-for-test-only" not in repr(metadata)
+    assert "Bearer " not in repr(metadata)
+    assert transport.call_count == 1
+
+
+class _FakeLiveTransport:
+    def __init__(self, provider_text: str) -> None:
+        self._provider_text = provider_text
+        self.call_count = 0
+
+    def complete(
+        self,
+        *,
+        request_payload: object,
+        credential_handle: LALMThinkerCredentialHandle,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+    ) -> str:
+        assert isinstance(request_payload, dict)
+        assert credential_handle.to_metadata()["secret_materialized"] is False
+        assert credential_value == "runtime-secret-value-for-test-only"
+        assert adapter_request_id
+        assert timeout_ms == 60_000
+        assert model_alias == "qwen3.6-flash"
+        self.call_count += 1
+        return self._provider_text
+
+
 def _binding_for_turn(turn_committed_event: dict[str, object]) -> object:
     return bind_lalm_thinker_request(
         turn_committed_event=turn_committed_event,
@@ -453,6 +632,24 @@ def _github_allowed_replay_manifest() -> dict[str, object]:
         "contains_large_raw_web_content": False,
         "allowed_re_eval_components": [],
     }
+
+
+def _forbidden_request_terms_are_absent(value: object) -> bool:
+    rendered = repr(value).lower()
+    forbidden_terms = (
+        "provider_payload",
+        "provider_request",
+        "provider_response",
+        "raw_audio",
+        "audio_bytes",
+        "secret",
+        "api_key",
+        "authorization",
+        "bearer ",
+        "token=",
+        "credential=",
+    )
+    return all(term not in rendered for term in forbidden_terms)
 
 
 def _lalm_thinker_profiles() -> tuple[object, ...]:

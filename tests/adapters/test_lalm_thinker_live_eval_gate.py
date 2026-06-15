@@ -19,6 +19,9 @@ from voice_agent.adapters.lalm_thinker_live_eval_gate import (
     parse_lalm_thinker_live_eval_approval_text,
     validate_lalm_thinker_live_eval_approval,
 )
+from voice_agent.adapters.lalm_thinker_live_eval_entrypoint import (
+    run_lalm_thinker_live_eval_entrypoint,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -180,6 +183,91 @@ def test_gate_check_does_not_use_network_clock_random_or_provider_side_channels(
     assert metadata["live_eval_output_generated"] is False
 
 
+def test_live_eval_runner_fails_closed_without_credential_value(tmp_path: Path) -> None:
+    approval = tmp_path / "approval.json"
+    approval.write_text(json.dumps(_valid_live_approval_packet()), encoding="utf-8")
+
+    with pytest.raises(LALMThinkerLiveEvalApprovalError) as captured:
+        run_lalm_thinker_live_eval_entrypoint(
+            approval_path=approval,
+            env={},
+            transport=_SequenceTransport(("unused",)),
+            repo_root=tmp_path,
+        )
+
+    assert captured.value.category == "credential_missing"
+
+
+def test_live_eval_runner_with_fake_transport_writes_metadata_summary_only(
+    tmp_path: Path,
+) -> None:
+    approval = tmp_path / "approval.json"
+    approval.write_text(json.dumps(_valid_live_approval_packet(max_request_count=2)), encoding="utf-8")
+    transport = _SequenceTransport(("valid", "invalid"))
+
+    metadata = run_lalm_thinker_live_eval_entrypoint(
+        approval_path=approval,
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+        repo_root=tmp_path,
+    )
+
+    assert metadata["request_count"] == 2
+    assert metadata["validated_count"] == 1
+    assert metadata["validation_failed_count"] == 1
+    assert metadata["request_failed_count"] == 0
+    assert metadata["retry_count"] == 0
+    assert metadata["provider_model_alias"] == "qwen3.6-flash"
+    assert metadata["provider_model_alias_recheck_date"] == "2026-06-15"
+    assert metadata["credential_source"] == (
+        "runtime_env_var:DASHSCOPE_API_KEY via ~/.voice-agent-secrets/dashscope.env"
+    )
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert metadata["secret_included"] is False
+    assert metadata["raw_audio_included"] is False
+    assert metadata["raw_trace_included"] is False
+    assert metadata["real_user_input_included"] is False
+    assert metadata["authorization_header_included"] is False
+    assert metadata["bearer_token_included"] is False
+    assert metadata["full_prompt_included"] is False
+    assert metadata["safe_refs"]
+    summary_path = tmp_path / "outputs/lalm-thinker/live-eval/metadata-only/summary.json"
+    assert summary_path.exists()
+    persisted = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert persisted == metadata
+
+    rendered = repr(metadata)
+    assert "runtime-secret-value-for-test-only" not in rendered
+    assert "Bearer " not in rendered
+    assert "provider_text" not in rendered
+    assert "raw_provider_body" not in rendered
+    assert transport.call_count == 2
+
+
+def test_live_eval_runner_retries_timeout_once_and_records_safe_failure_metadata(
+    tmp_path: Path,
+) -> None:
+    approval = tmp_path / "approval.json"
+    approval.write_text(json.dumps(_valid_live_approval_packet(max_request_count=1)), encoding="utf-8")
+    transport = _SequenceTransport(("timeout", "valid"))
+
+    metadata = run_lalm_thinker_live_eval_entrypoint(
+        approval_path=approval,
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+        repo_root=tmp_path,
+    )
+
+    assert metadata["request_count"] == 1
+    assert metadata["validated_count"] == 1
+    assert metadata["request_failed_count"] == 0
+    assert metadata["retry_count"] == 1
+    assert metadata["timeout_count"] == 1
+    assert metadata["retry_reason_counts"] == {"provider_timeout": 1}
+    assert "runtime-secret-value-for-test-only" not in repr(metadata)
+
+
 def test_command_module_has_no_provider_sdk_import() -> None:
     module = importlib.import_module("voice_agent.adapters.lalm_thinker_live_eval_gate")
 
@@ -261,6 +349,95 @@ def _valid_approval_packet() -> dict[str, object]:
         "canonical_event_changes_allowed": False,
         "production_traffic_allowed": False,
     }
+
+
+def _valid_live_approval_packet(*, max_request_count: int = 1) -> dict[str, object]:
+    packet = _valid_approval_packet()
+    packet.update(
+        {
+            "provider_model_alias": "qwen3.6-flash",
+            "provider_model_alias_recheck_date": "2026-06-15",
+            "cost_quota_time_budget": "Goal D approved budget: max 10 synthetic metadata-only requests",
+            "max_request_count": max_request_count,
+            "per_request_timeout_ms": 60000,
+            "retry_limit": 1,
+            "allowed_outputs": ["metadata_summary_only"],
+        }
+    )
+    return packet
+
+
+class _SequenceTransport:
+    def __init__(self, outcomes: tuple[str, ...]) -> None:
+        self._outcomes = list(outcomes)
+        self.call_count = 0
+
+    def complete(
+        self,
+        *,
+        request_payload: object,
+        credential_handle: object,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+    ) -> str:
+        from voice_agent.adapters.lalm_thinker_live_transport import (
+            LALMThinkerLiveTransportError,
+        )
+
+        self.call_count += 1
+        assert credential_value == "runtime-secret-value-for-test-only"
+        assert timeout_ms == 60000
+        assert model_alias == "qwen3.6-flash"
+        assert adapter_request_id
+        assert "runtime-secret-value-for-test-only" not in repr(credential_handle)
+        outcome = self._outcomes.pop(0)
+        if outcome == "timeout":
+            raise LALMThinkerLiveTransportError(
+                "provider timeout",
+                category="provider_timeout",
+                failure_reasons=("provider_timeout",),
+            )
+        if outcome == "invalid":
+            return "not json"
+        assert isinstance(request_payload, dict)
+        skeleton = request_payload["required_output_skeleton"]
+        return json.dumps(
+            {
+                **skeleton,
+                "output_mode": "real",
+                "semantic_frame_ref": "semantic-frame://synthetic/lalm-thinker/live-eval/frame",
+                "semantic_summary_ref": "summary://synthetic/lalm-thinker/live-eval/summary",
+                "optional_evidence_refs": {
+                    "semantic_close": {
+                        "status": "available",
+                        "ref": "semantic-close://synthetic/lalm-thinker/live-eval/closed",
+                    },
+                    "assistant_directedness": {
+                        "status": "available",
+                        "ref": (
+                            "assistant-directedness://synthetic/lalm-thinker/live-eval/directed"
+                        ),
+                    },
+                    "emotion": {
+                        "status": "available",
+                        "ref": "emotion://synthetic/lalm-thinker/live-eval/calm",
+                    },
+                    "audio_caption": {
+                        "status": "available",
+                        "ref": "audio-caption://synthetic/lalm-thinker/live-eval/caption",
+                    },
+                },
+                "task_focus_hint": {
+                    "task_like": True,
+                    "complexity_hint": "complex",
+                    "focus_confidence": 0.75,
+                    "evidence_uncertainty": "low",
+                },
+            },
+            sort_keys=True,
+        )
 
 
 def _block_runtime_side_channels(monkeypatch: pytest.MonkeyPatch) -> list[object]:

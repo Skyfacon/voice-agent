@@ -38,10 +38,15 @@ LALM_THINKER_REQUIRED_LIVE_EVAL_APPROVAL_FIELDS = (
 )
 
 _ALLOWED_OUTPUTS = ("gate_status_metadata_only",)
+_LIVE_EVAL_ALLOWED_OUTPUTS = ("metadata_summary_only",)
+_ALL_ALLOWED_OUTPUTS = frozenset({_ALLOWED_OUTPUTS, _LIVE_EVAL_ALLOWED_OUTPUTS})
 _ALLOWED_OUTPUT_LOCATION_POLICIES = frozenset({"local_only_ignored"})
 _SAFE_LOCAL_OUTPUT_PREFIXES = ("outputs/lalm-thinker/", "diagnostics/lalm-thinker/")
 _FORBIDDEN_OUTPUT_PREFIXES = ("audio/raw/", "traces/", "replays/local/")
 _RECHECK_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_MAX_GOAL_D_REQUEST_COUNT = 10
+_MAX_GOAL_D_TIMEOUT_MS = 60000
+_MAX_GOAL_D_RETRY_LIMIT = 1
 
 
 class LALMThinkerLiveEvalApprovalError(ValueError):
@@ -167,17 +172,47 @@ def validate_lalm_thinker_live_eval_approval(
 
     return LALMThinkerLiveEvalGateMetadata(
         approval_packet_complete=True,
+        allowed_outputs=tuple(str(item) for item in packet["allowed_outputs"]),
         human_approved=True,
         synthetic_input_set_only=True,
         output_location_safe=True,
     )
 
 
+def validate_lalm_thinker_live_eval_run_approval(
+    packet: Mapping[str, Any],
+    *,
+    credential_value: str | None,
+) -> LALMThinkerLiveEvalGateMetadata:
+    metadata = validate_lalm_thinker_live_eval_approval(packet)
+    if tuple(packet["allowed_outputs"]) != _LIVE_EVAL_ALLOWED_OUTPUTS:
+        raise LALMThinkerLiveEvalApprovalError("allowed_outputs_not_metadata_only")
+    if int(packet["max_request_count"]) > _MAX_GOAL_D_REQUEST_COUNT:
+        raise LALMThinkerLiveEvalApprovalError("invalid_budget")
+    if int(packet["per_request_timeout_ms"]) > _MAX_GOAL_D_TIMEOUT_MS:
+        raise LALMThinkerLiveEvalApprovalError("invalid_budget")
+    if int(packet["retry_limit"]) > _MAX_GOAL_D_RETRY_LIMIT:
+        raise LALMThinkerLiveEvalApprovalError("invalid_budget")
+    if credential_value is None or credential_value == "":
+        raise LALMThinkerLiveEvalApprovalError("credential_missing")
+    return LALMThinkerLiveEvalGateMetadata(
+        approval_packet_complete=metadata.approval_packet_complete,
+        allowed_outputs=_LIVE_EVAL_ALLOWED_OUTPUTS,
+        human_approved=metadata.human_approved,
+        synthetic_input_set_only=metadata.synthetic_input_set_only,
+        output_location_safe=metadata.output_location_safe,
+        provider_call_allowed=True,
+        secret_read_allowed=True,
+        dry_run_only=False,
+        live_eval_output_generated=False,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "provider-free LALM Thinker live eval approval gate. "
-            "This command only checks metadata and never runs live eval."
+            "provider-free LALM Thinker live eval approval gate and explicit "
+            "approval-gated synthetic metadata-only live eval runner."
         )
     )
     parser.add_argument("--approval", help="Path to JSON or markdown approval metadata.")
@@ -186,11 +221,31 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Validate approval metadata and report gate status without producing eval output.",
     )
+    parser.add_argument(
+        "--run-approved-synthetic-live-eval",
+        action="store_true",
+        help=(
+            "Run the explicitly approved synthetic metadata-only live eval. "
+            "Requires approval metadata and DASHSCOPE_API_KEY in the runtime environment."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
         if not args.approval:
             raise LALMThinkerLiveEvalApprovalError("missing_approval")
+        if args.dry_run_gate_check and args.run_approved_synthetic_live_eval:
+            raise LALMThinkerLiveEvalApprovalError("single_mode_required")
+        if args.run_approved_synthetic_live_eval:
+            from voice_agent.adapters.lalm_thinker_live_eval_entrypoint import (
+                run_lalm_thinker_live_eval_entrypoint,
+            )
+
+            metadata = run_lalm_thinker_live_eval_entrypoint(
+                approval_path=args.approval,
+            )
+            print(json.dumps({"success": True, "summary": metadata}, sort_keys=True))
+            return 0
         if not args.dry_run_gate_check:
             raise LALMThinkerLiveEvalApprovalError("dry_run_gate_check_required")
         packet = load_lalm_thinker_live_eval_approval(args.approval)
@@ -265,7 +320,7 @@ def _validate_allowed_outputs(value: object) -> None:
     if (
         not isinstance(value, Sequence)
         or isinstance(value, (str, bytes))
-        or tuple(value) != _ALLOWED_OUTPUTS
+        or tuple(value) not in _ALL_ALLOWED_OUTPUTS
     ):
         raise LALMThinkerLiveEvalApprovalError("allowed_outputs_not_metadata_only")
 

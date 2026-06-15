@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 from typing import Any
 from urllib.parse import unquote
 
 from voice_agent.adapters.capabilities import CREDENTIAL_LIKE_REF_PATTERN
+from voice_agent.adapters.event_harness import FakeRealAdapterEventHarness
 from voice_agent.adapters.lalm_thinker_binding import (
     LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
     LALMThinkerRequestBinding,
+    build_lalm_thinker_request_metadata,
+)
+from voice_agent.adapters.lalm_thinker_live_transport import (
+    LALMThinkerCredentialHandle,
+    validate_lalm_thinker_credential_handle,
 )
 from voice_agent.adapters.thinker_contract import (
     ThinkerAdapterContract,
@@ -55,6 +62,57 @@ class LALMThinkerValidatedCandidate:
     complexity_hint: str | None = None
     focus_confidence: float | None = None
     evidence_uncertainty: str | None = None
+
+
+@dataclass(frozen=True)
+class LALMThinkerProviderTextCandidate:
+    text: str
+    adapter_request_id: str
+    output_mode: str = "real"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str):
+            _fail("content_not_text", "provider text must be a string")
+        _require_safe_token(self.adapter_request_id, "adapter_request_id")
+        if self.output_mode not in _OUTPUT_MODES:
+            _fail("schema_shape", "output mode is unsupported")
+
+    def __repr__(self) -> str:
+        return (
+            "LALMThinkerProviderTextCandidate("
+            f"adapter_request_id={self.adapter_request_id!r}, "
+            f"output_mode={self.output_mode!r}, text_present=True)"
+        )
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "adapter_request_id": self.adapter_request_id,
+            "output_mode": self.output_mode,
+            "text_present": True,
+            "raw_provider_request_included": False,
+            "raw_provider_response_included": False,
+        }
+
+
+@dataclass(frozen=True)
+class LALMThinkerProviderTextEmissionResult:
+    success: bool
+    adapter_request_id: str
+    thinker_emission: ThinkerSemanticFrameEmission | None
+    validation_failed_event: dict[str, Any] | None
+
+    def to_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "success": self.success,
+            "adapter_request_id": self.adapter_request_id,
+            "raw_provider_request_included": False,
+            "raw_provider_response_included": False,
+        }
+        if self.thinker_emission is not None:
+            metadata["thinker_event_id"] = self.thinker_emission.thinker_event["event_id"]
+        if self.validation_failed_event is not None:
+            metadata["validation_failed_event_id"] = self.validation_failed_event["event_id"]
+        return metadata
 
 
 OPTIONAL_EVIDENCE_FIELDS = {
@@ -311,6 +369,267 @@ def fake_lalm_thinker_transport(
     return json.dumps(candidate, separators=(",", ":"), sort_keys=True)
 
 
+def build_lalm_thinker_live_request_payload(
+    *,
+    binding: LALMThinkerRequestBinding,
+) -> dict[str, Any]:
+    request_metadata = build_lalm_thinker_request_metadata(binding)
+    skeleton = {
+        "schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
+        "request_binding": binding.to_dict(),
+        "candidate_role": "evidence_only",
+        "output_mode": "degraded",
+        "semantic_frame_ref": "semantic-frame://synthetic/lalm-thinker/live-eval/frame",
+        "semantic_summary_ref": "summary://synthetic/lalm-thinker/live-eval/summary",
+        "optional_evidence_refs": {
+            "semantic_close": {"status": "unavailable"},
+            "assistant_directedness": {"status": "unavailable"},
+            "emotion": {"status": "unavailable"},
+            "audio_caption": {"status": "unavailable"},
+        },
+        "task_focus_hint": {
+            "task_like": True,
+            "complexity_hint": "complex",
+            "focus_confidence": 0.75,
+            "evidence_uncertainty": "medium",
+        },
+        "boundary_assertions": dict(_BOUNDARY_ASSERTIONS),
+        "artifact_policy": {
+            "retention": "refs_only",
+            "raw_artifacts_retained": False,
+        },
+        "validation_ref": "validation://synthetic/lalm-thinker/live-eval/candidate",
+    }
+    payload = {
+        "request_metadata": request_metadata,
+        "required_output_skeleton": skeleton,
+        "output_rules": [
+            "return exactly one JSON object",
+            "copy required_output_skeleton.request_binding exactly",
+            "use refs only and do not include raw provider request or response",
+            "do not claim tool, playback, confirmation, commitment, or checker ownership",
+        ],
+    }
+    _reject_unsafe_live_request_payload(payload)
+    return payload
+
+
+def request_lalm_thinker_provider_text(
+    *,
+    transport: object,
+    credential_handle: LALMThinkerCredentialHandle,
+    request_payload: Mapping[str, Any],
+    adapter_request_id: str,
+    timeout_ms: int,
+    credential_value: str | None = None,
+    model_alias: str | None = None,
+) -> LALMThinkerProviderTextCandidate:
+    credential_handle = validate_lalm_thinker_credential_handle(credential_handle)
+    _require_safe_token(adapter_request_id, "adapter_request_id")
+    if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms < 1:
+        _fail("invalid_budget", "timeout_ms must be a positive integer")
+    if credential_value is not None and credential_value == "":
+        _fail("credential_missing", "credential value is missing")
+    if model_alias is not None:
+        _require_safe_token(model_alias, "model_alias")
+    _reject_unsafe_live_request_payload(request_payload)
+
+    complete = getattr(transport, "complete", None)
+    if not callable(complete):
+        _fail("transport_invalid", "transport must provide a complete method")
+    complete_kwargs: dict[str, Any] = {
+        "request_payload": deepcopy(dict(request_payload)),
+        "credential_handle": credential_handle,
+        "adapter_request_id": adapter_request_id,
+        "timeout_ms": timeout_ms,
+    }
+    if credential_value is not None:
+        complete_kwargs["credential_value"] = credential_value
+    if model_alias is not None:
+        complete_kwargs["model_alias"] = model_alias
+    provider_text = complete(**complete_kwargs)
+    if not isinstance(provider_text, str):
+        _fail("provider_response_text_missing", "transport must return transient provider text")
+    return LALMThinkerProviderTextCandidate(
+        text=provider_text,
+        adapter_request_id=adapter_request_id,
+        output_mode="real",
+    )
+
+
+def emit_lalm_thinker_live_provider_result(
+    *,
+    transport: object,
+    credential_handle: LALMThinkerCredentialHandle,
+    credential_value: str,
+    model_alias: str,
+    timeout_ms: int,
+    boundary: AdapterCallbackAppendBoundary,
+    adapter_id: str,
+    binding: LALMThinkerRequestBinding,
+    success_event_id: str,
+    validation_failed_event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    turn_committed_event: Mapping[str, Any],
+) -> LALMThinkerProviderTextEmissionResult:
+    request_payload = build_lalm_thinker_live_request_payload(binding=binding)
+    provider_text = request_lalm_thinker_provider_text(
+        transport=transport,
+        credential_handle=credential_handle,
+        request_payload=request_payload,
+        adapter_request_id=binding.adapter_request_id,
+        timeout_ms=timeout_ms,
+        credential_value=credential_value,
+        model_alias=model_alias,
+    )
+    return emit_lalm_thinker_provider_text_result(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        provider_text=provider_text.text,
+        expected_binding=binding,
+        success_event_id=success_event_id,
+        validation_failed_event_id=validation_failed_event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        turn_committed_event=turn_committed_event,
+    )
+
+
+def emit_lalm_thinker_provider_text_result(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    adapter_id: str,
+    provider_text: str,
+    expected_binding: LALMThinkerRequestBinding,
+    success_event_id: str,
+    validation_failed_event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    turn_committed_event: Mapping[str, Any],
+) -> LALMThinkerProviderTextEmissionResult:
+    try:
+        parsed = parse_lalm_thinker_candidate_text(provider_text)
+        validated = validate_lalm_thinker_candidate(parsed, expected_binding=expected_binding)
+        emission = emit_lalm_thinker_semantic_frame(
+            boundary=boundary,
+            adapter_id=adapter_id,
+            event_id=success_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            turn_committed_event=turn_committed_event,
+            validated_candidate=validated,
+        )
+    except LALMThinkerCandidateParseError as exc:
+        validation_failed = _emit_lalm_thinker_output_validation_failed(
+            boundary=boundary,
+            adapter_id=adapter_id,
+            event_id=validation_failed_event_id,
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=expected_binding.adapter_request_id,
+            failure_reasons=(exc.category,),
+        )
+        return LALMThinkerProviderTextEmissionResult(
+            success=False,
+            adapter_request_id=expected_binding.adapter_request_id,
+            thinker_emission=None,
+            validation_failed_event=validation_failed,
+        )
+    except LALMThinkerCandidateValidationError as exc:
+        validation_failed = _emit_lalm_thinker_output_validation_failed(
+            boundary=boundary,
+            adapter_id=adapter_id,
+            event_id=validation_failed_event_id,
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=expected_binding.adapter_request_id,
+            failure_reasons=exc.failure_reasons,
+        )
+        return LALMThinkerProviderTextEmissionResult(
+            success=False,
+            adapter_request_id=expected_binding.adapter_request_id,
+            thinker_emission=None,
+            validation_failed_event=validation_failed,
+        )
+
+    return LALMThinkerProviderTextEmissionResult(
+        success=True,
+        adapter_request_id=expected_binding.adapter_request_id,
+        thinker_emission=emission,
+        validation_failed_event=None,
+    )
+
+
+def emit_lalm_thinker_request_retrying(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    adapter_request_id: str,
+    retry_count: int,
+    retry_reason: str,
+    timeout_ms: int | None = None,
+    adapter_id: str = "lalm_thinker_provider_free",
+) -> dict[str, Any]:
+    return FakeRealAdapterEventHarness(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        adapter_type="thinker",
+        output_mode="real",
+        source_module="lalm_thinker_adapter",
+    ).emit_request_retrying(
+        event_id=event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        adapter_request_id=_require_safe_token(adapter_request_id, "adapter_request_id"),
+        retry_count=retry_count,
+        retry_reason=_safe_failure_reason(retry_reason),
+        timeout_ms=timeout_ms,
+    )
+
+
+def emit_lalm_thinker_request_failed(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    adapter_request_id: str,
+    failure_reason: str,
+    retryable: bool,
+    timeout_ms: int | None = None,
+    adapter_id: str = "lalm_thinker_provider_free",
+) -> dict[str, Any]:
+    if not isinstance(retryable, bool):
+        _fail("schema_shape", "retryable must be a boolean")
+    return FakeRealAdapterEventHarness(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        adapter_type="thinker",
+        output_mode="real",
+        source_module="lalm_thinker_adapter",
+    ).emit_request_failed(
+        event_id=event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        adapter_request_id=_require_safe_token(adapter_request_id, "adapter_request_id"),
+        failure_reason=_safe_failure_reason(failure_reason),
+        retryable=retryable,
+        timeout_ms=timeout_ms,
+    )
+
+
 def emit_lalm_thinker_semantic_frame(
     *,
     boundary: AdapterCallbackAppendBoundary,
@@ -351,6 +670,34 @@ def emit_lalm_thinker_semantic_frame(
         complexity_hint=validated_candidate.complexity_hint,
         focus_confidence=validated_candidate.focus_confidence,
         evidence_uncertainty=validated_candidate.evidence_uncertainty,
+    )
+
+
+def _emit_lalm_thinker_output_validation_failed(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    adapter_id: str,
+    event_id: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    adapter_request_id: str,
+    failure_reasons: Sequence[str],
+) -> dict[str, Any]:
+    return FakeRealAdapterEventHarness(
+        boundary=boundary,
+        adapter_id=adapter_id,
+        adapter_type="thinker",
+        output_mode="real",
+        source_module="lalm_thinker_adapter",
+    ).emit_output_validation_failed(
+        event_id=event_id,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        adapter_request_id=_require_safe_token(adapter_request_id, "adapter_request_id"),
+        schema_name=LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
+        failure_reasons=[_safe_failure_reason(reason) for reason in failure_reasons],
     )
 
 
@@ -442,6 +789,33 @@ def _reject_unsafe_text(value: str) -> None:
         lowered = variant.lower()
         if any(marker in lowered for marker in _RAW_ARTIFACT_MARKERS):
             _fail("raw_artifact_retention", "local-only artifact refs are not allowed")
+
+
+def _reject_unsafe_live_request_payload(value: object) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                _fail("schema_shape", "request payload keys must be strings")
+            _reject_unsafe_text(key)
+            _reject_unsafe_live_request_payload(child)
+    elif isinstance(value, str):
+        _reject_unsafe_text(value)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for item in value:
+            _reject_unsafe_live_request_payload(item)
+
+
+def _safe_failure_reason(value: object) -> str:
+    if not isinstance(value, str) or value == "":
+        return "unsafe_failure_reason_redacted"
+    variants = {value, unquote(value)}
+    for variant in variants:
+        if CREDENTIAL_LIKE_REF_PATTERN.search(variant):
+            return "unsafe_failure_reason_redacted"
+        lowered = variant.lower()
+        if any(marker in lowered for marker in _RAW_ARTIFACT_MARKERS):
+            return "unsafe_failure_reason_redacted"
+    return value
 
 
 def _fail(category: str, reason: str) -> None:
