@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import unquote
 
 from voice_agent.adapters.capabilities import CREDENTIAL_LIKE_REF_PATTERN
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
@@ -41,6 +42,22 @@ OPTIONAL_SEMANTIC_REF_FIELDS = (
         "supports_audio_caption",
         "missing_audio_caption",
     ),
+)
+THINKER_CONTRACT_UNSAFE_REF_TERMS = (
+    "audio/raw/",
+    "diagnostics/",
+    "traces/",
+    "replays/local/",
+    "raw_audio",
+    "raw_trace",
+    "raw_thinker_output",
+    "http://",
+    "https://",
+    "file://",
+    "provider-url://",
+    "provider://",
+    "dashscope",
+    "aliyuncs.com",
 )
 
 
@@ -98,7 +115,7 @@ class ThinkerAdapterContract:
                 "Thinker semantic frame output must be caused by TURN_INGRESS_COMMITTED"
             )
 
-        adapter_request_id = _require_safe_ref(adapter_request_id, "adapter_request_id")
+        adapter_request_id = _require_safe_token(adapter_request_id, "adapter_request_id")
         semantic_frame_ref = _require_safe_ref(semantic_frame_ref, "semantic_frame_ref")
         semantic_summary_ref = _require_safe_ref(semantic_summary_ref, "semantic_summary_ref")
         optional_refs = {
@@ -239,9 +256,27 @@ def _require_non_empty_string(value: str, field: str) -> str:
 
 def _require_safe_ref(value: str, field: str) -> str:
     value = _require_non_empty_string(value, field)
-    if CREDENTIAL_LIKE_REF_PATTERN.search(value):
-        raise ThinkerAdapterContractError(f"{field} must not contain credential-like content")
+    if "://" not in value:
+        raise ThinkerAdapterContractError(f"{field} must be a safe ref")
+    _reject_unsafe_ref_content(value, field)
     return value
+
+
+def _require_safe_token(value: str, field: str) -> str:
+    value = _require_non_empty_string(value, field)
+    _reject_unsafe_ref_content(value, field)
+    return value
+
+
+def _reject_unsafe_ref_content(value: str, field: str) -> None:
+    for view in _ref_safety_views(value):
+        lowered = view.lower()
+        if (
+            CREDENTIAL_LIKE_REF_PATTERN.search(view)
+            or lowered.startswith(("/", "~", "\\"))
+            or any(term in lowered for term in THINKER_CONTRACT_UNSAFE_REF_TERMS)
+        ):
+            raise ThinkerAdapterContractError(f"{field} must not contain unsafe ref content")
 
 
 def _optional_safe_ref(value: str | None, field: str) -> str | None:
@@ -257,3 +292,15 @@ def _validate_confidence(value: float, field: str) -> float:
     if confidence < 0.0 or confidence > 1.0:
         raise ThinkerAdapterContractError(f"{field} must be between 0 and 1")
     return confidence
+
+
+def _ref_safety_views(value: str) -> tuple[str, ...]:
+    views = [value]
+    decoded = value
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        views.append(next_decoded)
+        decoded = next_decoded
+    return tuple(views)

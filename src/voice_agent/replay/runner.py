@@ -747,6 +747,30 @@ THINKER_FORBIDDEN_PAYLOAD_FIELDS = frozenset(
         "audio_caption",
     }
 )
+THINKER_REF_FIELDS = (
+    "semantic_frame_ref",
+    "semantic_summary_ref",
+    "semantic_close_ref",
+    "assistant_directedness_ref",
+    "emotion_ref",
+    "audio_caption_ref",
+)
+THINKER_UNSAFE_REF_TERMS = (
+    "audio/raw/",
+    "diagnostics/",
+    "traces/",
+    "replays/local/",
+    "raw_audio",
+    "raw_trace",
+    "raw_thinker_output",
+    "http://",
+    "https://",
+    "file://",
+    "provider-url://",
+    "provider://",
+    "dashscope",
+    "aliyuncs.com",
+)
 
 
 def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Mapping[str, Any]]) -> None:
@@ -768,7 +792,7 @@ def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Ma
             events_by_id[event_id] = event
             continue
 
-        if THINKER_FORBIDDEN_PAYLOAD_FIELDS.intersection(event):
+        if _contains_forbidden_payload_field(event, forbidden_fields=THINKER_FORBIDDEN_PAYLOAD_FIELDS):
             raise ReplayValidationError(
                 "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED must not contain provider-specific schema or raw payload"
             )
@@ -806,6 +830,7 @@ def _validate_thinker_semantic_frame_output_contract(ordered_events: Sequence[Ma
                 status_field=status_field,
                 missing_capability=missing_capability,
             )
+        _validate_thinker_refs_are_safe(event)
         events_by_id[event_id] = event
 
 
@@ -862,6 +887,39 @@ def _validate_thinker_missing_capability_degradation(
         raise ReplayValidationError(
             f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED missing {missing_capability} requires prior ADAPTER_OUTPUT_DEGRADED"
         )
+
+
+def _validate_thinker_refs_are_safe(event: Mapping[str, Any]) -> None:
+    for field in THINKER_REF_FIELDS:
+        value = event.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, str):
+            raise ReplayValidationError(f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {field} must be a string ref")
+        if "://" not in value:
+            raise ReplayValidationError(f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {field} must be a safe ref")
+        for view in _replay_ref_safety_views(value):
+            lowered = view.lower()
+            if (
+                CREDENTIAL_LIKE_REF_PATTERN.search(view)
+                or lowered.startswith(("/", "~", "\\"))
+                or any(term in lowered for term in THINKER_UNSAFE_REF_TERMS)
+            ):
+                raise ReplayValidationError(
+                    f"THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED {field} must be a safe ref; unsafe ref content detected"
+                )
+
+
+def _replay_ref_safety_views(value: str) -> tuple[str, ...]:
+    views = [value]
+    decoded = value
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        views.append(next_decoded)
+        decoded = next_decoded
+    return tuple(views)
 
 
 SLOW_LLM_STRUCTURED_OUTPUT_SCHEMA = "voice_agent.slowtask.structured_output.v1"
@@ -1372,7 +1430,10 @@ def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Map
                 )
             thinker_event = events_by_id.get(str(expected_thinker_event_id))
             if thinker_event is not None and thinker_event["event_name"] == "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED":
-                if THINKER_FORBIDDEN_PAYLOAD_FIELDS.intersection(hypothesis):
+                if _contains_forbidden_payload_field(
+                    hypothesis,
+                    forbidden_fields=THINKER_FORBIDDEN_PAYLOAD_FIELDS,
+                ):
                     raise ReplayValidationError(
                         "USER_PATCH_RECEIVED Thinker hypothesis must not contain provider-specific schema or raw payload"
                     )
