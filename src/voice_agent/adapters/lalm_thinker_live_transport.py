@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -127,6 +128,52 @@ class LALMThinkerLiveDirectHTTPTransport:
             model_alias=model_alias,
             request_payload=request_payload,
         )
+        return self._complete_request_body(
+            request_body=request_body,
+            credential_value=credential_value,
+            timeout_ms=timeout_ms,
+        )
+
+    def complete_audio(
+        self,
+        *,
+        request_payload: Mapping[str, Any],
+        audio_bytes: bytes,
+        audio_format: str,
+        credential_handle: LALMThinkerCredentialHandle,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+    ) -> str:
+        validate_lalm_thinker_credential_handle(credential_handle)
+        _require_present_credential_value(credential_value)
+        _require_safe_token(adapter_request_id, "adapter_request_id")
+        _require_positive_int(timeout_ms, "timeout_ms")
+        _require_safe_token(model_alias, "model_alias")
+        _require_audio_bytes(audio_bytes)
+        audio_format = _require_audio_format(audio_format)
+        _reject_unsafe_request_payload(request_payload)
+
+        request_body = _build_openai_compatible_audio_request_body(
+            model_alias=model_alias,
+            request_payload=request_payload,
+            audio_bytes=audio_bytes,
+            audio_format=audio_format,
+        )
+        return self._complete_streaming_request_body(
+            request_body=request_body,
+            credential_value=credential_value,
+            timeout_ms=timeout_ms,
+        )
+
+    def _complete_request_body(
+        self,
+        *,
+        request_body: Mapping[str, Any],
+        credential_value: str,
+        timeout_ms: int,
+    ) -> str:
         request = urllib.request.Request(
             self._provider_url,
             data=json.dumps(request_body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
@@ -177,12 +224,93 @@ class LALMThinkerLiveDirectHTTPTransport:
 
         return _extract_provider_text(response_payload)
 
+    def _complete_streaming_request_body(
+        self,
+        *,
+        request_body: Mapping[str, Any],
+        credential_value: str,
+        timeout_ms: int,
+    ) -> str:
+        request = urllib.request.Request(
+            self._provider_url,
+            data=json.dumps(request_body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {credential_value}",
+            },
+            method="POST",
+        )
+        timeout_seconds = timeout_ms / 1000
+        text_parts: list[str] = []
+
+        try:
+            with self._opener.open(request, timeout=timeout_seconds) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8").strip()
+                    if line == "" or not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    chunk_payload = json.loads(data)
+                    text_delta = _extract_provider_stream_text_delta(chunk_payload)
+                    if text_delta is not None:
+                        text_parts.append(text_delta)
+        except TimeoutError as exc:
+            raise LALMThinkerLiveTransportError(
+                "provider timeout",
+                category="provider_timeout",
+                failure_reasons=("provider_timeout",),
+            ) from exc
+        except urllib.error.HTTPError as exc:
+            raise LALMThinkerLiveTransportError(
+                "provider request failed",
+                category="provider_request_failed",
+                failure_reasons=(
+                    "provider_request_failed",
+                    _http_status_class_category(exc.code),
+                ),
+            ) from exc
+        except urllib.error.URLError as exc:
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                raise LALMThinkerLiveTransportError(
+                    "provider timeout",
+                    category="provider_timeout",
+                    failure_reasons=("provider_timeout",),
+                ) from exc
+            raise LALMThinkerLiveTransportError(
+                "provider request failed",
+                category="provider_request_failed",
+                failure_reasons=("provider_request_failed",),
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise LALMThinkerLiveTransportError(
+                "provider response parse failed",
+                category="provider_response_parse_failed",
+                failure_reasons=("provider_response_parse_failed",),
+            ) from exc
+
+        provider_text = "".join(text_parts)
+        if provider_text == "":
+            raise LALMThinkerLiveTransportError(
+                "provider response text missing",
+                category="provider_response_text_missing",
+                failure_reasons=(
+                    "provider_response_text_missing",
+                    "provider_response_stream_delta_content_missing",
+                ),
+            )
+        return provider_text
+
     def to_metadata(self) -> dict[str, Any]:
         return {
             "provider_transport": "direct_http",
             "provider_url_ref": "provider-url://dashscope/openai-compatible-chat-completions",
+            "audio_input_supported": True,
             "raw_provider_request_included": False,
             "raw_provider_response_included": False,
+            "raw_audio_included": False,
+            "audio_bytes_retained": False,
             "headers_included": False,
             "authorization_header_included": False,
             "secret_materialized": False,
@@ -234,6 +362,61 @@ def _build_openai_compatible_request_body(
                 "content": json.dumps(user_payload, separators=(",", ":"), sort_keys=True),
             },
         ],
+        "max_tokens": 900,
+        "temperature": 0.1,
+    }
+
+
+def _build_openai_compatible_audio_request_body(
+    *,
+    model_alias: str,
+    request_payload: Mapping[str, Any],
+    audio_bytes: bytes,
+    audio_format: str,
+) -> dict[str, Any]:
+    request_payload_dict = deepcopy(dict(request_payload))
+    user_payload = {
+        "request_payload": request_payload_dict,
+        "required_output_skeleton": _build_required_output_skeleton(request_payload_dict),
+        "output_rules": [
+            "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
+            "do not wrap JSON in markdown, prose, arrays, or multiple objects",
+            "copy required_output_skeleton.request_binding exactly",
+            "use the attached audio as primary evidence for the Thinker candidate",
+            "express only evidence availability, short safe labels, and normalized hints",
+            "do not include final event refs; adapter owns deterministic provider-neutral refs",
+            "do not include raw provider request, raw provider response, provider schema, raw audio, or raw semantic payload",
+            "do not call tools, request native tool execution, or include tool_calls/function_call",
+            "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
+        ],
+    }
+    return {
+        "model": model_alias,
+        "messages": [
+            {
+                "role": "system",
+                "content": LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION,
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": f"data:;base64,{base64.b64encode(audio_bytes).decode('ascii')}",
+                            "format": audio_format,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": json.dumps(user_payload, separators=(",", ":"), sort_keys=True),
+                    },
+                ],
+            },
+        ],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "modalities": ["text"],
         "max_tokens": 900,
         "temperature": 0.1,
     }
@@ -316,6 +499,24 @@ def _extract_provider_text(response_payload: Mapping[str, Any]) -> str:
     )
 
 
+def _extract_provider_stream_text_delta(response_payload: Mapping[str, Any]) -> str | None:
+    choices = response_payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first_choice = choices[0]
+        if isinstance(first_choice, Mapping):
+            delta = first_choice.get("delta")
+            if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
+                return str(delta["content"])
+            message = first_choice.get("message")
+            if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+                return str(message["content"])
+
+    output = response_payload.get("output")
+    if isinstance(output, Mapping) and isinstance(output.get("text"), str):
+        return str(output["text"])
+    return None
+
+
 def _reject_unsafe_request_payload(value: object) -> None:
     if isinstance(value, Mapping):
         for key, child in value.items():
@@ -392,6 +593,26 @@ def _require_positive_int(value: object, field: str) -> int:
             failure_reasons=("invalid_budget",),
         )
     return value
+
+
+def _require_audio_bytes(value: object) -> bytes:
+    if not isinstance(value, bytes) or value == b"":
+        raise LALMThinkerLiveTransportError(
+            "audio_bytes must be non-empty bytes",
+            category="audio_input_invalid",
+            failure_reasons=("audio_input_invalid",),
+        )
+    return value
+
+
+def _require_audio_format(value: object) -> str:
+    if value not in {"wav", "mp3", "m4a", "aac", "ogg", "flac"}:
+        raise LALMThinkerLiveTransportError(
+            "audio_format unsupported",
+            category="audio_input_invalid",
+            failure_reasons=("audio_input_invalid",),
+        )
+    return str(value)
 
 
 def _http_status_class_category(status_code: int | None) -> str:

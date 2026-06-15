@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 import json
 import urllib.error
@@ -157,14 +158,79 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
         "provider_url_ref": (
             "provider-url://dashscope/openai-compatible-chat-completions"
         ),
+        "audio_input_supported": True,
         "raw_provider_request_included": False,
         "raw_provider_response_included": False,
+        "raw_audio_included": False,
+        "audio_bytes_retained": False,
         "headers_included": False,
         "authorization_header_included": False,
         "secret_materialized": False,
     }
     assert "runtime-secret-value-for-test-only" not in repr(metadata)
     assert "Bearer " not in repr(metadata)
+
+
+def test_direct_http_transport_audio_uses_input_audio_without_retaining_raw_audio() -> None:
+    binding = _audio_binding()
+    expected_provider_text = fake_lalm_thinker_transport(
+        binding,
+        optional_refs_available=True,
+    )
+    response_payload = {
+        "choices": [
+            {
+                "delta": {
+                    "content": expected_provider_text,
+                }
+            }
+        ]
+    }
+    opener = _CapturingOpener(response_lines=_streaming_response_lines(response_payload))
+    transport = LALMThinkerLiveDirectHTTPTransport(opener=opener)
+    audio_bytes = b"synthetic-test-audio-bytes"
+
+    provider_text = transport.complete_audio(
+        request_payload=build_lalm_thinker_live_request_payload(binding=binding),
+        audio_bytes=audio_bytes,
+        audio_format="wav",
+        credential_handle=LALMThinkerCredentialHandle(
+            credential_ref="secret-ref://runtime-env/dashscope-api-key",
+        ),
+        credential_value="runtime-secret-value-for-test-only",
+        adapter_request_id=binding.adapter_request_id,
+        timeout_ms=60_000,
+        model_alias="qwen3.5-omni-plus",
+    )
+
+    assert provider_text == expected_provider_text
+    captured_request = opener.request
+    assert captured_request is not None
+    request_body = json.loads(captured_request.data.decode("utf-8"))
+    assert request_body["model"] == "qwen3.5-omni-plus"
+    assert request_body["stream"] is True
+    assert request_body["stream_options"] == {"include_usage": True}
+    assert request_body["modalities"] == ["text"]
+    user_content = request_body["messages"][1]["content"]
+    assert [part["type"] for part in user_content] == ["input_audio", "text"]
+    expected_audio_data_url = f"data:;base64,{base64.b64encode(audio_bytes).decode('ascii')}"
+    assert user_content[0] == {
+        "type": "input_audio",
+        "input_audio": {
+            "data": expected_audio_data_url,
+            "format": "wav",
+        },
+    }
+    user_payload = json.loads(user_content[1]["text"])
+    assert user_payload["required_output_skeleton"]["request_binding"] == binding.to_dict()
+    metadata = transport.to_metadata()
+    assert metadata["audio_input_supported"] is True
+    assert metadata["raw_audio_included"] is False
+    assert metadata["audio_bytes_retained"] is False
+    rendered_metadata = repr(metadata)
+    assert expected_audio_data_url not in rendered_metadata
+    assert "runtime-secret-value-for-test-only" not in rendered_metadata
+    assert "Bearer " not in rendered_metadata
 
 
 def test_direct_http_transport_maps_http_errors_to_safe_categories() -> None:
@@ -249,15 +315,21 @@ class _FakeTransport:
 
 
 class _CapturingOpener:
-    def __init__(self, *, response_payload: object) -> None:
+    def __init__(
+        self,
+        *,
+        response_payload: object | None = None,
+        response_lines: tuple[bytes, ...] | None = None,
+    ) -> None:
         self._response_payload = response_payload
+        self._response_lines = response_lines
         self.request: object | None = None
         self.timeout: float | None = None
 
     def open(self, request: object, timeout: float) -> object:
         self.request = request
         self.timeout = timeout
-        return _FakeResponse(self._response_payload)
+        return _FakeResponse(self._response_payload, self._response_lines)
 
 
 class _RaisingOpener:
@@ -269,8 +341,9 @@ class _RaisingOpener:
 
 
 class _FakeResponse:
-    def __init__(self, payload: object) -> None:
+    def __init__(self, payload: object | None, lines: tuple[bytes, ...] | None) -> None:
         self._payload = payload
+        self._lines = lines
 
     def __enter__(self) -> "_FakeResponse":
         return self
@@ -279,7 +352,19 @@ class _FakeResponse:
         return None
 
     def read(self) -> bytes:
+        assert self._payload is not None
         return json.dumps(self._payload).encode("utf-8")
+
+    def __iter__(self) -> object:
+        assert self._lines is not None
+        return iter(self._lines)
+
+
+def _streaming_response_lines(response_payload: object) -> tuple[bytes, ...]:
+    return (
+        f"data: {json.dumps(response_payload, separators=(',', ':'))}\n\n".encode("utf-8"),
+        b"data: [DONE]\n\n",
+    )
 
 
 def _binding() -> object:
@@ -296,5 +381,23 @@ def _binding() -> object:
         adapter_request_id="adapter-request-lalm-thinker-001",
         request_metadata_ref="request-metadata://synthetic/lalm-thinker/live-001",
         input_ref="text://synthetic/lalm-thinker/live-001",
+        policy_ref="policy://synthetic/lalm-thinker/evidence-only",
+    )
+
+
+def _audio_binding() -> object:
+    return bind_lalm_thinker_request(
+        turn_committed_event={
+            "event_name": "TURN_INGRESS_COMMITTED",
+            "event_id": "evt_turn_committed_audio_001",
+            "turn_id": "turn_audio_001",
+            "utterance_id": "utt_audio_001",
+            "input_modality": "audio",
+            "input_span_id": "input_audio_001",
+            "audio_span_id": "audio_span_001",
+        },
+        adapter_request_id="adapter-request-lalm-thinker-audio-001",
+        request_metadata_ref="request-metadata://synthetic/lalm-thinker/audio-live-001",
+        input_ref="audio://synthetic/lalm-thinker/audio-live-001",
         policy_ref="policy://synthetic/lalm-thinker/evidence-only",
     )
