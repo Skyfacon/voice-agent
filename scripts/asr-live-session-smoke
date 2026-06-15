@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+
+PYTHONPATH=src python3 -m voice_agent.runtime.asr_session_hook "$@"
