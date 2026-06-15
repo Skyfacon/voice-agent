@@ -27,6 +27,7 @@ from voice_agent.adapters.lalm_thinker_skeleton import (
     validate_lalm_thinker_candidate,
 )
 from voice_agent.adapters.lalm_thinker_live_transport import LALMThinkerCredentialHandle
+from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_ADAPTER_ID
 from voice_agent.replay.runner import run_replay_fixture
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig
@@ -285,7 +286,7 @@ def test_fake_transport_defaults_to_degraded_contract_emission_for_unsupported_o
     validated = validate_lalm_thinker_candidate(parsed, expected_binding=binding)
     emission = emit_lalm_thinker_semantic_frame(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
-        adapter_id="lalm_thinker_provider_free",
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
         event_id="evt_lalm_thinker_default_contract_frame",
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,
@@ -339,7 +340,7 @@ def test_fake_transport_defaults_to_degraded_contract_emission_for_unsupported_o
         replay_result.adapter_health_state.output_event_modes[emission.thinker_event["event_id"]]
         == "degraded"
     )
-    assert replay_result.adapter_health_state.adapters["lalm_thinker_provider_free"].missing_capabilities == (
+    assert replay_result.adapter_health_state.adapters[LALM_THINKER_RUNTIME_ADAPTER_ID].missing_capabilities == (
         "supports_assistant_directedness",
         "supports_audio_caption",
         "supports_emotion",
@@ -361,7 +362,7 @@ def test_fake_transport_explicit_available_refs_emit_real_contract_event_without
     validated = validate_lalm_thinker_candidate(parsed, expected_binding=binding)
     emission = emit_lalm_thinker_semantic_frame(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
-        adapter_id="lalm_thinker_provider_free",
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
         event_id="evt_lalm_thinker_available_refs_contract_frame",
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,
@@ -465,7 +466,7 @@ def test_valid_live_provider_text_emits_only_normalized_contract_events() -> Non
 
     result = emit_lalm_thinker_provider_text_result(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
-        adapter_id="lalm_thinker_provider_free",
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
         provider_text=provider_text,
         expected_binding=binding,
         success_event_id="evt_lalm_thinker_live_valid_frame",
@@ -505,7 +506,7 @@ def test_invalid_live_provider_text_emits_validation_failure_without_thinker_fra
 
     result = emit_lalm_thinker_provider_text_result(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
-        adapter_id="lalm_thinker_provider_free",
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
         provider_text="```json\n{}\n```",
         expected_binding=binding,
         success_event_id="evt_lalm_thinker_live_invalid_frame",
@@ -545,7 +546,7 @@ def test_live_provider_path_uses_injected_transport_and_keeps_secret_out_of_meta
         model_alias="qwen3.6-flash",
         timeout_ms=60_000,
         boundary=AdapterCallbackAppendBoundary(startup.journal),
-        adapter_id="lalm_thinker_provider_free",
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
         binding=binding,
         success_event_id="evt_lalm_thinker_live_injected_frame",
         validation_failed_event_id="evt_lalm_thinker_live_injected_validation_failed",

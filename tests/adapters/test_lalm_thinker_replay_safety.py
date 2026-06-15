@@ -7,6 +7,7 @@ import pytest
 from tests.adapters.test_mvp3_adapter_profiles import valid_mvp3_real_profiles
 from voice_agent.adapters.lalm_thinker_binding import bind_lalm_thinker_request
 from voice_agent.adapters.lalm_thinker_profile import build_lalm_thinker_capability
+from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_ADAPTER_ID
 from voice_agent.adapters.lalm_thinker_skeleton import (
     emit_lalm_thinker_semantic_frame,
     fake_lalm_thinker_transport,
@@ -30,7 +31,7 @@ def test_replay_accepts_synthetic_lalm_thinker_all_refs_available_fixture() -> N
 
     assert result.result_status == "passed"
     assert result.adapter_health_state.output_event_modes[thinker_event["event_id"]] == "real"
-    assert result.adapter_health_state.adapters["lalm_thinker_provider_free"].missing_capabilities == ()
+    assert result.adapter_health_state.adapters[LALM_THINKER_RUNTIME_ADAPTER_ID].missing_capabilities == ()
 
 
 def test_replay_accepts_synthetic_lalm_thinker_degraded_fixture_with_matching_degraded_events() -> None:
@@ -44,7 +45,7 @@ def test_replay_accepts_synthetic_lalm_thinker_degraded_fixture_with_matching_de
 
     assert result.result_status == "passed"
     assert result.adapter_health_state.output_event_modes[thinker_event["event_id"]] == "degraded"
-    assert result.adapter_health_state.adapters["lalm_thinker_provider_free"].missing_capabilities == (
+    assert result.adapter_health_state.adapters[LALM_THINKER_RUNTIME_ADAPTER_ID].missing_capabilities == (
         "supports_assistant_directedness",
         "supports_audio_caption",
         "supports_emotion",
@@ -194,7 +195,7 @@ def _lalm_thinker_fixture(
     validated = validate_lalm_thinker_candidate(candidate, expected_binding=binding)
     emission = emit_lalm_thinker_semantic_frame(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
-        adapter_id="lalm_thinker_provider_free",
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
         event_id=f"{event_id_prefix}_semantic_frame",
         created_monotonic_ms=210,
         created_wall_clock_ms=1700000000210,

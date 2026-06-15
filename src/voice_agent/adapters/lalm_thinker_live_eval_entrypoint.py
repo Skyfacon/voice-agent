@@ -21,6 +21,7 @@ from voice_agent.adapters.lalm_thinker_live_transport import (
     LALMThinkerLiveTransportError,
     LALM_THINKER_CREDENTIAL_SOURCE_METADATA,
 )
+from voice_agent.adapters.lalm_thinker_profile import LALM_THINKER_RUNTIME_ADAPTER_ID
 from voice_agent.adapters.lalm_thinker_skeleton import (
     emit_lalm_thinker_live_provider_result,
     emit_lalm_thinker_request_failed,
@@ -31,7 +32,7 @@ from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendB
 
 
 _LALM_THINKER_CREDENTIAL_ENV_VAR = "DASHSCOPE_API_KEY"
-_LALM_THINKER_ADAPTER_ID = "lalm_thinker_provider_free"
+_LALM_THINKER_ADAPTER_ID = LALM_THINKER_RUNTIME_ADAPTER_ID
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,8 @@ from voice_agent.adapters.capabilities import (
     validate_capability_matrix,
 )
 from voice_agent.adapters.lalm_thinker_profile import (
+    LALM_THINKER_RUNTIME_ADAPTER_ID,
+    LALM_THINKER_RUNTIME_MODEL_ALIAS,
     build_lalm_thinker_capability,
 )
 from voice_agent.adapters.profiles import (
@@ -19,17 +21,20 @@ from voice_agent.adapters.profiles import (
 )
 
 
-def test_lalm_thinker_profile_is_provider_free_real_readiness_metadata() -> None:
+def test_lalm_thinker_profile_is_default_real_runtime_metadata_without_secret_materialization() -> None:
     capability = build_lalm_thinker_capability()
     matrix = validate_capability_matrix(capability.to_dict())
 
+    assert matrix["adapter_id"] == LALM_THINKER_RUNTIME_ADAPTER_ID
     assert matrix["adapter_type"] == "thinker"
-    assert matrix["provider"] == "lalm_provider_neutral"
+    assert matrix["provider"] == "dashscope_bailian"
+    assert matrix["model_name"] == LALM_THINKER_RUNTIME_MODEL_ALIAS
     assert matrix["deployment_mode"] == "remote_api"
     assert matrix["output_mode"] == "real"
     assert matrix["supports_structured_json"] is True
-    assert matrix["endpoint"] == "endpoint://synthetic/lalm-thinker/provider-free"
-    assert matrix["config_ref"] == "config://synthetic/lalm-thinker/provider-free"
+    assert matrix["endpoint"] == "provider-url://dashscope/openai-compatible-chat-completions"
+    assert matrix["config_ref"] == "config://runtime/lalm-thinker/dashscope"
+    assert matrix["latency_class"] == "remote_api_http"
     assert matrix["mocked"] is False
     assert matrix["mock_profile_ref"] == ""
     assert matrix["target_architecture_validation"] is True
@@ -60,6 +65,7 @@ def test_lalm_thinker_profile_is_provider_free_real_readiness_metadata() -> None
     assert "bearer " not in rendered
     assert "token=" not in rendered
     assert "credential=" not in rendered
+    assert "DASHSCOPE_API_KEY" not in repr(matrix)
 
 
 def test_lalm_thinker_profile_can_replace_required_mvp3_thinker_profile_without_provider_probe() -> None:
@@ -78,17 +84,17 @@ def test_lalm_thinker_profile_can_replace_required_mvp3_thinker_profile_without_
         "slow_llm",
         "tts",
     ]
-    assert validated[1]["adapter_id"] == "lalm_thinker_provider_free"
+    assert validated[1]["adapter_id"] == LALM_THINKER_RUNTIME_ADAPTER_ID
     assert validated[1]["supports_structured_json"] is True
 
 
 def test_lalm_thinker_fallback_and_degraded_profiles_do_not_satisfy_required_real_readiness() -> None:
     fallback = build_lalm_thinker_capability(
-        adapter_id="lalm_thinker_provider_free_fallback",
+        adapter_id="lalm_thinker_runtime_fallback",
         output_mode="fallback",
     )
     degraded = build_lalm_thinker_capability(
-        adapter_id="lalm_thinker_provider_free_degraded",
+        adapter_id="lalm_thinker_runtime_degraded",
         output_mode="degraded",
     )
 

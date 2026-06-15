@@ -2,35 +2,37 @@ from __future__ import annotations
 
 from voice_agent.adapters.capabilities import AdapterCapability, BOOLEAN_CAPABILITY_FIELDS
 
+LALM_THINKER_RUNTIME_ADAPTER_ID = "lalm_thinker_runtime"
+LALM_THINKER_RUNTIME_MODEL_ALIAS = "qwen3.6-flash"
+
 
 def build_lalm_thinker_capability(
     *,
-    adapter_id: str = "lalm_thinker_provider_free",
-    model_name: str = "lalm-thinker-provider-free-skeleton",
-    endpoint: str = "endpoint://synthetic/lalm-thinker/provider-free",
-    config_ref: str = "config://synthetic/lalm-thinker/provider-free",
+    adapter_id: str = LALM_THINKER_RUNTIME_ADAPTER_ID,
+    model_name: str = LALM_THINKER_RUNTIME_MODEL_ALIAS,
+    endpoint: str = "provider-url://dashscope/openai-compatible-chat-completions",
+    config_ref: str = "config://runtime/lalm-thinker/dashscope",
     output_mode: str = "real",
 ) -> AdapterCapability:
-    """Build provider-free LALM Thinker capability metadata.
+    """Build default real LALM Thinker runtime capability metadata.
 
-    This builder performs no provider probe, credential lookup, SDK import, or
-    runtime adapter assembly. Validation remains with the shared capability
-    matrix/profile gates.
+    The profile is safe startup metadata only: it does not probe the provider,
+    read credentials, import an SDK, or materialize any secret value.
     """
 
     fields: dict[str, object] = {
         "adapter_id": adapter_id,
         "adapter_type": "thinker",
-        "provider": "lalm_provider_neutral",
+        "provider": "dashscope_bailian",
         "model_name": model_name,
         "deployment_mode": "remote_api",
         "endpoint": endpoint,
         "health_status": "configured",
-        "capability_version": "mvp3.lalm-thinker.provider-free.v1",
-        "latency_class": "provider_free_metadata_only",
-        "error_model": "error-model://synthetic/lalm-thinker/provider-free",
-        "timeout_policy": "timeout-policy://synthetic/lalm-thinker/provider-free",
-        "retry_policy": "retry-policy://synthetic/lalm-thinker/provider-free",
+        "capability_version": "mvp3.lalm-thinker.runtime.v1",
+        "latency_class": "remote_api_http",
+        "error_model": "error-model://runtime/lalm-thinker/dashscope",
+        "timeout_policy": "timeout-policy://runtime/lalm-thinker/dashscope",
+        "retry_policy": "retry-policy://runtime/lalm-thinker/dashscope",
         "output_mode": output_mode,
         "config_ref": config_ref,
         "supports_streaming_input": False,

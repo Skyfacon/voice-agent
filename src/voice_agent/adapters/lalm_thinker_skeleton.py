@@ -18,6 +18,7 @@ from voice_agent.adapters.lalm_thinker_live_transport import (
     LALMThinkerCredentialHandle,
     validate_lalm_thinker_credential_handle,
 )
+from voice_agent.adapters.lalm_thinker_profile import LALM_THINKER_RUNTIME_ADAPTER_ID
 from voice_agent.adapters.thinker_contract import (
     ThinkerAdapterContract,
     ThinkerSemanticFrameEmission,
@@ -127,6 +128,16 @@ OPTIONAL_EVIDENCE_FIELDS = {
 }
 
 _OUTPUT_MODES = frozenset({"real", "fallback", "degraded"})
+_SAFE_FAILURE_CATEGORIES = frozenset(
+    {
+        "credential_missing",
+        "provider_timeout",
+        "provider_request_failed",
+        "provider_response_parse_failed",
+        "provider_response_text_missing",
+        "provider_output_validation_failed",
+    }
+)
 _BOUNDARY_ASSERTIONS = {
     "candidate_is_evidence_only": True,
     "may_emit_event_journal_events": False,
@@ -641,7 +652,7 @@ def emit_lalm_thinker_request_retrying(
     retry_count: int,
     retry_reason: str,
     timeout_ms: int | None = None,
-    adapter_id: str = "lalm_thinker_provider_free",
+    adapter_id: str = LALM_THINKER_RUNTIME_ADAPTER_ID,
 ) -> dict[str, Any]:
     return FakeRealAdapterEventHarness(
         boundary=boundary,
@@ -672,7 +683,7 @@ def emit_lalm_thinker_request_failed(
     failure_reason: str,
     retryable: bool,
     timeout_ms: int | None = None,
-    adapter_id: str = "lalm_thinker_provider_free",
+    adapter_id: str = LALM_THINKER_RUNTIME_ADAPTER_ID,
 ) -> dict[str, Any]:
     if not isinstance(retryable, bool):
         _fail("schema_shape", "retryable must be a boolean")
@@ -706,7 +717,7 @@ def emit_lalm_thinker_semantic_frame(
     source_module: str = "lalm_thinker_adapter",
     trace_redaction_level: str = "metadata_only",
 ) -> ThinkerSemanticFrameEmission:
-    """Emit a validated provider-free LALM Thinker candidate through the contract."""
+    """Emit a validated LALM Thinker candidate through the contract."""
 
     contract = ThinkerAdapterContract(
         boundary=boundary,
@@ -926,6 +937,8 @@ def _reject_unsafe_live_request_payload(value: object) -> None:
 def _safe_failure_reason(value: object) -> str:
     if not isinstance(value, str) or value == "":
         return "unsafe_failure_reason_redacted"
+    if value in _SAFE_FAILURE_CATEGORIES:
+        return value
     variants = {value, unquote(value)}
     for variant in variants:
         if CREDENTIAL_LIKE_REF_PATTERN.search(variant):
