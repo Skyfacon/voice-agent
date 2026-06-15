@@ -15,6 +15,7 @@ from voice_agent.adapters.asr_live_transport import (
     AsrLiveCredentialHandle,
     DashScopeAsrLiveDirectHTTPTransport,
     DashScopeAsrLiveTransportError,
+    resolve_asr_live_transcript_text_ref,
 )
 
 
@@ -63,6 +64,8 @@ def test_direct_http_transport_builds_audio_request_without_sdk_or_raw_metadata(
         "model_alias": "qwen3-asr-flash",
         "success": True,
         "transcript_present": True,
+        "asr_frame_ref": "asr-frame://provider/dashscope/adapter_request_asr_live_001",
+        "text_ref": "text://provider/dashscope/adapter_request_asr_live_001",
         "response_text_size_bucket": "small",
         "raw_audio_included": False,
         "raw_transcript_included": False,
@@ -72,6 +75,9 @@ def test_direct_http_transport_builds_audio_request_without_sdk_or_raw_metadata(
         "authorization_header_included": False,
         "secret_included": False,
     }
+    assert resolve_asr_live_transcript_text_ref(str(metadata["text_ref"])) == (
+        "synthetic transcript"
+    )
     assert "synthetic transcript" not in repr(metadata)
     assert "runtime-credential-value-for-test-only" not in repr(metadata)
 

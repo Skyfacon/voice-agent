@@ -345,7 +345,7 @@ def run_asr_synthetic_live_eval(
             retries_used = 0
             while True:
                 try:
-                    transport.transcribe(
+                    metadata = transport.transcribe(
                         audio_payload=_generate_synthetic_wav_payload(
                             output_dir=output_dir,
                             case_id=str(record.get("case_id", f"case-{index}")),
@@ -357,6 +357,7 @@ def run_asr_synthetic_live_eval(
                         timeout_ms=timeout_ms,
                         model_alias=str(approval_packet["model_alias"]),
                     )
+                    metadata_map = _metadata_from_transport_result(metadata)
                 except DashScopeAsrLiveTransportError as exc:
                     for reason in exc.failure_reasons:
                         failure_categories[_classify_failure_reason(reason)] += 1
@@ -366,6 +367,15 @@ def run_asr_synthetic_live_eval(
                         retry_count += 1
                         retries_used += 1
                         continue
+                    request_failed_count += 1
+                    break
+                except AsrLiveEvalApprovalError as exc:
+                    for reason in exc.failure_reasons:
+                        failure_categories[_classify_failure_reason(reason)] += 1
+                    request_failed_count += 1
+                    break
+                if metadata_map.get("transcript_present") is not True:
+                    failure_categories["provider_transcript_absent"] += 1
                     request_failed_count += 1
                     break
                 success_count += 1
@@ -387,6 +397,52 @@ def run_asr_synthetic_live_eval(
             approval_packet["aggregate_metadata_commit_policy"]
         ),
     )
+
+
+def _metadata_from_transport_result(value: object) -> dict[str, Any]:
+    if not hasattr(value, "to_metadata"):
+        raise AsrLiveEvalApprovalError(
+            "transport metadata invalid",
+            failure_reasons=("transport_metadata_invalid",),
+        )
+    metadata = value.to_metadata()  # type: ignore[attr-defined]
+    if not isinstance(metadata, Mapping):
+        raise AsrLiveEvalApprovalError(
+            "transport metadata invalid",
+            failure_reasons=("transport_metadata_invalid",),
+        )
+    for flag in (
+        "raw_audio_included",
+        "raw_transcript_included",
+        "raw_provider_request_included",
+        "raw_provider_response_included",
+        "headers_included",
+        "authorization_header_included",
+        "secret_included",
+    ):
+        if flag in metadata and metadata[flag] is not False:
+            raise AsrLiveEvalApprovalError(
+                "transport metadata contains forbidden marker",
+                failure_reasons=("transport_metadata_forbidden_marker",),
+            )
+    rendered_values = repr(tuple(metadata.values())).lower()
+    if any(
+        marker in rendered_values
+        for marker in (
+            "raw_transcript",
+            "raw_audio",
+            "provider_request",
+            "provider_response",
+            "authorization",
+            "api_key",
+            "token=",
+        )
+    ):
+        raise AsrLiveEvalApprovalError(
+            "transport metadata contains forbidden marker",
+            failure_reasons=("transport_metadata_forbidden_marker",),
+        )
+    return dict(metadata)
 
 
 def run_asr_live_eval_entrypoint(

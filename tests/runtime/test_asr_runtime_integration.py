@@ -105,8 +105,12 @@ def test_explicit_real_runtime_mode_uses_transport_and_emits_asr_contract_events
     ]
     transcript = emitted[-1]
     assert transcript["caused_by_event_id"] == committed_turn["event_id"]
-    assert transcript["asr_frame_ref"] == "asr-frame://synthetic/runtime/asr/fake-real-success"
-    assert transcript["text_ref"] == "text://synthetic/runtime/asr/fake-real-success"
+    assert transcript["asr_frame_ref"] == (
+        "asr-frame://provider/dashscope/" + transport.calls[0]["adapter_request_id"]
+    )
+    assert transcript["text_ref"] == (
+        "text://provider/dashscope/" + transport.calls[0]["adapter_request_id"]
+    )
     assert transcript["timestamp_status"] == "unavailable"
     assert transcript["streaming_status"] == "unsupported_final_only"
     assert transcript["output_mode"] == "degraded"
@@ -115,11 +119,14 @@ def test_explicit_real_runtime_mode_uses_transport_and_emits_asr_contract_events
         {
             "audio_payload_present": True,
             "audio_mime_type": "audio/wav",
-            "adapter_request_id": "adapter_request_runtime_asr_fake_real_success",
+            "adapter_request_id": transport.calls[0]["adapter_request_id"],
             "timeout_ms": 30000,
             "model_alias": ASR_LIVE_SELECTED_MODEL_ALIAS,
         }
     ]
+    assert str(committed_turn["event_id"]).replace("-", "_") in str(
+        transport.calls[0]["adapter_request_id"]
+    )
     assert summary.to_metadata()["emitted_event_names"] == [
         "ADAPTER_OUTPUT_DEGRADED",
         "ADAPTER_OUTPUT_DEGRADED",
@@ -206,7 +213,7 @@ def test_runtime_maps_timeout_failure_and_validation_to_existing_adapter_events(
     adapter = AsrRuntimeAdapter(
         config=AsrRuntimeConfig(mode=ASR_RUNTIME_MODE_APPROVED_REAL_LIVE_EVAL),
         journal=startup.journal,
-        transport=_FakeRuntimeAsrTransport(("timeout", "missing_transcript")),
+        transport=_FakeRuntimeAsrTransport(("timeout", "timeout", "missing_transcript")),
     )
 
     timeout_summary = adapter.transcribe_committed_turn(
@@ -241,6 +248,165 @@ def test_runtime_maps_timeout_failure_and_validation_to_existing_adapter_events(
         "emitted_event_names"
     ]
     assert "raw_provider_body" not in repr(startup.journal.events())
+
+
+def test_retryable_timeout_retries_transport_before_success() -> None:
+    startup = _start_mvp3_runtime_session("sess_asr_runtime_retry_then_success")
+    committed_turn = _append_committed_audio_turn(
+        startup.journal,
+        event_id_prefix="evt_asr_runtime_retry_then_success",
+    )
+    transport = _FakeRuntimeAsrTransport(("timeout", "success"))
+    adapter = AsrRuntimeAdapter(
+        config=AsrRuntimeConfig(mode=ASR_RUNTIME_MODE_APPROVED_REAL_LIVE_EVAL),
+        journal=startup.journal,
+        transport=transport,
+    )
+
+    summary = adapter.transcribe_committed_turn(
+        turn_committed_event=committed_turn,
+        case_id="retry-then-success",
+        audio_payload=b"RIFF synthetic wav bytes",
+        audio_mime_type="audio/wav",
+        approval_packet=_approved_packet(max_request_count=1, retry_budget=1),
+        env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+        created_monotonic_ms=300,
+        created_wall_clock_ms=1700000000300,
+    )
+
+    assert len(transport.calls) == 2
+    assert summary.to_metadata()["success_count"] == 1
+    assert summary.to_metadata()["retry_count"] == 1
+    assert summary.to_metadata()["timeout_count"] == 1
+    assert summary.to_metadata()["emitted_event_names"] == [
+        "ADAPTER_REQUEST_RETRYING",
+        "ADAPTER_OUTPUT_DEGRADED",
+        "ADAPTER_OUTPUT_DEGRADED",
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+    ]
+
+
+def test_reused_case_id_derives_unique_event_ids_from_committed_turns() -> None:
+    startup = _start_mvp3_runtime_session("sess_asr_runtime_reused_case_id")
+    first_turn = _append_committed_audio_turn(
+        startup.journal,
+        event_id_prefix="evt_asr_runtime_reused_case_id_first",
+    )
+    second_turn = _append_committed_audio_turn(
+        startup.journal,
+        event_id_prefix="evt_asr_runtime_reused_case_id_second",
+    )
+    transport = _FakeRuntimeAsrTransport(("success", "success"))
+    adapter = AsrRuntimeAdapter(
+        config=AsrRuntimeConfig(mode=ASR_RUNTIME_MODE_APPROVED_REAL_LIVE_EVAL),
+        journal=startup.journal,
+        transport=transport,
+    )
+
+    adapter.transcribe_committed_turn(
+        turn_committed_event=first_turn,
+        case_id="same-case-id",
+        audio_payload=b"RIFF synthetic wav bytes",
+        audio_mime_type="audio/wav",
+        approval_packet=_approved_packet(),
+        env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+        created_monotonic_ms=300,
+        created_wall_clock_ms=1700000000300,
+    )
+    adapter.transcribe_committed_turn(
+        turn_committed_event=second_turn,
+        case_id="same-case-id",
+        audio_payload=b"RIFF synthetic wav bytes",
+        audio_mime_type="audio/wav",
+        approval_packet=_approved_packet(),
+        env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+        created_monotonic_ms=400,
+        created_wall_clock_ms=1700000000400,
+    )
+
+    transcript_events = [
+        event
+        for event in startup.journal.events()
+        if event["event_name"] == "ASR_TRANSCRIPT_OUTPUT_EMITTED"
+    ]
+    assert len(transcript_events) == 2
+    assert transcript_events[0]["event_id"] != transcript_events[1]["event_id"]
+    assert transcript_events[0]["caused_by_event_id"] == first_turn["event_id"]
+    assert transcript_events[1]["caused_by_event_id"] == second_turn["event_id"]
+    assert transport.calls[0]["adapter_request_id"] != transport.calls[1]["adapter_request_id"]
+
+
+def test_wrong_journal_committed_turn_fails_before_transport_call() -> None:
+    startup = _start_mvp3_runtime_session("sess_asr_runtime_correct_journal")
+    other_startup = _start_mvp3_runtime_session("sess_asr_runtime_other_journal")
+    other_committed_turn = _append_committed_audio_turn(
+        other_startup.journal,
+        event_id_prefix="evt_asr_runtime_other_journal",
+    )
+    transport = _FakeRuntimeAsrTransport(("success",))
+    adapter = AsrRuntimeAdapter(
+        config=AsrRuntimeConfig(mode=ASR_RUNTIME_MODE_APPROVED_REAL_LIVE_EVAL),
+        journal=startup.journal,
+        transport=transport,
+    )
+
+    with pytest.raises(AsrRuntimeError) as captured:
+        adapter.transcribe_committed_turn(
+            turn_committed_event=other_committed_turn,
+            case_id="wrong-journal",
+            audio_payload=b"RIFF synthetic wav bytes",
+            audio_mime_type="audio/wav",
+            approval_packet=_approved_packet(),
+            env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+            created_monotonic_ms=300,
+            created_wall_clock_ms=1700000000300,
+        )
+
+    assert captured.value.failure_reasons == ("committed turn not in session journal",)
+    assert transport.calls == []
+
+
+def test_approval_request_cap_fails_closed_before_extra_transport_call() -> None:
+    startup = _start_mvp3_runtime_session("sess_asr_runtime_request_cap")
+    first_turn = _append_committed_audio_turn(
+        startup.journal,
+        event_id_prefix="evt_asr_runtime_request_cap_first",
+    )
+    second_turn = _append_committed_audio_turn(
+        startup.journal,
+        event_id_prefix="evt_asr_runtime_request_cap_second",
+    )
+    transport = _FakeRuntimeAsrTransport(("success", "success"))
+    adapter = AsrRuntimeAdapter(
+        config=AsrRuntimeConfig(mode=ASR_RUNTIME_MODE_APPROVED_REAL_LIVE_EVAL),
+        journal=startup.journal,
+        transport=transport,
+    )
+
+    adapter.transcribe_committed_turn(
+        turn_committed_event=first_turn,
+        case_id="request-cap-first",
+        audio_payload=b"RIFF synthetic wav bytes",
+        audio_mime_type="audio/wav",
+        approval_packet=_approved_packet(max_request_count=1),
+        env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+        created_monotonic_ms=300,
+        created_wall_clock_ms=1700000000300,
+    )
+    with pytest.raises(AsrRuntimeError) as captured:
+        adapter.transcribe_committed_turn(
+            turn_committed_event=second_turn,
+            case_id="request-cap-second",
+            audio_payload=b"RIFF synthetic wav bytes",
+            audio_mime_type="audio/wav",
+            approval_packet=_approved_packet(max_request_count=1),
+            env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+            created_monotonic_ms=400,
+            created_wall_clock_ms=1700000000400,
+        )
+
+    assert captured.value.failure_reasons == ("approval max_request_count exceeded",)
+    assert len(transport.calls) == 1
 
 
 def test_runtime_smoke_helper_runs_one_synthetic_case_and_returns_metadata_only() -> None:
@@ -396,7 +562,9 @@ def _start_mvp3_runtime_session(session_id: str) -> object:
     )
 
 
-def _approved_packet() -> dict[str, object]:
+def _approved_packet(
+    *, max_request_count: int = 2, retry_budget: int = 1
+) -> dict[str, object]:
     return {
         "approval_status": "approved_for_asr_provider_discovery_and_synthetic_live_eval",
         "approver": "a123",
@@ -408,10 +576,10 @@ def _approved_packet() -> dict[str, object]:
         "provider_transport_allowance": "direct_http_only_preferred_sdk_allowed_only_if_official_docs_require_it",
         "credential_source": "runtime_only_user_provided_environment_or_shell_session",
         "credential_runtime_scope": "adapter_internal_call_time_only",
-        "max_request_count": 2,
+        "max_request_count": max_request_count,
         "max_cost_quota": "free_quota_only_stop_on_any_paid_or_quota_warning",
         "per_request_timeout_ms": 30000,
-        "retry_budget": 1,
+        "retry_budget": retry_budget,
         "synthetic_input_set_path": "tests/fixtures/synthetic/asr-live-eval-inputs.jsonl",
         "input_redaction_status": "synthetic_metadata_refs_only",
         "real_user_input_included": False,
@@ -517,6 +685,8 @@ class _FakeRuntimeAsrMetadata:
             "model_alias": ASR_LIVE_SELECTED_MODEL_ALIAS,
             "success": True,
             "transcript_present": self.transcript_present,
+            "asr_frame_ref": f"asr-frame://provider/dashscope/{self.adapter_request_id}",
+            "text_ref": f"text://provider/dashscope/{self.adapter_request_id}",
             "response_text_size_bucket": "small" if self.transcript_present else "empty",
             "raw_audio_included": False,
             "raw_transcript_included": False,

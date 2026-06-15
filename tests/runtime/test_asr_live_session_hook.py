@@ -96,8 +96,12 @@ def test_opt_in_real_session_hook_emits_asr_after_matching_turn_commit() -> None
     assert transcript["turn_id"] == committed_turn["turn_id"]
     assert transcript["utterance_id"] == committed_turn["utterance_id"]
     assert transcript["audio_span_id"] == committed_turn["audio_span_id"]
-    assert transcript["asr_frame_ref"] == "asr-frame://synthetic/runtime/asr/real-success"
-    assert transcript["text_ref"] == "text://synthetic/runtime/asr/real-success"
+    assert transcript["asr_frame_ref"] == (
+        "asr-frame://provider/dashscope/" + transport.calls[0]["adapter_request_id"]
+    )
+    assert transcript["text_ref"] == (
+        "text://provider/dashscope/" + transport.calls[0]["adapter_request_id"]
+    )
     assert "audio_timestamps_ref" not in transcript
     assert transcript["timestamp_status"] == "unavailable"
     assert transcript["streaming_status"] == "unsupported_final_only"
@@ -106,11 +110,14 @@ def test_opt_in_real_session_hook_emits_asr_after_matching_turn_commit() -> None
         {
             "audio_payload_present": True,
             "audio_mime_type": "audio/wav",
-            "adapter_request_id": "adapter_request_runtime_asr_real_success",
+            "adapter_request_id": transport.calls[0]["adapter_request_id"],
             "timeout_ms": 30000,
             "model_alias": ASR_LIVE_SELECTED_MODEL_ALIAS,
         }
     ]
+    assert str(committed_turn["event_id"]).replace("-", "_") in str(
+        transport.calls[0]["adapter_request_id"]
+    )
     assert result.to_metadata()["emitted_event_names"] == [
         "ADAPTER_OUTPUT_DEGRADED",
         "ADAPTER_OUTPUT_DEGRADED",
@@ -222,7 +229,7 @@ def test_timeout_retry_and_final_failure_emit_existing_adapter_events() -> None:
         audio_payload=b"RIFF synthetic wav bytes",
         audio_mime_type="audio/wav",
         config=AsrSessionAsrConfig(mode=ASR_SESSION_ASR_MODE_APPROVED_REAL_LIVE_EVAL),
-        transport=_FakeSessionAsrTransport(("timeout",)),
+        transport=_FakeSessionAsrTransport(("timeout", "timeout")),
         approval_packet=_approved_packet(),
         env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
         created_monotonic_ms=300,
@@ -230,10 +237,44 @@ def test_timeout_retry_and_final_failure_emit_existing_adapter_events() -> None:
     )
 
     assert result.to_metadata()["retry_count"] == 1
-    assert result.to_metadata()["timeout_count"] == 1
+    assert result.to_metadata()["timeout_count"] == 2
     assert result.to_metadata()["emitted_event_names"] == [
         "ADAPTER_REQUEST_RETRYING",
         "ADAPTER_REQUEST_FAILED",
+    ]
+
+
+def test_timeout_retry_then_success_calls_transport_twice() -> None:
+    startup = _start_mvp3_session("sess_asr_live_hook_retry_then_success")
+    committed_turn = _append_committed_audio_turn(
+        startup.journal,
+        event_id_prefix="evt_asr_live_hook_retry_then_success",
+    )
+    transport = _FakeSessionAsrTransport(("timeout", "success"))
+
+    result = run_asr_for_committed_audio_turn(
+        journal=startup.journal,
+        turn_committed_event=committed_turn,
+        case_id="retry-then-success",
+        audio_payload=b"RIFF synthetic wav bytes",
+        audio_mime_type="audio/wav",
+        config=AsrSessionAsrConfig(mode=ASR_SESSION_ASR_MODE_APPROVED_REAL_LIVE_EVAL),
+        transport=transport,
+        approval_packet=_approved_packet(max_request_count=1, retry_budget=1),
+        env={"DASHSCOPE_API_KEY": "runtime-credential-value-for-test-only"},
+        created_monotonic_ms=300,
+        created_wall_clock_ms=1700000000300,
+    )
+
+    assert len(transport.calls) == 2
+    assert result.to_metadata()["success_count"] == 1
+    assert result.to_metadata()["retry_count"] == 1
+    assert result.to_metadata()["timeout_count"] == 1
+    assert result.to_metadata()["emitted_event_names"] == [
+        "ADAPTER_REQUEST_RETRYING",
+        "ADAPTER_OUTPUT_DEGRADED",
+        "ADAPTER_OUTPUT_DEGRADED",
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED",
     ]
 
 
@@ -429,6 +470,8 @@ class _FakeSessionAsrMetadata:
             "model_alias": ASR_LIVE_SELECTED_MODEL_ALIAS,
             "success": True,
             "transcript_present": self.transcript_present,
+            "asr_frame_ref": f"asr-frame://provider/dashscope/{self.adapter_request_id}",
+            "text_ref": f"text://provider/dashscope/{self.adapter_request_id}",
             "response_text_size_bucket": "small" if self.transcript_present else "empty",
             "raw_audio_included": False,
             "raw_transcript_included": False,

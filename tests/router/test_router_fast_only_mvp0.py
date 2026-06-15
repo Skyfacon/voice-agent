@@ -103,6 +103,37 @@ def test_router_emits_fast_only_after_committed_turn_and_mock_frames() -> None:
     assert "USER_PATCH_RECEIVED" not in event_names
 
 
+def test_router_accepts_real_asr_transcript_output_as_asr_evidence() -> None:
+    MVP0Router = _slice6_symbol("voice_agent.router.router", "MVP0Router")
+    startup, turn_committed, asr_event, thinker_event = _text_commit_with_mock_frames()
+    real_asr_event = dict(
+        asr_event,
+        event_name="ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        event_id="evt_mvp0_slice6_router_real_asr",
+        source_module="asr_adapter",
+        adapter_id="mvp3_asr",
+        adapter_type="asr",
+        adapter_request_id="adapter_request_mvp0_slice6_router_real_asr",
+        text_ref="text://synthetic/mvp0/slice6-router-real-asr",
+        transcript_finality="final",
+        timestamp_status="available",
+        streaming_status="supported",
+        output_mode="real",
+    )
+
+    router_event = MVP0Router(startup.journal).emit_decision(
+        turn_committed_event=turn_committed,
+        asr_frame_event=real_asr_event,
+        thinker_frame_event=thinker_event,
+        event_id="evt_mvp0_slice6_router_real_asr_decision",
+        created_monotonic_ms=632,
+        created_wall_clock_ms=1700000000632,
+    )
+
+    assert router_event["asr_frame_event_id"] == "evt_mvp0_slice6_router_real_asr"
+    assert router_event["router_decision"] == "FAST_ONLY"
+
+
 def test_router_requires_committed_turn_and_both_mock_frames() -> None:
     MVP0Router = _slice6_symbol("voice_agent.router.router", "MVP0Router")
     startup, turn_committed, asr_event, _thinker_event = _text_commit_with_mock_frames()

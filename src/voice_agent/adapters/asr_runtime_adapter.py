@@ -200,55 +200,115 @@ class AsrRuntimeAdapter:
                 "ASR runtime mode provider_free does not call real provider transport",
                 failure_reasons=("provider_free_runtime_mode",),
             )
+        _require_committed_turn_in_journal(self._journal, turn_committed_event)
         packet = _load_and_validate_approval_packet(self._config, approval_packet)
+        _require_approval_request_capacity(
+            journal=self._journal,
+            adapter_id=self._config.adapter_id,
+            max_request_count=int(packet["max_request_count"]),
+        )
         credential_value = _credential_value_at_call_time(self._config, env)
+        event_id_base = _runtime_event_id_base(case_id, turn_committed_event)
         binding = AsrRequestBinding.from_turn_committed_event(
             turn_committed_event,
-            adapter_request_id=_adapter_request_id(case_id),
+            adapter_request_id=_adapter_request_id(case_id, turn_committed_event),
         )
         before_event_count = len(self._journal.events())
 
-        try:
-            metadata = self._transport_or_default().transcribe(
-                audio_payload=audio_payload,
-                audio_mime_type=audio_mime_type,
-                credential_handle=AsrLiveCredentialHandle(
-                    credential_ref=self._config.credential_ref,
-                ),
-                credential_value=credential_value,
-                adapter_request_id=binding.adapter_request_id,
-                timeout_ms=int(packet["per_request_timeout_ms"]),
-                model_alias=str(packet["model_alias"]),
-            )
-        except DashScopeAsrLiveTransportError as exc:
-            return self._emit_request_failure(
-                binding=binding,
-                turn_committed_event=turn_committed_event,
-                case_id=case_id,
-                created_monotonic_ms=created_monotonic_ms,
-                created_wall_clock_ms=created_wall_clock_ms,
-                error=exc,
-                before_event_count=before_event_count,
-            )
+        retry_budget = int(packet["retry_budget"])
+        retries_used = 0
+        timeout_count = 0
+        failure_reasons: list[str] = []
+        while True:
+            try:
+                metadata = self._transport_or_default().transcribe(
+                    audio_payload=audio_payload,
+                    audio_mime_type=audio_mime_type,
+                    credential_handle=AsrLiveCredentialHandle(
+                        credential_ref=self._config.credential_ref,
+                    ),
+                    credential_value=credential_value,
+                    adapter_request_id=binding.adapter_request_id,
+                    timeout_ms=int(packet["per_request_timeout_ms"]),
+                    model_alias=str(packet["model_alias"]),
+                )
+                break
+            except DashScopeAsrLiveTransportError as exc:
+                failure_reasons.extend(exc.failure_reasons)
+                if exc.timeout:
+                    timeout_count += 1
+                if exc.retryable and retries_used < retry_budget:
+                    retries_used += 1
+                    self._emit_request_retrying(
+                        binding=binding,
+                        turn_committed_event=turn_committed_event,
+                        event_id_base=event_id_base,
+                        created_monotonic_ms=created_monotonic_ms + retries_used - 1,
+                        created_wall_clock_ms=created_wall_clock_ms + retries_used - 1,
+                        error=exc,
+                        retry_count=retries_used,
+                        timeout_ms=int(packet["per_request_timeout_ms"])
+                        if exc.timeout
+                        else None,
+                    )
+                    continue
+                return self._emit_request_failure(
+                    binding=binding,
+                    turn_committed_event=turn_committed_event,
+                    event_id_base=event_id_base,
+                    created_monotonic_ms=created_monotonic_ms,
+                    created_wall_clock_ms=created_wall_clock_ms,
+                    error=exc,
+                    retry_count=retries_used,
+                    timeout_count=timeout_count,
+                    failure_reasons=tuple(failure_reasons),
+                    before_event_count=before_event_count,
+                )
 
         metadata_map = _metadata_from_transport_result(metadata)
         if metadata_map.get("transcript_present") is not True:
             return self._emit_validation_failure(
                 binding=binding,
                 turn_committed_event=turn_committed_event,
-                case_id=case_id,
+                event_id_base=event_id_base,
                 created_monotonic_ms=created_monotonic_ms,
                 created_wall_clock_ms=created_wall_clock_ms,
                 failure_reasons=("provider_transcript_absent",),
                 before_event_count=before_event_count,
             )
+        ref_failure_reasons: list[str] = []
+        asr_frame_ref = _metadata_safe_ref(
+            metadata_map,
+            "asr_frame_ref",
+            failure_reasons=ref_failure_reasons,
+        )
+        text_ref = _metadata_safe_ref(
+            metadata_map,
+            "text_ref",
+            failure_reasons=ref_failure_reasons,
+        )
+        audio_timestamps_ref = _metadata_optional_safe_ref(
+            metadata_map,
+            "audio_timestamps_ref",
+            failure_reasons=ref_failure_reasons,
+        )
+        if ref_failure_reasons:
+            return self._emit_validation_failure(
+                binding=binding,
+                turn_committed_event=turn_committed_event,
+                event_id_base=event_id_base,
+                created_monotonic_ms=created_monotonic_ms,
+                created_wall_clock_ms=created_wall_clock_ms,
+                failure_reasons=tuple(ref_failure_reasons),
+                before_event_count=before_event_count,
+            )
 
         candidate = normalize_asr_candidate(
             binding=binding,
-            asr_frame_ref=f"asr-frame://synthetic/runtime/asr/{_ref_case_slug(case_id)}",
-            text_ref=f"text://synthetic/runtime/asr/{_ref_case_slug(case_id)}",
-            audio_timestamps_ref=None,
-            timestamp_status="unavailable",
+            asr_frame_ref=str(asr_frame_ref),
+            text_ref=str(text_ref),
+            audio_timestamps_ref=audio_timestamps_ref,
+            timestamp_status="available" if audio_timestamps_ref else "unavailable",
             streaming_status="unsupported_final_only",
             output_mode="degraded",
         )
@@ -261,7 +321,7 @@ class AsrRuntimeAdapter:
             contract=contract,
             candidate=candidate,
             turn_committed_event=turn_committed_event,
-            event_id=f"evt_runtime_asr_{_case_slug(case_id)}_transcript",
+            event_id=f"{event_id_base}_transcript",
             created_monotonic_ms=created_monotonic_ms,
             created_wall_clock_ms=created_wall_clock_ms,
         )
@@ -271,9 +331,9 @@ class AsrRuntimeAdapter:
             success_count=1,
             failure_count=0,
             validation_failure_count=0,
-            retry_count=0,
-            timeout_count=0,
-            failure_category_counts=(),
+            retry_count=retries_used,
+            timeout_count=timeout_count,
+            failure_category_counts=_failure_category_counts(failure_reasons),
             emitted_event_names=tuple(str(event["event_name"]) for event in emitted_events),
             output_modes=(str(emission.transcript_event["output_mode"]),),
             provider_alias=str(packet["provider_name"]),
@@ -286,33 +346,45 @@ class AsrRuntimeAdapter:
             return self._transport
         return DashScopeAsrLiveDirectHTTPTransport()
 
+    def _emit_request_retrying(
+        self,
+        *,
+        binding: AsrRequestBinding,
+        turn_committed_event: Mapping[str, Any],
+        event_id_base: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        error: DashScopeAsrLiveTransportError,
+        retry_count: int,
+        timeout_ms: int | None,
+    ) -> None:
+        self._event_harness().emit_request_retrying(
+            event_id=f"{event_id_base}_retrying_{retry_count}",
+            caused_by_event_id=str(turn_committed_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=binding.adapter_request_id,
+            retry_count=retry_count,
+            retry_reason=_first_failure_reason(error.failure_reasons),
+            timeout_ms=timeout_ms,
+        )
+
     def _emit_request_failure(
         self,
         *,
         binding: AsrRequestBinding,
         turn_committed_event: Mapping[str, Any],
-        case_id: str,
+        event_id_base: str,
         created_monotonic_ms: int,
         created_wall_clock_ms: int,
         error: DashScopeAsrLiveTransportError,
+        retry_count: int,
+        timeout_count: int,
+        failure_reasons: Sequence[str],
         before_event_count: int,
     ) -> AsrRuntimeTranscriptionSummary:
-        harness = self._event_harness()
-        retry_count = 0
-        if error.retryable:
-            retry_count = 1
-            harness.emit_request_retrying(
-                event_id=f"evt_runtime_asr_{_case_slug(case_id)}_retrying",
-                caused_by_event_id=str(turn_committed_event["event_id"]),
-                created_monotonic_ms=created_monotonic_ms,
-                created_wall_clock_ms=created_wall_clock_ms,
-                adapter_request_id=binding.adapter_request_id,
-                retry_count=retry_count,
-                retry_reason=_first_failure_reason(error.failure_reasons),
-                timeout_ms=30000 if error.timeout else None,
-            )
-        harness.emit_request_failed(
-            event_id=f"evt_runtime_asr_{_case_slug(case_id)}_failed",
+        self._event_harness().emit_request_failed(
+            event_id=f"{event_id_base}_failed",
             caused_by_event_id=str(turn_committed_event["event_id"]),
             created_monotonic_ms=created_monotonic_ms + retry_count,
             created_wall_clock_ms=created_wall_clock_ms + retry_count,
@@ -328,8 +400,8 @@ class AsrRuntimeAdapter:
             failure_count=1,
             validation_failure_count=0,
             retry_count=retry_count,
-            timeout_count=1 if error.timeout else 0,
-            failure_category_counts=_failure_category_counts(error.failure_reasons),
+            timeout_count=timeout_count,
+            failure_category_counts=_failure_category_counts(failure_reasons),
             emitted_event_names=tuple(str(event["event_name"]) for event in emitted_events),
             output_modes=(),
             provider_alias=ASR_RUNTIME_DEFAULT_PROVIDER_NAME,
@@ -342,14 +414,14 @@ class AsrRuntimeAdapter:
         *,
         binding: AsrRequestBinding,
         turn_committed_event: Mapping[str, Any],
-        case_id: str,
+        event_id_base: str,
         created_monotonic_ms: int,
         created_wall_clock_ms: int,
         failure_reasons: Sequence[str],
         before_event_count: int,
     ) -> AsrRuntimeTranscriptionSummary:
         self._event_harness().emit_output_validation_failed(
-            event_id=f"evt_runtime_asr_{_case_slug(case_id)}_validation_failed",
+            event_id=f"{event_id_base}_validation_failed",
             caused_by_event_id=str(turn_committed_event["event_id"]),
             created_monotonic_ms=created_monotonic_ms,
             created_wall_clock_ms=created_wall_clock_ms,
@@ -853,8 +925,111 @@ def _metadata_from_transport_result(value: object) -> dict[str, Any]:
     return dict(metadata)
 
 
-def _adapter_request_id(case_id: str) -> str:
-    return f"adapter_request_runtime_asr_{_case_slug(case_id)}"
+def _metadata_safe_ref(
+    metadata: Mapping[str, Any],
+    field: str,
+    *,
+    failure_reasons: list[str],
+) -> str | None:
+    value = metadata.get(field)
+    if _is_safe_metadata_ref(value):
+        return str(value)
+    failure_reasons.append(f"provider_{field}_absent")
+    return None
+
+
+def _metadata_optional_safe_ref(
+    metadata: Mapping[str, Any],
+    field: str,
+    *,
+    failure_reasons: list[str],
+) -> str | None:
+    value = metadata.get(field)
+    if value in (None, ""):
+        return None
+    if _is_safe_metadata_ref(value):
+        return str(value)
+    failure_reasons.append(f"provider_{field}_unsafe")
+    return None
+
+
+def _is_safe_metadata_ref(value: object) -> bool:
+    if not isinstance(value, str) or value == "":
+        return False
+    lowered = value.lower()
+    if CREDENTIAL_LIKE_REF_PATTERN.search(value):
+        return False
+    forbidden_markers = (
+        "raw_transcript",
+        "raw_audio",
+        "provider_request",
+        "provider_response",
+        "authorization",
+        "api_key",
+        "token=",
+    )
+    return not any(marker in lowered for marker in forbidden_markers)
+
+
+def _require_committed_turn_in_journal(
+    journal: InMemoryEventJournal,
+    turn_committed_event: Mapping[str, Any],
+) -> None:
+    expected_event_id = str(turn_committed_event.get("event_id", ""))
+    for event in journal.events():
+        if event.get("event_id") != expected_event_id:
+            continue
+        if event.get("event_name") != "TURN_INGRESS_COMMITTED":
+            break
+        for field in ("turn_id", "utterance_id", "audio_span_id", "input_modality"):
+            if event.get(field) != turn_committed_event.get(field):
+                break
+        else:
+            return
+        break
+    raise AsrRuntimeError(
+        "committed turn not in session journal",
+        failure_reasons=("committed turn not in session journal",),
+    )
+
+
+def _require_approval_request_capacity(
+    *,
+    journal: InMemoryEventJournal,
+    adapter_id: str,
+    max_request_count: int,
+) -> None:
+    terminal_events = {
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        "ADAPTER_REQUEST_FAILED",
+        "ADAPTER_OUTPUT_VALIDATION_FAILED",
+    }
+    attempted_count = sum(
+        1
+        for event in journal.events()
+        if event.get("event_name") in terminal_events
+        and event.get("adapter_id") == adapter_id
+        and event.get("adapter_type") == "asr"
+    )
+    if attempted_count >= max_request_count:
+        raise AsrRuntimeError(
+            "approval max_request_count exceeded",
+            failure_reasons=("approval max_request_count exceeded",),
+        )
+
+
+def _adapter_request_id(case_id: str, turn_committed_event: Mapping[str, Any]) -> str:
+    return (
+        "adapter_request_runtime_asr_"
+        f"{_case_slug(case_id)}_{_case_slug(str(turn_committed_event['event_id']))}"
+    )
+
+
+def _runtime_event_id_base(case_id: str, turn_committed_event: Mapping[str, Any]) -> str:
+    return (
+        "evt_runtime_asr_"
+        f"{_case_slug(case_id)}_{_case_slug(str(turn_committed_event['event_id']))}"
+    )
 
 
 def _case_slug(value: str) -> str:

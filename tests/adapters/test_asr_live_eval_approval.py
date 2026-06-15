@@ -312,6 +312,33 @@ def test_fake_transport_success_returns_metadata_only_live_eval_summary() -> Non
     assert "provider_response" not in repr(metadata)
 
 
+def test_fake_transport_empty_transcript_is_redacted_failure() -> None:
+    transport = _FakeAsrLiveTransport(("missing_transcript",))
+
+    summary = run_asr_synthetic_live_eval(
+        approval_packet=_approved_packet(max_request_count=1),
+        input_records=load_asr_live_eval_synthetic_inputs(
+            Path("tests/fixtures/synthetic/asr-live-eval-inputs.jsonl")
+        ),
+        transport=transport,
+        credential_handle=AsrLiveCredentialHandle(
+            credential_ref="secret-ref://local/asr-live-eval/dashscope",
+        ),
+        credential_value="runtime-credential-value-for-test-only",
+    )
+
+    metadata = summary.to_metadata()
+    assert metadata["attempted_request_count"] == 1
+    assert metadata["success_count"] == 0
+    assert metadata["request_failed_count"] == 1
+    assert metadata["failure_category_counts"] == {
+        "provider_transcript_absent": 1,
+    }
+    assert metadata["raw_transcript_included"] is False
+    assert metadata["raw_provider_body_included"] is False
+    assert "forbidden transcript" not in repr(metadata)
+
+
 def test_fake_timeout_and_failure_return_redacted_metadata_only_summary() -> None:
     transport = _FakeAsrLiveTransport(("timeout", "failure"))
 
@@ -600,17 +627,29 @@ class _FakeAsrLiveTransport:
                 failure_reasons=("provider_request_failed",),
                 retryable=False,
             )
-        return _FakeAsrLiveCallMetadata(adapter_request_id=adapter_request_id)
+        if outcome == "missing_transcript":
+            return _FakeAsrLiveCallMetadata(
+                adapter_request_id=adapter_request_id,
+                transcript_present=False,
+            )
+        return _FakeAsrLiveCallMetadata(
+            adapter_request_id=adapter_request_id,
+            transcript_present=True,
+        )
 
 
 class _FakeAsrLiveCallMetadata:
-    def __init__(self, *, adapter_request_id: str) -> None:
+    def __init__(self, *, adapter_request_id: str, transcript_present: bool) -> None:
         self.adapter_request_id = adapter_request_id
+        self.transcript_present = transcript_present
 
     def to_metadata(self) -> dict[str, object]:
         return {
             "adapter_request_id": self.adapter_request_id,
             "success": True,
+            "transcript_present": self.transcript_present,
+            "asr_frame_ref": f"asr-frame://provider/dashscope/{self.adapter_request_id}",
+            "text_ref": f"text://provider/dashscope/{self.adapter_request_id}",
             "raw_audio_included": False,
             "raw_transcript_included": False,
             "raw_provider_request_included": False,

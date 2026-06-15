@@ -61,6 +61,8 @@ class AsrLiveProviderCallMetadata:
     provider_url_ref: str
     model_alias: str
     transcript_present: bool
+    asr_frame_ref: str
+    text_ref: str
     response_text_size_bucket: str
 
     def to_metadata(self) -> dict[str, Any]:
@@ -71,6 +73,8 @@ class AsrLiveProviderCallMetadata:
             "model_alias": self.model_alias,
             "success": True,
             "transcript_present": self.transcript_present,
+            "asr_frame_ref": self.asr_frame_ref,
+            "text_ref": self.text_ref,
             "response_text_size_bucket": self.response_text_size_bucket,
             "raw_audio_included": False,
             "raw_transcript_included": False,
@@ -170,11 +174,17 @@ class DashScopeAsrLiveDirectHTTPTransport:
             ) from exc
 
         response_text = _extract_response_text(response_payload)
+        asr_frame_ref, text_ref = _store_local_transcript_projection(
+            adapter_request_id=adapter_request_id,
+            transcript_text=response_text,
+        )
         return AsrLiveProviderCallMetadata(
             adapter_request_id=adapter_request_id,
             provider_url_ref=ASR_LIVE_DASHSCOPE_PROVIDER_URL_REF,
             model_alias=model_alias,
             transcript_present=bool(response_text.strip()),
+            asr_frame_ref=asr_frame_ref,
+            text_ref=text_ref,
             response_text_size_bucket=_response_text_size_bucket(response_text),
         )
 
@@ -197,6 +207,32 @@ def validate_asr_live_credential_handle(
         raise DashScopeAsrLiveTransportError("credential_handle must be ASR live handle")
     _require_safe_ref(credential_handle.credential_ref, "credential_ref")
     return credential_handle
+
+
+_LOCAL_TRANSCRIPT_TEXT_BY_REF: dict[str, str] = {}
+
+
+def resolve_asr_live_transcript_text_ref(text_ref: str) -> str | None:
+    """Resolve process-local live ASR transcript text by safe ref.
+
+    The raw transcript stays in memory only; adapter events and summaries carry the
+    ref, never the transcript body.
+    """
+
+    text_ref = _require_safe_ref(text_ref, "text_ref")
+    return _LOCAL_TRANSCRIPT_TEXT_BY_REF.get(text_ref)
+
+
+def _store_local_transcript_projection(
+    *,
+    adapter_request_id: str,
+    transcript_text: str,
+) -> tuple[str, str]:
+    adapter_request_id = _require_safe_ref(adapter_request_id, "adapter_request_id")
+    asr_frame_ref = f"asr-frame://provider/dashscope/{adapter_request_id}"
+    text_ref = f"text://provider/dashscope/{adapter_request_id}"
+    _LOCAL_TRANSCRIPT_TEXT_BY_REF[text_ref] = transcript_text
+    return asr_frame_ref, text_ref
 
 
 def _build_openai_compatible_asr_request_body(
