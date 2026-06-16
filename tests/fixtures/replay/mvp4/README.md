@@ -10,3 +10,7 @@ Current fixtures:
 
 - `000-provider-free-voice-e2e.fixture.json`: provider-free voice E2E replay covering fake ASR, fake Thinker, and Router FAST/SPAWN/PATCH decisions.
 - `008-replay-safety.fixture.json`: minimal synthetic voice replay safety fixture with recorded ASR/Thinker refs and Router FAST_ONLY outcome.
+
+`manifest.index.json` maps all required MVP-4 acceptance scenario ids to these
+fixtures, runtime/replay tests, and provider-free smoke coverage. The mapping is
+metadata-only and must not include local trace refs or raw artifact paths.

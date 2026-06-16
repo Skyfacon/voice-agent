@@ -83,12 +83,18 @@ def test_mvp4_manifest_index_is_metadata_only_and_maps_slice1_slice2_fixture() -
     assert manifest["replay_mode"] == "deterministic"
     assert manifest["required_scenarios"] == [
         "MVP4-VOICE-E2E-PROVIDER-FREE-001",
+        "MVP4-VOICE-E2E-THINKER-AUDIO-001",
+        "MVP4-VOICE-E2E-ASR-PARALLEL-001",
         "MVP4-VOICE-E2E-ROUTER-FAST-001",
         "MVP4-VOICE-E2E-ROUTER-SPAWN-SLOWTASK-001",
         "MVP4-VOICE-E2E-ROUTER-PATCH-SLOWTASK-001",
+        "MVP4-VOICE-E2E-TEXT-RESPONSE-001",
         "MVP4-VOICE-E2E-REPLAY-SAFETY-001",
         "MVP4-VOICE-E2E-RAW-ARTIFACT-BLOCK-001",
     ]
+    assert {entry["scenario_id"] for entry in manifest["scenario_coverage"]} == set(
+        manifest["required_scenarios"]
+    )
     assert manifest["fixture_checks"] == [
         {
             "fixture": "000-provider-free-voice-e2e.fixture.json",

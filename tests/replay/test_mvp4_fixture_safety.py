@@ -24,9 +24,12 @@ README = MVP4_REPLAY_FIXTURE_DIR / "README.md"
 
 REQUIRED_MVP4_SCENARIOS = [
     "MVP4-VOICE-E2E-PROVIDER-FREE-001",
+    "MVP4-VOICE-E2E-THINKER-AUDIO-001",
+    "MVP4-VOICE-E2E-ASR-PARALLEL-001",
     "MVP4-VOICE-E2E-ROUTER-FAST-001",
     "MVP4-VOICE-E2E-ROUTER-SPAWN-SLOWTASK-001",
     "MVP4-VOICE-E2E-ROUTER-PATCH-SLOWTASK-001",
+    "MVP4-VOICE-E2E-TEXT-RESPONSE-001",
     "MVP4-VOICE-E2E-REPLAY-SAFETY-001",
     "MVP4-VOICE-E2E-RAW-ARTIFACT-BLOCK-001",
 ]
@@ -86,6 +89,9 @@ def test_mvp4_manifest_index_is_metadata_only_and_covers_replay_safety_scenarios
     assert manifest["replay_mode"] == "deterministic"
     assert manifest["generated_fixtures_must_be"] == ["synthetic", "redacted", "minimal"]
     assert manifest["required_scenarios"] == REQUIRED_MVP4_SCENARIOS
+    assert {entry["scenario_id"] for entry in manifest["scenario_coverage"]} == set(
+        REQUIRED_MVP4_SCENARIOS
+    )
     assert manifest["fixture_safety_flags"] == EXPECTED_FALSE_SAFETY_FLAGS
     assert manifest["safety_flags"] == EXPECTED_FALSE_SAFETY_FLAGS
     assert manifest["allowed_re_eval_components"] == []
