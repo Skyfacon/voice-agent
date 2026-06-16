@@ -90,7 +90,14 @@ def test_provider_free_voice_e2e_does_not_read_env_or_import_provider_adapters(
         )
     )
 
-    module_source = inspect.getsource(mvp4)
+    provider_free_source = "\n".join(
+        (
+            inspect.getsource(mvp4.run_provider_free_voice_e2e),
+            inspect.getsource(mvp4._emit_voice_turn),
+            inspect.getsource(mvp4._append_audio_turn),
+            inspect.getsource(mvp4._emit_mock_thinker_frame),
+        )
+    )
     forbidden_import_markers = (
         "asr_runtime_adapter",
         "asr_session_hook",
@@ -102,7 +109,7 @@ def test_provider_free_voice_e2e_does_not_read_env_or_import_provider_adapters(
         "getenv",
     )
     for marker in forbidden_import_markers:
-        assert marker not in module_source
+        assert marker not in provider_free_source
     serialized_fixture = repr(result.to_replay_fixture())
     assert "DASHSCOPE_API_KEY" not in serialized_fixture
     assert "runtime-credential-value-for-test-only" not in serialized_fixture

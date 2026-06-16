@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -15,7 +16,9 @@ from voice_agent.router.router import (
     RouterContext,
     TaskFocusSnapshot,
 )
-from voice_agent.runtime.session import start_mvp0_session
+from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
+from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig
+from voice_agent.runtime.session import start_configured_session, start_mvp0_session
 from voice_agent.understanding.mock_asr import emit_mock_asr_frame
 
 
@@ -23,6 +26,12 @@ MVP4_SESSION_ID = "sess_mvp4_voice_e2e_provider_free"
 MVP4_CONVERSATION_ID = "conv_mvp4_voice_e2e_provider_free"
 MVP4_FIXTURE_REPLAY_ID = "replay_mvp4_provider_free_voice_e2e_000"
 MVP4_FIXTURE_SOURCE_TRACE_REF = "fixture://mvp4/000-provider-free-voice-e2e"
+MVP4_REAL_EVIDENCE_SESSION_ID = "sess_mvp4_voice_e2e_real_evidence"
+MVP4_REAL_EVIDENCE_CONVERSATION_ID = "conv_mvp4_voice_e2e_real_evidence"
+MVP4_REAL_EVIDENCE_REPLAY_ID = "replay_mvp4_real_evidence_paths_in_memory"
+MVP4_REAL_EVIDENCE_SOURCE_TRACE_REF = "fixture://mvp4/in-memory-real-evidence-paths"
+MVP4_REAL_EVIDENCE_CAPABILITY_REF = "capability://synthetic/mvp4/real-evidence-fake-transport"
+MVP4_REAL_EVIDENCE_CAPABILITY_VERSION = "mvp4.real-evidence.fake-transport.v1"
 
 
 class MVP4ArtifactSafetyError(ValueError):
@@ -114,6 +123,61 @@ class MVP4ProviderFreeVoiceE2EResult:
             for event in self.events
             if event.get("event_name") == event_name
         )
+
+
+@dataclass(frozen=True)
+class MVP4RealEvidenceVoiceE2EResult:
+    audio_input: MVP4AudioInputMetadata
+    events: tuple[dict[str, Any], ...]
+    thinker_metadata: Mapping[str, Any]
+    asr_metadata: Mapping[str, Any]
+
+    @property
+    def turn_committed_event(self) -> dict[str, Any]:
+        return self._single_event_named("TURN_INGRESS_COMMITTED")
+
+    @property
+    def thinker_frame_event(self) -> dict[str, Any]:
+        return self._single_event_named("THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED")
+
+    @property
+    def asr_frame_event(self) -> dict[str, Any]:
+        return self._single_event_named("ASR_TRANSCRIPT_OUTPUT_EMITTED")
+
+    @property
+    def router_decision_event(self) -> dict[str, Any]:
+        return self._single_event_named("ROUTER_DECISION_EMITTED")
+
+    def to_replay_fixture(self) -> dict[str, Any]:
+        if not self.audio_input.replay_export_allowed:
+            raise MVP4ArtifactSafetyError("local wav metadata is blocked from replay export")
+        fixture = {
+            "replay_manifest": {
+                "manifest_schema_version": "1.0",
+                "replay_id": MVP4_REAL_EVIDENCE_REPLAY_ID,
+                "source_trace_ref": MVP4_REAL_EVIDENCE_SOURCE_TRACE_REF,
+                "replay_mode": "deterministic",
+                "event_schema_version_range": ["1.0"],
+                "fixture_domain": "GITHUB_ALLOWED",
+                "generated_from": "synthetic",
+                "contains_raw_audio": False,
+                "contains_raw_trace": False,
+                "contains_real_user_input": False,
+                "contains_secrets": False,
+                "contains_unredacted_tool_result": False,
+                "contains_large_raw_web_content": False,
+                "allowed_re_eval_components": [],
+            },
+            "events": deepcopy(list(self.events)),
+        }
+        validate_mvp4_fixture_safety(fixture)
+        return fixture
+
+    def _single_event_named(self, event_name: str) -> dict[str, Any]:
+        matches = [event for event in self.events if event.get("event_name") == event_name]
+        if len(matches) != 1:
+            raise MVP4ArtifactSafetyError(f"expected exactly one {event_name} event")
+        return deepcopy(matches[0])
 
 
 @dataclass(frozen=True)
@@ -290,6 +354,108 @@ def run_provider_free_voice_e2e(
     )
 
 
+def run_real_evidence_voice_e2e(
+    *,
+    audio_input: MVP4AudioInputMetadata | None = None,
+    thinker_transport: object,
+    thinker_credential_value: str,
+    asr_transport: object,
+    asr_approval_packet: Mapping[str, Any],
+    asr_env: Mapping[str, str],
+    asr_credential_env_var: str,
+    audio_payload: bytes | None = None,
+) -> MVP4RealEvidenceVoiceE2EResult:
+    audio_input = audio_input or load_synthetic_wav_metadata(
+        fixture_id="synthetic-real-evidence-001",
+        duration_ms=1000,
+        sample_rate_hz=16000,
+        channel_count=1,
+    )
+    if not isinstance(audio_input, MVP4AudioInputMetadata):
+        raise TypeError("audio_input must be MVP4AudioInputMetadata")
+    if not isinstance(asr_approval_packet, Mapping):
+        raise TypeError("asr_approval_packet must be a mapping")
+    if not isinstance(asr_env, Mapping):
+        raise TypeError("asr_env must be a mapping")
+    if not isinstance(asr_credential_env_var, str) or asr_credential_env_var == "":
+        raise ValueError("asr_credential_env_var must be a non-empty string")
+
+    payload = audio_payload if audio_payload is not None else _build_synthetic_wav_bytes(audio_input)
+    startup, asr_config = _start_real_evidence_session(
+        asr_approval_packet=asr_approval_packet,
+        asr_credential_env_var=asr_credential_env_var,
+    )
+    journal = startup.journal
+    caused_by_event_id = str(journal.events()[-1]["event_id"])
+    committed = _append_audio_turn(
+        journal=journal,
+        audio_input=audio_input,
+        label="real_evidence",
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=5110,
+        created_wall_clock_ms=1700000005110,
+    )
+
+    from voice_agent.adapters.lalm_thinker_audio_native_runtime import (
+        emit_lalm_thinker_audio_native_evidence_for_turn,
+    )
+
+    thinker_result = emit_lalm_thinker_audio_native_evidence_for_turn(
+        boundary=AdapterCallbackAppendBoundary(journal),
+        turn_committed_event=committed,
+        case_id="mvp4-real-evidence",
+        transport=thinker_transport,
+        audio_payload=payload,
+        audio_format="wav",
+        credential_value=thinker_credential_value,
+        created_monotonic_ms=5150,
+        created_wall_clock_ms=1700000005150,
+        adapter_id="mvp4_lalm_thinker_audio_native",
+    )
+    if not thinker_result.success or thinker_result.thinker_emission is None:
+        raise MVP4ArtifactSafetyError("Thinker audio-native evidence was not emitted")
+    thinker_event = thinker_result.thinker_emission.thinker_event
+
+    from voice_agent.runtime.asr_session_hook import run_asr_for_committed_audio_turn
+
+    asr_summary = run_asr_for_committed_audio_turn(
+        journal=journal,
+        turn_committed_event=committed,
+        case_id="mvp4-real-evidence",
+        audio_payload=payload,
+        audio_mime_type="audio/wav",
+        config=asr_config,
+        transport=asr_transport,
+        approval_packet=asr_approval_packet,
+        env=asr_env,
+        created_monotonic_ms=5160,
+        created_wall_clock_ms=1700000005160,
+    )
+    asr_event = _single_event_for_turn(
+        journal.events(),
+        event_name="ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        turn_committed_event=committed,
+    )
+
+    MVP1Router(journal).emit_decision(
+        turn_committed_event=committed,
+        asr_frame_event=asr_event,
+        thinker_frame_event=thinker_event,
+        router_context=RouterContext(task_focus_snapshot=TaskFocusSnapshot()),
+        event_id="evt_mvp4_voice_e2e_real_evidence_router_decision",
+        task_focus_state_event_id="evt_mvp4_voice_e2e_real_evidence_task_focus_state",
+        created_monotonic_ms=5170,
+        created_wall_clock_ms=1700000005170,
+    )
+
+    return MVP4RealEvidenceVoiceE2EResult(
+        audio_input=audio_input,
+        events=tuple(journal.events()),
+        thinker_metadata=thinker_result.to_metadata(),
+        asr_metadata=asr_summary.to_metadata(),
+    )
+
+
 def validate_provider_free_fixture_safety(fixture: Mapping[str, Any]) -> None:
     if not isinstance(fixture, Mapping):
         raise MVP4ArtifactSafetyError("MVP4 replay fixture must be a mapping")
@@ -324,6 +490,10 @@ def validate_provider_free_fixture_safety(fixture: Mapping[str, Any]) -> None:
             raise MVP4ArtifactSafetyError("audio_bytes are not safe in MVP4 replay fixtures")
         if isinstance(value, str):
             _validate_safe_fixture_string(value)
+
+
+def validate_mvp4_fixture_safety(fixture: Mapping[str, Any]) -> None:
+    validate_provider_free_fixture_safety(fixture)
 
 
 def _emit_voice_turn(
@@ -500,6 +670,96 @@ def _append_audio_turn(
         ingress_outcome="COMMITTED",
         audio_input_ref=audio_input.safe_audio_ref,
     )
+
+
+def _start_real_evidence_session(
+    *,
+    asr_approval_packet: Mapping[str, Any],
+    asr_credential_env_var: str,
+) -> tuple[Any, Any]:
+    from voice_agent.adapters.asr_runtime_adapter import (
+        ASR_RUNTIME_MODE_APPROVED_REAL_LIVE_EVAL,
+        AsrRuntimeConfig,
+        build_asr_runtime_capability_profile,
+    )
+    from voice_agent.adapters.lalm_thinker_profile import build_lalm_thinker_capability
+    from voice_agent.runtime.asr_session_hook import (
+        ASR_SESSION_ASR_MODE_APPROVED_REAL_LIVE_EVAL,
+        AsrSessionAsrConfig,
+    )
+
+    asr_adapter_id = "mvp4_asr_audio_evidence"
+    asr_runtime_config = AsrRuntimeConfig(
+        mode=ASR_RUNTIME_MODE_APPROVED_REAL_LIVE_EVAL,
+        adapter_id=asr_adapter_id,
+        output_mode="real",
+        credential_env_var=asr_credential_env_var,
+        credential_ref="secret-ref://local/mvp4/asr/fake-transport",
+        runtime_config_ref="config://synthetic/mvp4/asr/real-evidence-fake-transport",
+        capability_snapshot_ref=MVP4_REAL_EVIDENCE_CAPABILITY_REF,
+        capability_version=MVP4_REAL_EVIDENCE_CAPABILITY_VERSION,
+    )
+    asr_session_config = AsrSessionAsrConfig(
+        mode=ASR_SESSION_ASR_MODE_APPROVED_REAL_LIVE_EVAL,
+        adapter_id=asr_adapter_id,
+        output_mode="real",
+        credential_env_var=asr_credential_env_var,
+        credential_ref="secret-ref://local/mvp4/asr/fake-transport",
+        runtime_config_ref="config://synthetic/mvp4/asr/real-evidence-fake-transport",
+        capability_snapshot_ref=MVP4_REAL_EVIDENCE_CAPABILITY_REF,
+        capability_version=MVP4_REAL_EVIDENCE_CAPABILITY_VERSION,
+    )
+    startup = start_configured_session(
+        session_id=MVP4_REAL_EVIDENCE_SESSION_ID,
+        conversation_id=MVP4_REAL_EVIDENCE_CONVERSATION_ID,
+        runtime_config_ref="config://synthetic/mvp4/real-evidence-fake-transport",
+        created_monotonic_ms=5100,
+        created_wall_clock_ms=1700000005100,
+        assembly_config=RuntimeAdapterAssemblyConfig(
+            stage="mvp0_mock",
+            capability_snapshot_ref=MVP4_REAL_EVIDENCE_CAPABILITY_REF,
+            capability_version=MVP4_REAL_EVIDENCE_CAPABILITY_VERSION,
+        ),
+        capabilities=(
+            build_asr_runtime_capability_profile(
+                asr_runtime_config,
+                approval_packet=asr_approval_packet,
+            ),
+            build_lalm_thinker_capability(
+                adapter_id="mvp4_lalm_thinker_audio_native",
+                config_ref="config://synthetic/mvp4/lalm-thinker/audio-native-fake-transport",
+            ),
+        ),
+    )
+    return startup, asr_session_config
+
+
+def _single_event_for_turn(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    event_name: str,
+    turn_committed_event: Mapping[str, Any],
+) -> dict[str, Any]:
+    matches = [
+        dict(event)
+        for event in events
+        if event.get("event_name") == event_name
+        and event.get("caused_by_event_id") == turn_committed_event.get("event_id")
+    ]
+    if len(matches) != 1:
+        raise MVP4ArtifactSafetyError(f"expected exactly one {event_name} for committed turn")
+    return matches[0]
+
+
+def _build_synthetic_wav_bytes(audio_input: MVP4AudioInputMetadata) -> bytes:
+    buffer = io.BytesIO()
+    bytes_per_frame = audio_input.channel_count * audio_input.sample_width_bytes
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(audio_input.channel_count)
+        wav_file.setsampwidth(audio_input.sample_width_bytes)
+        wav_file.setframerate(audio_input.sample_rate_hz)
+        wav_file.writeframes(b"\x00" * audio_input.frame_count * bytes_per_frame)
+    return buffer.getvalue()
 
 
 def _emit_mock_thinker_frame(
