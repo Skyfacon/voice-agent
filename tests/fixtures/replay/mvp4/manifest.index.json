@@ -9,14 +9,27 @@
     "MVP4-VOICE-E2E-ROUTER-FAST-001",
     "MVP4-VOICE-E2E-ROUTER-SPAWN-SLOWTASK-001",
     "MVP4-VOICE-E2E-ROUTER-PATCH-SLOWTASK-001",
+    "MVP4-VOICE-E2E-REPLAY-SAFETY-001",
     "MVP4-VOICE-E2E-RAW-ARTIFACT-BLOCK-001"
   ],
   "fixture_checks": [
     {
       "fixture": "000-provider-free-voice-e2e.fixture.json",
       "purpose": "provider-free synthetic audio turn replay covering fake ASR, fake Thinker, and Router FAST/SPAWN/PATCH decisions"
+    },
+    {
+      "fixture": "008-replay-safety.fixture.json",
+      "purpose": "deterministic MVP-4 replay safety fixture proving recorded refs are replayed without provider or runtime reruns"
     }
   ],
+  "fixture_safety_flags": {
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false
+  },
   "safety_flags": {
     "contains_raw_audio": false,
     "contains_raw_trace": false,
@@ -25,6 +38,7 @@
     "contains_unredacted_tool_result": false,
     "contains_large_raw_web_content": false
   },
+  "allowed_re_eval_components": [],
   "forbidden_behavior": [
     "real_provider_call",
     "env_secret_read",

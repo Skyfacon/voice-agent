@@ -10,6 +10,7 @@ from urllib.parse import unquote
 import wave
 
 from voice_agent.events.journal import InMemoryEventJournal
+from voice_agent.privacy.redaction import SECRET_VALUE_PATTERN
 from voice_agent.router.router import (
     MVP1Router,
     MVP1TaskFocusUpdateEmitter,
@@ -1481,6 +1482,15 @@ def _validate_safe_fixture_string(value: str) -> None:
         for term in _MVP4_UNSAFE_STRING_TERMS:
             if term in lowered:
                 raise MVP4ArtifactSafetyError(f"{term} is not safe in MVP4 replay fixtures")
+        if _contains_secret_like_fixture_value(view):
+            raise MVP4ArtifactSafetyError("secret-like values are not safe in MVP4 replay fixtures")
+
+
+def _contains_secret_like_fixture_value(value: str) -> bool:
+    for match in SECRET_VALUE_PATTERN.finditer(value):
+        if match.start() == 0 or not value[match.start() - 1].isalnum():
+            return True
+    return False
 
 
 def _fixture_string_safety_views(value: str) -> tuple[str, ...]:

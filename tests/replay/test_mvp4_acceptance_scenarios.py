@@ -86,14 +86,27 @@ def test_mvp4_manifest_index_is_metadata_only_and_maps_slice1_slice2_fixture() -
         "MVP4-VOICE-E2E-ROUTER-FAST-001",
         "MVP4-VOICE-E2E-ROUTER-SPAWN-SLOWTASK-001",
         "MVP4-VOICE-E2E-ROUTER-PATCH-SLOWTASK-001",
+        "MVP4-VOICE-E2E-REPLAY-SAFETY-001",
         "MVP4-VOICE-E2E-RAW-ARTIFACT-BLOCK-001",
     ]
     assert manifest["fixture_checks"] == [
         {
             "fixture": "000-provider-free-voice-e2e.fixture.json",
             "purpose": "provider-free synthetic audio turn replay covering fake ASR, fake Thinker, and Router FAST/SPAWN/PATCH decisions",
+        },
+        {
+            "fixture": "008-replay-safety.fixture.json",
+            "purpose": "deterministic MVP-4 replay safety fixture proving recorded refs are replayed without provider or runtime reruns",
         }
     ]
+    assert manifest["fixture_safety_flags"] == {
+        "contains_raw_audio": False,
+        "contains_raw_trace": False,
+        "contains_real_user_input": False,
+        "contains_secrets": False,
+        "contains_unredacted_tool_result": False,
+        "contains_large_raw_web_content": False,
+    }
     assert manifest["safety_flags"] == {
         "contains_raw_audio": False,
         "contains_raw_trace": False,
