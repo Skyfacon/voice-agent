@@ -18,8 +18,11 @@ from voice_agent.router.router import (
 )
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 from voice_agent.runtime.assembly import RuntimeAdapterAssemblyConfig
+from voice_agent.runtime.slowtask_orchestrator import MVP1SlowTaskHappyPathOrchestrator
 from voice_agent.runtime.session import start_configured_session, start_mvp0_session
+from voice_agent.slowtask.mock_runtime import MockSlowTaskRuntime
 from voice_agent.understanding.mock_asr import emit_mock_asr_frame
+from voice_agent.user_patch.evidence_pack import UserPatchEvidencePackRuntime
 
 
 MVP4_SESSION_ID = "sess_mvp4_voice_e2e_provider_free"
@@ -178,6 +181,19 @@ class MVP4RealEvidenceVoiceE2EResult:
         if len(matches) != 1:
             raise MVP4ArtifactSafetyError(f"expected exactly one {event_name} event")
         return deepcopy(matches[0])
+
+
+@dataclass(frozen=True)
+class MVP4RouterOutcomeVoiceE2EResult:
+    audio_input: MVP4AudioInputMetadata
+    events: tuple[dict[str, Any], ...]
+    turn_committed_event: dict[str, Any]
+    asr_frame_event: dict[str, Any]
+    thinker_frame_event: dict[str, Any]
+    router_decision_event: dict[str, Any]
+    task_focus_state_event: dict[str, Any]
+    response_summary: Mapping[str, Any]
+    control_plane_summary: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -456,6 +472,234 @@ def run_real_evidence_voice_e2e(
     )
 
 
+def run_mvp4_router_fast_only_voice_e2e(
+    *,
+    audio_input: MVP4AudioInputMetadata | None = None,
+) -> MVP4RouterOutcomeVoiceE2EResult:
+    audio_input = audio_input or load_synthetic_wav_metadata(
+        fixture_id="synthetic-router-fast-only-001",
+        duration_ms=900,
+        sample_rate_hz=16000,
+        channel_count=1,
+    )
+    journal = _start_mvp4_router_outcome_journal(label="fast_only")
+    turn = _emit_real_evidence_voice_turn(
+        journal=journal,
+        audio_input=audio_input,
+        label="router_fast",
+        caused_by_event_id=str(journal.events()[-1]["event_id"]),
+        created_monotonic_ms=6110,
+        created_wall_clock_ms=1700000006110,
+        router_context=RouterContext(task_focus_snapshot=TaskFocusSnapshot()),
+        task_focus_hint="FOREGROUND_CHAT",
+        task_like=False,
+        complexity_hint="simple",
+        focus_confidence=0.88,
+        evidence_uncertainty="low",
+    )
+    response_summary = {
+        "response_kind": "runtime_summary",
+        "route": "FAST_ONLY",
+        "source_router_event_id": turn.router_decision_event["event_id"],
+        "response_text_ref": "response-text://synthetic/mvp4/router-fast-only",
+        "real_tts_used": False,
+        "voice_output": "none",
+    }
+    return _router_outcome_result(
+        audio_input=audio_input,
+        journal=journal,
+        turn=turn,
+        response_summary=response_summary,
+        control_plane_summary={"route": "FAST_ONLY"},
+    )
+
+
+def run_mvp4_router_spawn_slowtask_voice_e2e(
+    *,
+    audio_input: MVP4AudioInputMetadata | None = None,
+) -> MVP4RouterOutcomeVoiceE2EResult:
+    audio_input = audio_input or load_synthetic_wav_metadata(
+        fixture_id="synthetic-router-spawn-job-001",
+        duration_ms=1100,
+        sample_rate_hz=16000,
+        channel_count=1,
+    )
+    journal = _start_mvp4_router_outcome_journal(label="spawn_slowtask")
+    turn = _emit_real_evidence_voice_turn(
+        journal=journal,
+        audio_input=audio_input,
+        label="router_spawn",
+        caused_by_event_id=str(journal.events()[-1]["event_id"]),
+        created_monotonic_ms=6210,
+        created_wall_clock_ms=1700000006210,
+        router_context=RouterContext(task_focus_snapshot=TaskFocusSnapshot()),
+        task_focus_hint="NEW_TASK_CANDIDATE",
+        task_like=True,
+        complexity_hint="complex",
+        focus_confidence=0.91,
+        evidence_uncertainty="low",
+    )
+    task_id = "task_mvp4_router_outcome_spawn"
+    source_evidence_refs = _voice_evidence_refs(turn)
+    slowtask_result = MVP1SlowTaskHappyPathOrchestrator(journal).run_spawn_planning_completed(
+        router_decision_event=turn.router_decision_event,
+        task_id=task_id,
+        initial_goal_ref="goal://synthetic/mvp4/router-outcome/spawn",
+        source_evidence_refs=source_evidence_refs,
+        evidence_refs=source_evidence_refs,
+        resolved_arguments_ref="args://synthetic/mvp4/router-outcome/spawn",
+        provenance_ref="provenance://synthetic/mvp4/router-outcome/spawn",
+        field_provenance_refs=(
+            "provenance://synthetic/mvp4/router-outcome/spawn/asr",
+            "provenance://synthetic/mvp4/router-outcome/spawn/thinker",
+        ),
+        commitment_id="commitment_mvp4_router_outcome_spawn",
+        commitment_ref="commitment://synthetic/mvp4/router-outcome/spawn",
+        event_id_prefix="evt_mvp4_router_outcome_spawn",
+        created_monotonic_ms=6300,
+        created_wall_clock_ms=1700000006300,
+    )
+    commitment = _single_event_named(journal.events(), "SEMANTIC_COMMITMENT_EMITTED")
+    response_summary = {
+        "response_kind": "runtime_summary",
+        "route": "SPAWN_SLOW_TASK",
+        "source_event_id": commitment["event_id"],
+        "response_text_ref": f"response-text://synthetic/mvp4/slowtask-mock/{task_id}",
+        "real_tts_used": False,
+        "voice_output": "none",
+    }
+    return _router_outcome_result(
+        audio_input=audio_input,
+        journal=journal,
+        turn=turn,
+        response_summary=response_summary,
+        control_plane_summary={
+            "route": "SPAWN_SLOW_TASK",
+            "task_id": slowtask_result.task_id,
+            "plan_version": slowtask_result.plan_version,
+        },
+    )
+
+
+def run_mvp4_router_patch_active_slowtask_voice_e2e(
+    *,
+    audio_input: MVP4AudioInputMetadata | None = None,
+) -> MVP4RouterOutcomeVoiceE2EResult:
+    audio_input = audio_input or load_synthetic_wav_metadata(
+        fixture_id="synthetic-router-patch-job-001",
+        duration_ms=950,
+        sample_rate_hz=16000,
+        channel_count=1,
+    )
+    journal = _start_mvp4_router_outcome_journal(label="patch_slowtask")
+    active_task_id = "task_mvp4_router_outcome_active"
+    setup_turn = _emit_real_evidence_voice_turn(
+        journal=journal,
+        audio_input=audio_input,
+        label="router_patch_setup_spawn",
+        caused_by_event_id=str(journal.events()[-1]["event_id"]),
+        created_monotonic_ms=6410,
+        created_wall_clock_ms=1700000006410,
+        router_context=RouterContext(task_focus_snapshot=TaskFocusSnapshot()),
+        task_focus_hint="NEW_TASK_CANDIDATE",
+        task_like=True,
+        complexity_hint="complex",
+        focus_confidence=0.9,
+        evidence_uncertainty="low",
+    )
+    created = MockSlowTaskRuntime(journal).create_from_router_spawn(
+        router_decision_event=setup_turn.router_decision_event,
+        task_id=active_task_id,
+        initial_goal_ref="goal://synthetic/mvp4/router-outcome/active",
+        event_id_prefix="evt_mvp4_router_outcome_active_setup",
+        created_monotonic_ms=6500,
+        created_wall_clock_ms=1700000006500,
+        source_evidence_refs=_voice_evidence_refs(setup_turn),
+    )
+    active_state = _append_active_slowtask_planning_state(
+        journal=journal,
+        created_event=created.produced_events[0],
+        task_id=active_task_id,
+        created_monotonic_ms=6502,
+        created_wall_clock_ms=1700000006502,
+    )
+    active_focus = MVP1TaskFocusUpdateEmitter(journal).emit_update(
+        router_decision_event=setup_turn.router_decision_event,
+        event_id="evt_mvp4_router_outcome_active_focus_state",
+        created_monotonic_ms=6504,
+        created_wall_clock_ms=1700000006504,
+        active_task_id=active_task_id,
+        foreground_mode="SLOWTASK_ACTIVE",
+        default_patch_policy="ACTIVE_TASK_PATCH_ONLY",
+    )
+    patch_turn = _emit_real_evidence_voice_turn(
+        journal=journal,
+        audio_input=audio_input,
+        label="router_patch",
+        caused_by_event_id=str(active_focus["event_id"]),
+        created_monotonic_ms=6610,
+        created_wall_clock_ms=1700000006610,
+        router_context=RouterContext(
+            task_focus_snapshot=TaskFocusSnapshot(
+                active_task_id=active_task_id,
+                lifecycle_phase=str(active_state["to_state"]),
+                current_plan_version=created.plan_version,
+            )
+        ),
+        task_focus_hint="ACTIVE_TASK_PATCH",
+        task_like=False,
+        complexity_hint="simple",
+        focus_confidence=0.92,
+        evidence_uncertainty="low",
+    )
+    next_task_event_seq = int(active_state["task_event_seq"]) + 1
+    patch_result = UserPatchEvidencePackRuntime(journal).receive_patch_from_router_decision(
+        router_decision_event=patch_turn.router_decision_event,
+        turn_committed_event=patch_turn.turn_committed_event,
+        asr_frame_event=patch_turn.asr_frame_event,
+        thinker_frame_event=patch_turn.thinker_frame_event,
+        task_id=active_task_id,
+        current_plan_version=created.plan_version,
+        next_task_event_seq=next_task_event_seq,
+        patch_id="patch_mvp4_router_outcome_voice",
+        event_id="evt_mvp4_router_outcome_voice_user_patch_received",
+        evidence_ref="evidence://synthetic/mvp4/router-outcome/voice-patch",
+        created_monotonic_ms=6670,
+        created_wall_clock_ms=1700000006670,
+        asr_nbest=(
+            {
+                "text_ref": patch_turn.asr_frame_event["text_ref"],
+                "confidence": 0.81,
+                "source_event_id": patch_turn.asr_frame_event["event_id"],
+            },
+        ),
+        transcript_hint_ref=patch_turn.asr_frame_event["text_ref"],
+        semantic_summary_ref=patch_turn.thinker_frame_event["semantic_summary_ref"],
+        candidate_patch_types=("constraint_update_candidate",),
+        patch_hint="voice_constraint_update_candidate",
+    )
+    response_summary = {
+        "response_kind": "runtime_summary",
+        "route": "PATCH_ACTIVE_SLOW_TASK",
+        "source_event_id": patch_result.user_patch_event["event_id"],
+        "response_text_ref": f"response-text://synthetic/mvp4/user-patch/{active_task_id}",
+        "real_tts_used": False,
+        "voice_output": "none",
+    }
+    return _router_outcome_result(
+        audio_input=audio_input,
+        journal=journal,
+        turn=patch_turn,
+        response_summary=response_summary,
+        control_plane_summary={
+            "route": "PATCH_ACTIVE_SLOW_TASK",
+            "active_task_id": active_task_id,
+            "plan_version": created.plan_version,
+            "task_event_seq": next_task_event_seq,
+        },
+    )
+
+
 def validate_provider_free_fixture_safety(fixture: Mapping[str, Any]) -> None:
     if not isinstance(fixture, Mapping):
         raise MVP4ArtifactSafetyError("MVP4 replay fixture must be a mapping")
@@ -494,6 +738,245 @@ def validate_provider_free_fixture_safety(fixture: Mapping[str, Any]) -> None:
 
 def validate_mvp4_fixture_safety(fixture: Mapping[str, Any]) -> None:
     validate_provider_free_fixture_safety(fixture)
+
+
+def _start_mvp4_router_outcome_journal(*, label: str) -> InMemoryEventJournal:
+    startup = start_mvp0_session(
+        session_id=f"sess_mvp4_router_outcome_{label}",
+        conversation_id=f"conv_mvp4_router_outcome_{label}",
+        runtime_config_ref=f"config://synthetic/mvp4/router-outcome/{label}",
+        created_monotonic_ms=6000,
+        created_wall_clock_ms=1700000006000,
+    )
+    return startup.journal
+
+
+def _emit_real_evidence_voice_turn(
+    *,
+    journal: InMemoryEventJournal,
+    audio_input: MVP4AudioInputMetadata,
+    label: str,
+    caused_by_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    router_context: RouterContext,
+    task_focus_hint: str,
+    task_like: bool,
+    complexity_hint: str,
+    focus_confidence: float,
+    evidence_uncertainty: str,
+) -> _TurnRuntimeResult:
+    committed = _append_audio_turn(
+        journal=journal,
+        audio_input=audio_input,
+        label=label,
+        caused_by_event_id=caused_by_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+    )
+    asr_event = _emit_real_asr_transcript_event(
+        journal=journal,
+        turn_committed_event=committed,
+        event_id=f"evt_mvp4_voice_e2e_{label}_real_asr",
+        adapter_request_id=f"adapter_request_mvp4_{label}_asr",
+        created_monotonic_ms=created_monotonic_ms + 40,
+        created_wall_clock_ms=created_wall_clock_ms + 40,
+        asr_frame_ref=f"asr-frame://synthetic/mvp4/{audio_input.fixture_id}/{label}",
+        text_ref=f"text://synthetic/mvp4/{audio_input.fixture_id}/{label}",
+    )
+    thinker_event = _emit_real_thinker_semantic_event(
+        journal=journal,
+        turn_committed_event=committed,
+        event_id=f"evt_mvp4_voice_e2e_{label}_real_thinker",
+        adapter_request_id=f"adapter_request_mvp4_{label}_thinker",
+        created_monotonic_ms=created_monotonic_ms + 41,
+        created_wall_clock_ms=created_wall_clock_ms + 41,
+        semantic_frame_ref=f"semantic-frame://synthetic/mvp4/{audio_input.fixture_id}/{label}",
+        semantic_summary_ref=f"summary://synthetic/mvp4/{audio_input.fixture_id}/{label}",
+        task_focus_hint=task_focus_hint,
+        task_like=task_like,
+        complexity_hint=complexity_hint,
+        focus_confidence=focus_confidence,
+        evidence_uncertainty=evidence_uncertainty,
+    )
+    router_result = MVP1Router(journal).emit_decision(
+        turn_committed_event=committed,
+        asr_frame_event=asr_event,
+        thinker_frame_event=thinker_event,
+        router_context=router_context,
+        event_id=f"evt_mvp4_voice_e2e_{label}_router_decision",
+        task_focus_state_event_id=f"evt_mvp4_voice_e2e_{label}_task_focus_state",
+        created_monotonic_ms=created_monotonic_ms + 50,
+        created_wall_clock_ms=created_wall_clock_ms + 50,
+    )
+    return _TurnRuntimeResult(
+        turn_committed_event=committed,
+        asr_frame_event=asr_event,
+        thinker_frame_event=thinker_event,
+        router_decision_event=router_result.router_decision_event,
+        task_focus_state_event=router_result.task_focus_state_event,
+    )
+
+
+def _emit_real_asr_transcript_event(
+    *,
+    journal: InMemoryEventJournal,
+    turn_committed_event: Mapping[str, Any],
+    event_id: str,
+    adapter_request_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    asr_frame_ref: str,
+    text_ref: str,
+) -> dict[str, Any]:
+    return journal.append(
+        event_name="ASR_TRANSCRIPT_OUTPUT_EMITTED",
+        event_id=event_id,
+        source_module="asr_adapter",
+        caused_by_event_id=str(turn_committed_event["event_id"]),
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        trace_redaction_level="metadata_only",
+        adapter_id="mvp4_synthetic_real_asr",
+        adapter_type="asr",
+        adapter_request_id=adapter_request_id,
+        turn_id=str(turn_committed_event["turn_id"]),
+        utterance_id=str(turn_committed_event["utterance_id"]),
+        input_modality="audio",
+        audio_span_id=str(turn_committed_event["audio_span_id"]),
+        asr_frame_ref=asr_frame_ref,
+        text_ref=text_ref,
+        transcript_finality="final",
+        timestamp_status="available",
+        streaming_status="supported",
+        output_mode="real",
+    )
+
+
+def _emit_real_thinker_semantic_event(
+    *,
+    journal: InMemoryEventJournal,
+    turn_committed_event: Mapping[str, Any],
+    event_id: str,
+    adapter_request_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    semantic_frame_ref: str,
+    semantic_summary_ref: str,
+    task_focus_hint: str,
+    task_like: bool,
+    complexity_hint: str,
+    focus_confidence: float,
+    evidence_uncertainty: str,
+) -> dict[str, Any]:
+    audio_span_id = str(turn_committed_event["audio_span_id"])
+    return journal.append(
+        event_name="THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
+        event_id=event_id,
+        source_module="thinker_adapter",
+        caused_by_event_id=str(turn_committed_event["event_id"]),
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        trace_redaction_level="metadata_only",
+        adapter_id="mvp4_synthetic_real_thinker",
+        adapter_type="thinker",
+        adapter_request_id=adapter_request_id,
+        turn_id=str(turn_committed_event["turn_id"]),
+        utterance_id=str(turn_committed_event["utterance_id"]),
+        input_modality=str(turn_committed_event["input_modality"]),
+        audio_span_id=audio_span_id,
+        semantic_frame_schema="voice_agent.semantic_frame.v1",
+        normalization_status="normalized",
+        semantic_frame_ref=semantic_frame_ref,
+        semantic_summary_ref=semantic_summary_ref,
+        semantic_close_status="available",
+        assistant_directedness_status="available",
+        emotion_status="available",
+        audio_caption_status="available",
+        semantic_close_ref=f"semantic-close://synthetic/mvp4/{audio_span_id}",
+        assistant_directedness_ref=f"assistant-directedness://synthetic/mvp4/{audio_span_id}",
+        emotion_ref=f"emotion://synthetic/mvp4/{audio_span_id}",
+        audio_caption_ref=f"audio-caption://synthetic/mvp4/{audio_span_id}",
+        output_mode="real",
+        task_focus_hint=task_focus_hint,
+        task_like=task_like,
+        complexity_hint=complexity_hint,
+        focus_confidence=focus_confidence,
+        evidence_uncertainty=evidence_uncertainty,
+    )
+
+
+def _voice_evidence_refs(turn: _TurnRuntimeResult) -> tuple[str, str]:
+    return (
+        str(turn.asr_frame_event["asr_frame_ref"]),
+        str(turn.thinker_frame_event["semantic_frame_ref"]),
+    )
+
+
+def _append_active_slowtask_planning_state(
+    *,
+    journal: InMemoryEventJournal,
+    created_event: Mapping[str, Any],
+    task_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+) -> dict[str, Any]:
+    planning_started = journal.append(
+        event_name="PLANNING_STARTED",
+        event_id="evt_mvp4_router_outcome_active_planning_started",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(created_event["event_id"]),
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=3,
+        planning_reason="synthetic_mvp4_active_task_setup",
+    )
+    return journal.append(
+        event_name="SLOWTASK_STATE_CHANGED",
+        event_id="evt_mvp4_router_outcome_active_state_planning",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(planning_started["event_id"]),
+        created_monotonic_ms=created_monotonic_ms + 1,
+        created_wall_clock_ms=created_wall_clock_ms + 1,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=4,
+        from_state="CREATED",
+        to_state="PLANNING",
+        reason="synthetic_mvp4_active_task_setup",
+    )
+
+
+def _single_event_named(events: Sequence[Mapping[str, Any]], event_name: str) -> dict[str, Any]:
+    matches = [event for event in events if event.get("event_name") == event_name]
+    if len(matches) != 1:
+        raise MVP4ArtifactSafetyError(f"expected exactly one {event_name} event")
+    return deepcopy(dict(matches[0]))
+
+
+def _router_outcome_result(
+    *,
+    audio_input: MVP4AudioInputMetadata,
+    journal: InMemoryEventJournal,
+    turn: _TurnRuntimeResult,
+    response_summary: Mapping[str, Any],
+    control_plane_summary: Mapping[str, Any],
+) -> MVP4RouterOutcomeVoiceE2EResult:
+    return MVP4RouterOutcomeVoiceE2EResult(
+        audio_input=audio_input,
+        events=tuple(journal.events()),
+        turn_committed_event=deepcopy(turn.turn_committed_event),
+        asr_frame_event=deepcopy(turn.asr_frame_event),
+        thinker_frame_event=deepcopy(turn.thinker_frame_event),
+        router_decision_event=deepcopy(turn.router_decision_event),
+        task_focus_state_event=deepcopy(turn.task_focus_state_event),
+        response_summary=deepcopy(dict(response_summary)),
+        control_plane_summary=deepcopy(dict(control_plane_summary)),
+    )
 
 
 def _emit_voice_turn(
