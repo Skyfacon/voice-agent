@@ -1,0 +1,38 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP4-PROVIDER-FREE-VOICE-SPINE",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "generated_fixtures_must_be": ["synthetic", "redacted", "minimal"],
+  "required_scenarios": [
+    "MVP4-VOICE-E2E-PROVIDER-FREE-001",
+    "MVP4-VOICE-E2E-ROUTER-FAST-001",
+    "MVP4-VOICE-E2E-ROUTER-SPAWN-SLOWTASK-001",
+    "MVP4-VOICE-E2E-ROUTER-PATCH-SLOWTASK-001",
+    "MVP4-VOICE-E2E-RAW-ARTIFACT-BLOCK-001"
+  ],
+  "fixture_checks": [
+    {
+      "fixture": "000-provider-free-voice-e2e.fixture.json",
+      "purpose": "provider-free synthetic audio turn replay covering fake ASR, fake Thinker, and Router FAST/SPAWN/PATCH decisions"
+    }
+  ],
+  "safety_flags": {
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false
+  },
+  "forbidden_behavior": [
+    "real_provider_call",
+    "env_secret_read",
+    "provider_sdk_required",
+    "canonical_event_addition",
+    "raw_audio_fixture",
+    "raw_transcript_fixture",
+    "raw_provider_body_fixture",
+    "local_trace_or_cache_ref"
+  ]
+}
