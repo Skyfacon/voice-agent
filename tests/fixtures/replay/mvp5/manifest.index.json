@@ -1,0 +1,157 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP5-ACCEPTANCE",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "scope": "MVP-5 Goal 1 safety foundation: metadata-only acceptance scaffold, local wav opt-in gate, live provider approval gate, and fail-closed MVP-4 prerequisite status before runtime slices.",
+  "generated_fixtures_must_be": [
+    "synthetic",
+    "redacted",
+    "minimal"
+  ],
+  "contains_raw_audio": false,
+  "contains_raw_trace": false,
+  "contains_real_user_input": false,
+  "contains_secrets": false,
+  "contains_unredacted_tool_result": false,
+  "contains_large_raw_web_content": false,
+  "contains_raw_transcript": false,
+  "contains_provider_body": false,
+  "contains_prompt_dump": false,
+  "contains_local_wav_path": false,
+  "provider_execution_allowed_by_default": false,
+  "local_wav_read_allowed_by_default": false,
+  "replay_reruns_provider": false,
+  "safe_ref_examples": [
+    "fixture://mvp5/metadata-only-placeholder",
+    "summary://mvp5/live-redacted-placeholder"
+  ],
+  "mvp4_prerequisite_status": {
+    "status": "blocked",
+    "runtime_goal_blocked": true,
+    "checked_artifacts": [
+      "acceptance_replay_tests",
+      "fixture_safety_tests",
+      "mvp4_fixture_readme",
+      "mvp4_manifest_index",
+      "provider_free_voice_e2e_orchestrator",
+      "provider_free_voice_e2e_tests",
+      "real_evidence_path_tests",
+      "router_outcome_handling_tests",
+      "voice_evidence_replay_tests",
+      "voice_router_fusion_tests"
+    ],
+    "missing": [
+      "acceptance_replay_tests",
+      "fixture_safety_tests",
+      "mvp4_fixture_readme",
+      "mvp4_manifest_index",
+      "provider_free_voice_e2e_orchestrator",
+      "provider_free_voice_e2e_tests",
+      "real_evidence_path_tests",
+      "router_outcome_handling_tests",
+      "voice_evidence_replay_tests",
+      "voice_router_fusion_tests"
+    ],
+    "blocker_summary_ref": "summary://mvp5/prerequisite/mvp4-runtime-artifacts-missing"
+  },
+  "required_scenarios": [
+    "MVP5-LIVE-WAV-INPUT-GATE-001",
+    "MVP5-LIVE-APPROVAL-GATE-001",
+    "MVP5-LIVE-ASR-THINKER-EVIDENCE-001",
+    "MVP5-LIVE-ROUTER-AUTO-001",
+    "MVP5-LIVE-ROUTE-DIRECT-001",
+    "MVP5-LIVE-ROUTE-SLOWTASK-001",
+    "MVP5-LIVE-ROUTE-USERPATCH-001",
+    "MVP5-LIVE-THREE-ROUTE-PACK-001",
+    "MVP5-LIVE-SUMMARY-SAFETY-001",
+    "MVP5-LIVE-REPLAY-SAFETY-001",
+    "MVP5-LIVE-RAW-ARTIFACT-BLOCK-001"
+  ],
+  "forbidden_behaviors": [
+    "default_provider_call",
+    "provider_call_without_live_provider_opt_in",
+    "local_wav_read_without_explicit_opt_in",
+    "realtime_mic_capture",
+    "replay_reruns_provider",
+    "env_secret_read_in_provider_free_tests",
+    "raw_audio_fixture",
+    "raw_transcript_fixture",
+    "provider_body_fixture",
+    "prompt_dump_fixture",
+    "local_wav_path_fixture",
+    "secret_or_credential_fixture",
+    "new_canonical_event_without_adr",
+    "direct_provider_call_outside_adapter",
+    "route_forcing",
+    "real_tts_or_voice_output",
+    "real_slow_llm_loop",
+    "real_external_side_effect_tool"
+  ],
+  "required_replay_properties": [
+    "deterministic_replay_uses_recorded_refs_only",
+    "mvp5_acceptance_is_provider_free_by_default",
+    "mvp5_fixtures_are_metadata_only",
+    "mvp5_live_provider_requires_explicit_approval",
+    "mvp5_local_wav_requires_explicit_opt_in",
+    "mvp5_runtime_goals_fail_closed_when_mvp4_prerequisites_missing"
+  ],
+  "fixture_checks": [],
+  "scenarios": [
+    {
+      "scenario_id": "MVP5-LIVE-WAV-INPUT-GATE-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Goal 1 covers the local wav opt-in gate with provider-free tests; runtime event-chain validation waits for MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-APPROVAL-GATE-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Goal 1 covers the live provider approval gate with provider-free tests; no provider call is made."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ASR-THINKER-EVIDENCE-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Runtime evidence production is fail-closed until MVP-4 voice E2E artifacts exist."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTER-AUTO-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Router auto-result validation is fail-closed until MVP-4 Router outcome artifacts exist."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-DIRECT-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Direct-route runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-SLOWTASK-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "SlowTask-route runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-USERPATCH-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "UserPatch-route runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-THREE-ROUTE-PACK-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Three-route pack runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-SUMMARY-SAFETY-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Goal 1 establishes summary safety flags; runtime summary validation waits for later MVP-5 goals."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-REPLAY-SAFETY-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Goal 1 manifest declares replay never reruns providers; runtime replay validation waits for MVP-4 prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-RAW-ARTIFACT-BLOCK-001",
+      "runtime_prerequisite_status": "blocked",
+      "assertion": "Goal 1 manifest and gate tests reject unsafe raw artifact metadata before runtime export exists."
+    }
+  ]
+}
