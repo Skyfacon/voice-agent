@@ -1,0 +1,295 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP5-ACCEPTANCE",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "scope": "MVP-5 safety foundation and live route coverage: metadata-only acceptance scaffold, local wav opt-in gate, live provider approval gate, and present MVP-4 prerequisite status.",
+  "generated_fixtures_must_be": [
+    "synthetic",
+    "redacted",
+    "minimal"
+  ],
+  "contains_raw_audio": false,
+  "contains_raw_trace": false,
+  "contains_real_user_input": false,
+  "contains_secrets": false,
+  "contains_unredacted_tool_result": false,
+  "contains_large_raw_web_content": false,
+  "contains_raw_transcript": false,
+  "contains_provider_body": false,
+  "contains_prompt_dump": false,
+  "contains_local_wav_path": false,
+  "provider_execution_allowed_by_default": false,
+  "local_wav_read_allowed_by_default": false,
+  "replay_reruns_provider": false,
+  "safe_ref_examples": [
+    "fixture://mvp5/metadata-only-placeholder",
+    "summary://mvp5/live-redacted-placeholder"
+  ],
+  "mvp4_prerequisite_status": {
+    "status": "present",
+    "runtime_goal_blocked": false,
+    "checked_artifacts": [
+      "acceptance_replay_tests",
+      "fixture_safety_tests",
+      "mvp4_fixture_readme",
+      "mvp4_manifest_index",
+      "provider_free_voice_e2e_orchestrator",
+      "provider_free_voice_e2e_tests",
+      "real_evidence_path_tests",
+      "router_outcome_handling_tests",
+      "voice_evidence_replay_tests",
+      "voice_router_fusion_tests"
+    ],
+    "missing": [],
+    "status_summary_ref": "summary://mvp5/prerequisite/mvp4-runtime-artifacts-present"
+  },
+  "required_scenarios": [
+    "MVP5-LIVE-WAV-INPUT-GATE-001",
+    "MVP5-LIVE-APPROVAL-GATE-001",
+    "MVP5-LIVE-ASR-THINKER-EVIDENCE-001",
+    "MVP5-LIVE-ROUTER-AUTO-001",
+    "MVP5-LIVE-ROUTE-DIRECT-001",
+    "MVP5-LIVE-ROUTE-SLOWTASK-001",
+    "MVP5-LIVE-ROUTE-USERPATCH-001",
+    "MVP5-LIVE-THREE-ROUTE-PACK-001",
+    "MVP5-LIVE-SUMMARY-SAFETY-001",
+    "MVP5-LIVE-REPLAY-SAFETY-001",
+    "MVP5-LIVE-RAW-ARTIFACT-BLOCK-001"
+  ],
+  "forbidden_behaviors": [
+    "default_provider_call",
+    "provider_call_without_live_provider_opt_in",
+    "local_wav_read_without_explicit_opt_in",
+    "realtime_mic_capture",
+    "replay_reruns_provider",
+    "env_secret_read_in_provider_free_tests",
+    "raw_audio_fixture",
+    "raw_transcript_fixture",
+    "provider_body_fixture",
+    "prompt_dump_fixture",
+    "local_wav_path_fixture",
+    "secret_or_credential_fixture",
+    "new_canonical_event_without_adr",
+    "direct_provider_call_outside_adapter",
+    "route_forcing",
+    "real_tts_or_voice_output",
+    "real_slow_llm_loop",
+    "real_external_side_effect_tool"
+  ],
+  "required_replay_properties": [
+    "deterministic_replay_uses_recorded_refs_only",
+    "mvp5_acceptance_is_provider_free_by_default",
+    "mvp5_fixtures_are_metadata_only",
+    "mvp5_live_provider_requires_explicit_approval",
+    "mvp5_local_wav_requires_explicit_opt_in",
+    "mvp5_runtime_goals_fail_closed_when_mvp4_prerequisites_missing"
+  ],
+  "fixture_checks": [],
+  "goal5_evidence_tracks": {
+    "provider_free_tests": {
+      "status": "passed",
+      "evidence": [
+        "./scripts/test tests/acceptance/test_mvp5_acceptance_scenarios.py -q",
+        "./scripts/test tests/runtime/test_mvp5_live_audio_input.py -q",
+        "./scripts/test tests/runtime/test_mvp5_live_approval.py -q",
+        "./scripts/test tests/runtime/test_mvp5_live_voice_evidence.py -q",
+        "./scripts/test tests/runtime/test_mvp5_live_router_runner.py -q",
+        "./scripts/test tests/runtime/test_mvp5_live_route_results.py -q",
+        "./scripts/test tests/runtime/test_mvp5_real_voice_e2e_smoke.py -q",
+        "./scripts/test tests/replay/test_mvp5_live_route_replay.py -q"
+      ],
+      "summary": "Default Goal 5 verification uses provider-free tests, fake transports, and tmp synthetic wav files only."
+    },
+    "fake_transport_tests": {
+      "status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_voice_evidence.py",
+        "tests/runtime/test_mvp5_live_router_runner.py",
+        "tests/runtime/test_mvp5_live_route_results.py",
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py"
+      ],
+      "summary": "Fake ASR and Thinker transports exercise adapter-owned live evidence, Router route results, and smoke JSON without provider calls."
+    },
+    "replay_safety_tests": {
+      "status": "passed",
+      "evidence": [
+        "tests/replay/test_mvp5_live_route_replay.py"
+      ],
+      "summary": "Replay consumes recorded event metadata and refs only, with no provider rerun."
+    },
+    "stdout_fixture_safety_tests": {
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance/test_mvp5_acceptance_scenarios.py",
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py",
+        "tests/fixtures/replay/mvp5/manifest.index.json"
+      ],
+      "summary": "Committed manifest and smoke summaries are metadata-only with safety flags false."
+    },
+    "optional_live_smoke_status": {
+      "status": "not_run_no_approved_local_wav",
+      "evidence": [
+        "DASHSCOPE_API_KEY present",
+        "summary://mvp5/goal5/live-evidence"
+      ],
+      "summary": "DashScope credential preflight passed, but no approved local wav or pack was available for a real provider call."
+    }
+  },
+  "scenarios": [
+    {
+      "scenario_id": "MVP5-LIVE-WAV-INPUT-GATE-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 covers the local wav opt-in gate with provider-free tests; runtime event-chain validation can use present MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-APPROVAL-GATE-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 covers the live provider approval gate with provider-free tests; no provider call is made."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ASR-THINKER-EVIDENCE-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Runtime evidence production uses present MVP-4 voice E2E artifacts without default provider calls."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTER-AUTO-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Router auto-result validation can use present MVP-4 Router outcome artifacts."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-DIRECT-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Direct-route runtime validation uses present MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-SLOWTASK-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "SlowTask-route runtime validation uses present MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-USERPATCH-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "UserPatch-route runtime validation uses present MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-THREE-ROUTE-PACK-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Three-route pack runtime validation uses present MVP-4 voice E2E prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-SUMMARY-SAFETY-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 establishes summary safety flags; later MVP-5 goals validate runtime summary metadata."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-REPLAY-SAFETY-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 manifest declares replay never reruns providers; runtime replay validation uses present MVP-4 prerequisites."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-RAW-ARTIFACT-BLOCK-001",
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 manifest and gate tests reject unsafe raw artifact metadata before runtime export exists."
+    }
+  ],
+  "scenario_coverage": [
+    {
+      "scenario_id": "MVP5-LIVE-WAV-INPUT-GATE-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_audio_input.py",
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py"
+      ],
+      "summary": "Local wav loading fails closed without explicit opt-in; opt-in metadata redacts local path and file name while bytes stay in an in-memory local handle."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-APPROVAL-GATE-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_approval.py",
+        "docs/implementation/mvp5-live-eval-approval-template.md"
+      ],
+      "summary": "Live provider execution requires an approval packet, bounded request budget, timeout, adapter ids, and credential env var presence."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ASR-THINKER-EVIDENCE-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_voice_evidence.py"
+      ],
+      "summary": "Fake transports cover adapter-owned ASR and Thinker evidence for the same committed audio turn with explicit output modes and safe refs."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTER-AUTO-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_router_runner.py"
+      ],
+      "summary": "Router consumes same-turn ASR and Thinker event ids, reports the actual decision, and records expected-route mismatches without route forcing."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-DIRECT-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_route_results.py",
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py"
+      ],
+      "summary": "FAST_ONLY route returns direct-answer metadata with safe response ref, no SlowTask/UserPatch mutation, real_tts_used=false, and voice_output=none."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-SLOWTASK-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_route_results.py",
+        "tests/replay/test_mvp5_live_route_replay.py"
+      ],
+      "summary": "SPAWN_SLOW_TASK route records ASR and Thinker refs in SlowTask create and evidence review events with task bindings."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-ROUTE-USERPATCH-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_live_route_results.py",
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py"
+      ],
+      "summary": "PATCH_ACTIVE_SLOW_TASK route emits USER_PATCH_RECEIVED with current task and plan binding while preserving ASR authoritative and Thinker hypothesis provenance."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-THREE-ROUTE-PACK-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py"
+      ],
+      "summary": "Provider-free fake pack mode covers direct answer, SlowTask spawn, and UserPatch case summaries without local pack path emission."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-SUMMARY-SAFETY-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py",
+        "tests/acceptance/test_mvp5_acceptance_scenarios.py"
+      ],
+      "summary": "Smoke summaries expose only safe ids, refs, route status, output modes, and false safety flags."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-REPLAY-SAFETY-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/replay/test_mvp5_live_route_replay.py",
+        "docs/specs/replay-spec.md"
+      ],
+      "summary": "Deterministic replay validates recorded events and refs only and never reruns providers or unsafe runtime components."
+    },
+    {
+      "scenario_id": "MVP5-LIVE-RAW-ARTIFACT-BLOCK-001",
+      "coverage_status": "covered",
+      "evidence": [
+        "tests/acceptance/test_mvp5_acceptance_scenarios.py",
+        "tests/runtime/test_mvp5_live_audio_input.py",
+        "tests/runtime/test_mvp5_real_voice_e2e_smoke.py"
+      ],
+      "summary": "Acceptance, local wav, and smoke safety gates reject unsafe refs, path-like values, raw bytes, credential-like values, and unsafe summary keys."
+    }
+  ]
+}

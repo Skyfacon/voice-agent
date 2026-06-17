@@ -146,11 +146,24 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
         "status": "available",
         "label": "semantic_summary_available",
     }
+    assert skeleton["task_focus_hint"] == {
+        "focus": "AMBIGUOUS",
+        "task_like": False,
+        "complexity_hint": "unknown",
+        "focus_confidence": 0.5,
+        "evidence_uncertainty": "high",
+    }
     assert user_payload["output_rules"] == [
         "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
         "do not wrap JSON in markdown, prose, arrays, or multiple objects",
         "copy required_output_skeleton.request_binding exactly",
         "express only evidence availability, short safe labels, and normalized hints",
+        (
+            "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
+            "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
+        ),
+        "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
+        "Thinker focus is evidence only; Router owns the final RouterDecision",
         "do not include final event refs; adapter owns deterministic provider-neutral refs",
         "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
         "use transient_input_evidence only as input evidence; do not copy its text into labels",
