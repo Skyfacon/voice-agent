@@ -3,7 +3,7 @@
   "suite_id": "MVP5-ACCEPTANCE",
   "fixture_domain": "GITHUB_ALLOWED",
   "replay_mode": "deterministic",
-  "scope": "MVP-5 Goal 1 safety foundation: metadata-only acceptance scaffold, local wav opt-in gate, live provider approval gate, and fail-closed MVP-4 prerequisite status before runtime slices.",
+  "scope": "MVP-5 safety foundation and live route coverage: metadata-only acceptance scaffold, local wav opt-in gate, live provider approval gate, and present MVP-4 prerequisite status.",
   "generated_fixtures_must_be": [
     "synthetic",
     "redacted",
@@ -27,8 +27,8 @@
     "summary://mvp5/live-redacted-placeholder"
   ],
   "mvp4_prerequisite_status": {
-    "status": "blocked",
-    "runtime_goal_blocked": true,
+    "status": "present",
+    "runtime_goal_blocked": false,
     "checked_artifacts": [
       "acceptance_replay_tests",
       "fixture_safety_tests",
@@ -41,19 +41,8 @@
       "voice_evidence_replay_tests",
       "voice_router_fusion_tests"
     ],
-    "missing": [
-      "acceptance_replay_tests",
-      "fixture_safety_tests",
-      "mvp4_fixture_readme",
-      "mvp4_manifest_index",
-      "provider_free_voice_e2e_orchestrator",
-      "provider_free_voice_e2e_tests",
-      "real_evidence_path_tests",
-      "router_outcome_handling_tests",
-      "voice_evidence_replay_tests",
-      "voice_router_fusion_tests"
-    ],
-    "blocker_summary_ref": "summary://mvp5/prerequisite/mvp4-runtime-artifacts-missing"
+    "missing": [],
+    "status_summary_ref": "summary://mvp5/prerequisite/mvp4-runtime-artifacts-present"
   },
   "required_scenarios": [
     "MVP5-LIVE-WAV-INPUT-GATE-001",
@@ -100,57 +89,57 @@
   "scenarios": [
     {
       "scenario_id": "MVP5-LIVE-WAV-INPUT-GATE-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "Goal 1 covers the local wav opt-in gate with provider-free tests; runtime event-chain validation waits for MVP-4 voice E2E prerequisites."
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 covers the local wav opt-in gate with provider-free tests; runtime event-chain validation can use present MVP-4 voice E2E prerequisites."
     },
     {
       "scenario_id": "MVP5-LIVE-APPROVAL-GATE-001",
-      "runtime_prerequisite_status": "blocked",
+      "runtime_prerequisite_status": "present",
       "assertion": "Goal 1 covers the live provider approval gate with provider-free tests; no provider call is made."
     },
     {
       "scenario_id": "MVP5-LIVE-ASR-THINKER-EVIDENCE-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "Runtime evidence production is fail-closed until MVP-4 voice E2E artifacts exist."
+      "runtime_prerequisite_status": "present",
+      "assertion": "Runtime evidence production uses present MVP-4 voice E2E artifacts without default provider calls."
     },
     {
       "scenario_id": "MVP5-LIVE-ROUTER-AUTO-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "Router auto-result validation is fail-closed until MVP-4 Router outcome artifacts exist."
+      "runtime_prerequisite_status": "present",
+      "assertion": "Router auto-result validation can use present MVP-4 Router outcome artifacts."
     },
     {
       "scenario_id": "MVP5-LIVE-ROUTE-DIRECT-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "Direct-route runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+      "runtime_prerequisite_status": "present",
+      "assertion": "Direct-route runtime validation uses present MVP-4 voice E2E prerequisites."
     },
     {
       "scenario_id": "MVP5-LIVE-ROUTE-SLOWTASK-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "SlowTask-route runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+      "runtime_prerequisite_status": "present",
+      "assertion": "SlowTask-route runtime validation uses present MVP-4 voice E2E prerequisites."
     },
     {
       "scenario_id": "MVP5-LIVE-ROUTE-USERPATCH-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "UserPatch-route runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+      "runtime_prerequisite_status": "present",
+      "assertion": "UserPatch-route runtime validation uses present MVP-4 voice E2E prerequisites."
     },
     {
       "scenario_id": "MVP5-LIVE-THREE-ROUTE-PACK-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "Three-route pack runtime validation is blocked by missing MVP-4 voice E2E prerequisites."
+      "runtime_prerequisite_status": "present",
+      "assertion": "Three-route pack runtime validation uses present MVP-4 voice E2E prerequisites."
     },
     {
       "scenario_id": "MVP5-LIVE-SUMMARY-SAFETY-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "Goal 1 establishes summary safety flags; runtime summary validation waits for later MVP-5 goals."
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 establishes summary safety flags; later MVP-5 goals validate runtime summary metadata."
     },
     {
       "scenario_id": "MVP5-LIVE-REPLAY-SAFETY-001",
-      "runtime_prerequisite_status": "blocked",
-      "assertion": "Goal 1 manifest declares replay never reruns providers; runtime replay validation waits for MVP-4 prerequisites."
+      "runtime_prerequisite_status": "present",
+      "assertion": "Goal 1 manifest declares replay never reruns providers; runtime replay validation uses present MVP-4 prerequisites."
     },
     {
       "scenario_id": "MVP5-LIVE-RAW-ARTIFACT-BLOCK-001",
-      "runtime_prerequisite_status": "blocked",
+      "runtime_prerequisite_status": "present",
       "assertion": "Goal 1 manifest and gate tests reject unsafe raw artifact metadata before runtime export exists."
     }
   ]

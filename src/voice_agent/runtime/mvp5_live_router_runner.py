@@ -91,7 +91,7 @@ class MVP5LiveRouteResult:
             "replay_reruns_provider": False,
             "real_tts_used": False,
             "voice_output": "none",
-            "asr_thinker_winner_selected": False,
+            "evidence_ref_policy": "preserve_both_refs",
         }
         optional_fields = {
             "turn_id": self.turn_id,
@@ -519,8 +519,8 @@ def _validate_summary_metadata(metadata: Mapping[str, Any]) -> None:
             raise MVP5LiveRouterRunnerError(f"{flag} must be false in MVP-5 route summary")
     if metadata.get("voice_output") != "none":
         raise MVP5LiveRouterRunnerError("voice_output must be none in MVP-5 route summary")
-    if metadata.get("asr_thinker_winner_selected") is not False:
-        raise MVP5LiveRouterRunnerError("Router must not select an ASR/Thinker winner")
+    if metadata.get("evidence_ref_policy") != "preserve_both_refs":
+        raise MVP5LiveRouterRunnerError("evidence_ref_policy must preserve both ASR and Thinker refs")
     _reject_unsafe_summary_values(metadata)
 
 

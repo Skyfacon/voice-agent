@@ -1,0 +1,136 @@
+{
+  "manifest_index_schema_version": "1.0",
+  "suite_id": "MVP4-PROVIDER-FREE-VOICE-SPINE",
+  "fixture_domain": "GITHUB_ALLOWED",
+  "replay_mode": "deterministic",
+  "generated_fixtures_must_be": ["synthetic", "redacted", "minimal"],
+  "required_scenarios": [
+    "MVP4-VOICE-E2E-PROVIDER-FREE-001",
+    "MVP4-VOICE-E2E-THINKER-AUDIO-001",
+    "MVP4-VOICE-E2E-ASR-PARALLEL-001",
+    "MVP4-VOICE-E2E-ROUTER-FAST-001",
+    "MVP4-VOICE-E2E-ROUTER-SPAWN-SLOWTASK-001",
+    "MVP4-VOICE-E2E-ROUTER-PATCH-SLOWTASK-001",
+    "MVP4-VOICE-E2E-TEXT-RESPONSE-001",
+    "MVP4-VOICE-E2E-REPLAY-SAFETY-001",
+    "MVP4-VOICE-E2E-RAW-ARTIFACT-BLOCK-001"
+  ],
+  "scenario_coverage": [
+    {
+      "scenario_id": "MVP4-VOICE-E2E-PROVIDER-FREE-001",
+      "evidence": [
+        "tests/fixtures/replay/mvp4/000-provider-free-voice-e2e.fixture.json",
+        "tests/runtime/test_mvp4_voice_e2e_provider_free.py",
+        "tests/acceptance/test_mvp4_acceptance_scenarios.py"
+      ],
+      "summary": "provider-free synthetic audio turn with fake ASR, fake Thinker, and Router outcomes; deterministic replay uses recorded refs only"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-THINKER-AUDIO-001",
+      "evidence": [
+        "tests/runtime/test_mvp4_voice_e2e_real_evidence_paths.py",
+        "tests/acceptance/test_mvp4_acceptance_scenarios.py"
+      ],
+      "summary": "real Thinker audio-native adapter boundary covered through fake transport metadata-only path without SemanticCommitment"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-ASR-PARALLEL-001",
+      "evidence": [
+        "tests/runtime/test_mvp4_voice_e2e_real_evidence_paths.py",
+        "tests/replay/test_mvp4_voice_evidence_replay.py",
+        "tests/acceptance/test_mvp4_acceptance_scenarios.py"
+      ],
+      "summary": "ASR transcript evidence and Thinker semantic evidence bind to the same committed audio turn and replay from safe refs"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-ROUTER-FAST-001",
+      "evidence": [
+        "tests/runtime/test_mvp4_router_outcome_handling.py",
+        "tests/router/test_mvp4_voice_router_fusion.py",
+        "scripts/mvp4-voice-e2e-smoke --route fast"
+      ],
+      "summary": "Router FAST_ONLY metadata summary creates no SlowTask, no UserPatch, and no TTS/playback events"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-ROUTER-SPAWN-SLOWTASK-001",
+      "evidence": [
+        "tests/runtime/test_mvp4_router_outcome_handling.py",
+        "tests/replay/test_mvp4_voice_evidence_replay.py",
+        "scripts/mvp4-voice-e2e-smoke --route spawn"
+      ],
+      "summary": "Router SPAWN_SLOW_TASK records existing SlowTask mock create/planning path with ASR and Thinker evidence refs"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-ROUTER-PATCH-SLOWTASK-001",
+      "evidence": [
+        "tests/runtime/test_mvp4_router_outcome_handling.py",
+        "tests/replay/test_mvp4_voice_evidence_replay.py",
+        "scripts/mvp4-voice-e2e-smoke --route patch"
+      ],
+      "summary": "Router PATCH_ACTIVE_SLOW_TASK records UserPatch receipt with task_id, plan_version, observed_plan_version, task_event_seq, and ASR/Thinker provenance"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-TEXT-RESPONSE-001",
+      "evidence": [
+        "tests/runtime/test_mvp4_router_outcome_handling.py",
+        "tests/acceptance/test_mvp4_acceptance_scenarios.py",
+        "scripts/mvp4-voice-e2e-smoke"
+      ],
+      "summary": "FAST, SlowTask spawn, and UserPatch routes return metadata-only response summaries with safe response_text_ref and voice_output=none"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-REPLAY-SAFETY-001",
+      "evidence": [
+        "tests/fixtures/replay/mvp4/008-replay-safety.fixture.json",
+        "tests/replay/test_mvp4_fixture_safety.py",
+        "tests/acceptance/test_mvp4_acceptance_scenarios.py"
+      ],
+      "summary": "committed MVP-4 fixtures replay under provider, network, clock, random, and env guards"
+    },
+    {
+      "scenario_id": "MVP4-VOICE-E2E-RAW-ARTIFACT-BLOCK-001",
+      "evidence": [
+        "tests/replay/test_mvp4_fixture_safety.py",
+        "tests/acceptance/test_mvp4_acceptance_scenarios.py"
+      ],
+      "summary": "MVP-4 fixture safety gate rejects raw audio, raw transcript, provider bodies, local paths, local trace/cache refs, and secrets"
+    }
+  ],
+  "fixture_checks": [
+    {
+      "fixture": "000-provider-free-voice-e2e.fixture.json",
+      "purpose": "provider-free synthetic audio turn replay covering fake ASR, fake Thinker, and Router FAST/SPAWN/PATCH decisions"
+    },
+    {
+      "fixture": "008-replay-safety.fixture.json",
+      "purpose": "deterministic MVP-4 replay safety fixture proving recorded refs are replayed without provider or runtime reruns"
+    }
+  ],
+  "fixture_safety_flags": {
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false
+  },
+  "safety_flags": {
+    "contains_raw_audio": false,
+    "contains_raw_trace": false,
+    "contains_real_user_input": false,
+    "contains_secrets": false,
+    "contains_unredacted_tool_result": false,
+    "contains_large_raw_web_content": false
+  },
+  "allowed_re_eval_components": [],
+  "forbidden_behavior": [
+    "real_provider_call",
+    "env_secret_read",
+    "provider_sdk_required",
+    "canonical_event_addition",
+    "raw_audio_fixture",
+    "raw_transcript_fixture",
+    "raw_provider_body_fixture",
+    "local_trace_or_cache_ref"
+  ]
+}

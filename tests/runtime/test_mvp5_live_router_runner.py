@@ -44,7 +44,8 @@ def test_runner_routes_goal2_evidence_refs_through_router_without_selecting_winn
     assert router_event["utterance_id"] == (
         committed["utterance_id"]
     ) == asr_event["utterance_id"] == thinker_event["utterance_id"]
-    assert router_event["asr_thinker_winner_selected"] is False
+    assert router_event["evidence_ref_policy"] == "preserve_both_refs"
+    assert "winner" not in repr(router_event).lower()
 
     metadata = result.to_metadata()
     rendered = json.dumps(metadata, sort_keys=True)
@@ -55,9 +56,10 @@ def test_runner_routes_goal2_evidence_refs_through_router_without_selecting_winn
     assert metadata["asr_event_id"] == asr_event["event_id"]
     assert metadata["thinker_event_id"] == thinker_event["event_id"]
     assert metadata["router_event_id"] == router_event["event_id"]
-    assert metadata["asr_thinker_winner_selected"] is False
+    assert metadata["evidence_ref_policy"] == "preserve_both_refs"
     assert metadata["provider_call_used"] is False
     assert metadata["replay_reruns_provider"] is False
+    assert "winner" not in rendered.lower()
     assert "DUMMY_TEST_CREDENTIAL" not in rendered
 
 

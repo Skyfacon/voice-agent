@@ -225,7 +225,7 @@ class MVP1Router:
             "turn_committed_event_id": str(turn_committed_event["event_id"]),
             "asr_frame_event_id": str(asr_frame_event["event_id"]),
             "thinker_frame_event_id": str(thinker_frame_event["event_id"]),
-            "asr_thinker_winner_selected": False,
+            "evidence_ref_policy": "preserve_both_refs",
         }
         if active_task_id is not None:
             router_fields["active_task_id"] = active_task_id
@@ -340,7 +340,11 @@ def _infer_mvp1_task_focus(
     if turn_committed_event.get("directedness") == "NOT_DIRECTED":
         return "NON_ASSISTANT"
 
-    explicit_focus = _task_focus_hint(asr_frame_event, thinker_frame_event)
+    explicit_focus_values = _task_focus_hints(asr_frame_event, thinker_frame_event)
+    if len(set(explicit_focus_values)) > 1:
+        return "AMBIGUOUS"
+
+    explicit_focus = explicit_focus_values[0] if explicit_focus_values else None
     if explicit_focus is not None:
         if explicit_focus not in MVP1_TASK_FOCUS_VALUES:
             raise ValueError("MVP-1 task_focus must be an ADR-006 focus value")
@@ -378,12 +382,13 @@ def _router_decision_for_focus(
     return "FAST_ONLY"
 
 
-def _task_focus_hint(*events: Mapping[str, Any]) -> str | None:
-    for event in reversed(events):
+def _task_focus_hints(*events: Mapping[str, Any]) -> tuple[str, ...]:
+    hints: list[str] = []
+    for event in events:
         value = event.get("task_focus_hint")
         if value not in (None, ""):
-            return str(value)
-    return None
+            hints.append(str(value))
+    return tuple(hints)
 
 
 def _task_like(*events: Mapping[str, Any]) -> bool:
@@ -397,6 +402,15 @@ def _task_like(*events: Mapping[str, Any]) -> bool:
 
 
 def _focus_confidence(*events: Mapping[str, Any]) -> float:
+    if len(set(_task_focus_hints(*events))) > 1:
+        values = [
+            float(value)
+            for event in events
+            for value in (event.get("focus_confidence", event.get("confidence")),)
+            if value not in (None, "")
+        ]
+        if values:
+            return min(values)
     for event in reversed(events):
         value = event.get("focus_confidence", event.get("confidence"))
         if value not in (None, ""):
@@ -405,6 +419,8 @@ def _focus_confidence(*events: Mapping[str, Any]) -> float:
 
 
 def _evidence_uncertainty(*events: Mapping[str, Any]) -> str:
+    if len(set(_task_focus_hints(*events))) > 1:
+        return "conflicting"
     for event in reversed(events):
         value = event.get("evidence_uncertainty")
         if value not in (None, ""):
