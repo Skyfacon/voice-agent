@@ -144,7 +144,7 @@ def construct_user_patch_evidence_pack(
     if text_input_event is not None:
         _validate_text_input_event(text_input_event, turn_committed_event=turn_committed_event)
     if asr_frame_event is not None:
-        _validate_mock_frame(asr_frame_event, "MOCK_ASR_FRAME_EMITTED", turn_committed_event)
+        _validate_asr_frame(asr_frame_event, turn_committed_event)
     if thinker_frame_event is not None:
         _validate_thinker_frame(thinker_frame_event, turn_committed_event)
     semantic_summary_ref = _bind_thinker_semantic_summary_ref(
@@ -408,6 +408,28 @@ def _validate_mock_frame(
     for field in ("turn_id", "utterance_id"):
         if event.get(field) != turn_committed_event.get(field):
             raise ValueError(f"{expected_event_name} must match committed turn {field}")
+
+
+def _validate_asr_frame(
+    event: Mapping[str, Any],
+    turn_committed_event: Mapping[str, Any],
+) -> None:
+    event_name = str(event.get("event_name"))
+    if event_name == "MOCK_ASR_FRAME_EMITTED":
+        _validate_mock_frame(event, "MOCK_ASR_FRAME_EMITTED", turn_committed_event)
+        return
+    if event_name != "ASR_TRANSCRIPT_OUTPUT_EMITTED":
+        raise ValueError("Expected MOCK_ASR_FRAME_EMITTED or ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    if event.get("output_mode") not in {"real", "fallback", "degraded"}:
+        raise ValueError("ASR_TRANSCRIPT_OUTPUT_EMITTED must use output_mode=real, fallback, or degraded")
+    if event.get("transcript_finality") != "final":
+        raise ValueError("ASR_TRANSCRIPT_OUTPUT_EMITTED must be final before UserPatch use")
+    for field in ("turn_id", "utterance_id", "audio_span_id", "input_modality"):
+        if event.get(field) != turn_committed_event.get(field):
+            raise ValueError(f"ASR_TRANSCRIPT_OUTPUT_EMITTED must match committed turn {field}")
+    for field in ("asr_frame_ref", "text_ref"):
+        if event.get(field) in (None, ""):
+            raise ValueError(f"ASR_TRANSCRIPT_OUTPUT_EMITTED requires {field}")
 
 
 def _validate_thinker_frame(

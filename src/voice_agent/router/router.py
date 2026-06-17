@@ -225,6 +225,7 @@ class MVP1Router:
             "turn_committed_event_id": str(turn_committed_event["event_id"]),
             "asr_frame_event_id": str(asr_frame_event["event_id"]),
             "thinker_frame_event_id": str(thinker_frame_event["event_id"]),
+            "asr_thinker_winner_selected": False,
         }
         if active_task_id is not None:
             router_fields["active_task_id"] = active_task_id
