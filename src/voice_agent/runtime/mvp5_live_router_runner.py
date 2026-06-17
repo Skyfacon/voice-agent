@@ -149,16 +149,37 @@ def run_mvp5_live_router_runner(
     router_context = _router_context(config.active_task_context)
     base_monotonic_ms = _last_int(evidence_events, "created_monotonic_ms") + 10
     base_wall_clock_ms = _last_int(evidence_events, "created_wall_clock_ms") + 10
-    router_result = MVP1Router(journal).emit_decision(
-        turn_committed_event=turn_event,
-        asr_frame_event=asr_event,
-        thinker_frame_event=thinker_event,
-        router_context=router_context,
-        event_id=f"evt_mvp5_live_route_{slug}_router_decision",
-        task_focus_state_event_id=f"evt_mvp5_live_route_{slug}_task_focus_state",
-        created_monotonic_ms=base_monotonic_ms,
-        created_wall_clock_ms=base_wall_clock_ms,
-    )
+    try:
+        router_result = MVP1Router(journal).emit_decision(
+            turn_committed_event=turn_event,
+            asr_frame_event=asr_event,
+            thinker_frame_event=thinker_event,
+            router_context=router_context,
+            event_id=f"evt_mvp5_live_route_{slug}_router_decision",
+            task_focus_state_event_id=f"evt_mvp5_live_route_{slug}_task_focus_state",
+            created_monotonic_ms=base_monotonic_ms,
+            created_wall_clock_ms=base_wall_clock_ms,
+        )
+    except ValueError as exc:
+        if "active non-terminal SlowTask" not in str(exc):
+            raise
+        return MVP5LiveRouteResult(
+            run_id=run_id,
+            status="blocked_missing_active_task_context",
+            route_result_kind="degraded",
+            router_decision=None,
+            expected_route=expected_route,
+            expected_route_matched=False if expected_route is not None else None,
+            events=tuple(journal.events()),
+            turn_id=str(turn_event["turn_id"]),
+            utterance_id=str(turn_event["utterance_id"]),
+            audio_span_id=str(turn_event.get("audio_span_id")) if turn_event.get("audio_span_id") else None,
+            asr_event_id=str(asr_event["event_id"]),
+            thinker_event_id=str(thinker_event["event_id"]),
+            provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
+            fake_transport_used=bool(getattr(evidence_result, "fake_transport_used", False)),
+            warnings=("PATCH_ACTIVE_SLOW_TASK requires active_task_context",),
+        )
     router_event = router_result.router_decision_event
     route = str(router_event["router_decision"])
     if expected_route is not None and expected_route != route:

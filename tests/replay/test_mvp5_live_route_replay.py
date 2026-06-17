@@ -22,7 +22,13 @@ from voice_agent.runtime.mvp5_live_voice_evidence import (
 def test_mvp5_live_route_events_replay_from_recorded_metadata_without_provider_rerun(
     tmp_path: Path,
 ) -> None:
-    evidence = _live_evidence_result(tmp_path, route_slug="replay-spawn", task_like=True)
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="replay-spawn",
+        task_focus_hint="NEW_TASK_CANDIDATE",
+        task_like=True,
+        complexity_hint="complex",
+    )
     result = run_mvp5_live_router_runner(
         evidence,
         config=MVP5LiveRouterConfig(
@@ -36,10 +42,13 @@ def test_mvp5_live_route_events_replay_from_recorded_metadata_without_provider_r
 
     router_event = _event(result.events, "ROUTER_DECISION_EMITTED")
     created = _event(result.events, "SLOWTASK_CREATED")
+    thinker_event = _event(result.events, "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED")
     assert replay_result.result_status == "passed"
     assert replay_result.replay_mode == "deterministic"
     assert replay_result.fixture_domain == "GITHUB_ALLOWED"
     assert replay_result.task_focus_state.router_decision_event_id == router_event["event_id"]
+    assert router_event["task_focus"] == "NEW_TASK_CANDIDATE"
+    assert thinker_event["task_focus_hint"] == "NEW_TASK_CANDIDATE"
     assert created["task_id"] in replay_result.slowtask_state.tasks
     assert replay_result.trace_privacy_state.contains_raw_audio is False
     assert replay_result.trace_privacy_state.contains_secrets is False
@@ -50,7 +59,13 @@ def test_mvp5_live_route_events_replay_from_recorded_metadata_without_provider_r
 def test_replay_rejects_router_asr_ref_that_does_not_match_same_turn_evidence(
     tmp_path: Path,
 ) -> None:
-    evidence = _live_evidence_result(tmp_path, route_slug="replay-bad-router-ref", task_like=True)
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="replay-bad-router-ref",
+        task_focus_hint="NEW_TASK_CANDIDATE",
+        task_like=True,
+        complexity_hint="complex",
+    )
     result = run_mvp5_live_router_runner(
         evidence,
         config=MVP5LiveRouterConfig(
@@ -104,7 +119,9 @@ def _live_evidence_result(
     tmp_path: Path,
     *,
     route_slug: str,
+    task_focus_hint: str,
     task_like: bool,
+    complexity_hint: str,
 ):
     wav_path = tmp_path / f"{route_slug}.wav"
     _write_wav_file(wav_path)
@@ -119,7 +136,11 @@ def _live_evidence_result(
             ),
         )
     )
-    thinker_transport = _FakeThinkerAudioTransport(task_like=task_like)
+    thinker_transport = _FakeThinkerAudioTransport(
+        task_focus_hint=task_focus_hint,
+        task_like=task_like,
+        complexity_hint=complexity_hint,
+    )
 
     return run_mvp5_live_voice_evidence(
         local_wav=wav_path,
@@ -139,8 +160,16 @@ def _live_evidence_result(
 
 
 class _FakeThinkerAudioTransport:
-    def __init__(self, *, task_like: bool) -> None:
+    def __init__(
+        self,
+        *,
+        task_focus_hint: str,
+        task_like: bool,
+        complexity_hint: str,
+    ) -> None:
+        self.task_focus_hint = task_focus_hint
         self.task_like = task_like
+        self.complexity_hint = complexity_hint
 
     def complete_audio(
         self,
@@ -170,8 +199,9 @@ class _FakeThinkerAudioTransport:
             "audio_caption": {"status": "available", "label": "speech_available"},
         }
         skeleton["task_focus_hint"] = {
+            "focus": self.task_focus_hint,
             "task_like": self.task_like,
-            "complexity_hint": "complex" if self.task_like else "simple",
+            "complexity_hint": self.complexity_hint,
             "focus_confidence": 0.86,
             "evidence_uncertainty": "low",
         }

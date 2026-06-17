@@ -60,6 +60,7 @@ class LALMThinkerValidatedCandidate:
     validation_ref: str
     evidence_only: bool = True
     may_emit_contract_event: bool = False
+    task_focus_hint: str | None = None
     task_like: bool | None = None
     complexity_hint: str | None = None
     focus_confidence: float | None = None
@@ -129,6 +130,15 @@ OPTIONAL_EVIDENCE_FIELDS = {
 }
 
 _OUTPUT_MODES = frozenset({"real", "fallback", "degraded"})
+_ALLOWED_TASK_FOCUS_HINTS = frozenset(
+    {
+        "FOREGROUND_CHAT",
+        "NEW_TASK_CANDIDATE",
+        "ACTIVE_TASK_PATCH",
+        "AMBIGUOUS",
+        "NON_ASSISTANT",
+    }
+)
 _ALLOWED_COMPLEXITY_HINTS = frozenset({"simple", "medium", "moderate", "complex", "unknown"})
 _ALLOWED_EVIDENCE_UNCERTAINTIES = frozenset({"low", "medium", "moderate", "high", "unknown"})
 _TRANSIENT_INPUT_TEXT_MAX_CHARS = 1000
@@ -353,9 +363,13 @@ def validate_lalm_thinker_candidate(
     if missing_capabilities and output_mode != "degraded":
         _fail("degraded_mode_required", "missing optional evidence requires degraded output mode")
 
-    task_like, complexity_hint, focus_confidence, evidence_uncertainty = _validate_task_focus_hint(
-        candidate.get("task_focus_hint")
-    )
+    (
+        task_focus_hint,
+        task_like,
+        complexity_hint,
+        focus_confidence,
+        evidence_uncertainty,
+    ) = _validate_task_focus_hint(candidate.get("task_focus_hint"))
 
     return LALMThinkerValidatedCandidate(
         adapter_request_id=expected_binding.adapter_request_id,
@@ -366,6 +380,7 @@ def validate_lalm_thinker_candidate(
         optional_statuses=optional_statuses,
         missing_capabilities=tuple(missing_capabilities),
         validation_ref=validation_ref,
+        task_focus_hint=task_focus_hint,
         task_like=task_like,
         complexity_hint=complexity_hint,
         focus_confidence=focus_confidence,
@@ -425,6 +440,7 @@ def fake_lalm_thinker_transport(
         },
         "optional_evidence_refs": optional_evidence_refs,
         "task_focus_hint": {
+            "focus": "NEW_TASK_CANDIDATE",
             "task_like": True,
             "complexity_hint": "complex",
             "focus_confidence": 0.82,
@@ -465,10 +481,11 @@ def build_lalm_thinker_live_request_payload(
             "audio_caption": {"status": "unavailable"},
         },
         "task_focus_hint": {
-            "task_like": True,
-            "complexity_hint": "complex",
-            "focus_confidence": 0.75,
-            "evidence_uncertainty": "medium",
+            "focus": "AMBIGUOUS",
+            "task_like": False,
+            "complexity_hint": "unknown",
+            "focus_confidence": 0.5,
+            "evidence_uncertainty": "high",
         },
         "boundary_assertions": dict(_BOUNDARY_ASSERTIONS),
         "artifact_policy": {
@@ -484,6 +501,12 @@ def build_lalm_thinker_live_request_payload(
             "do not wrap JSON in markdown, prose, arrays, or multiple objects",
             "copy required_output_skeleton.request_binding exactly",
             "express only evidence availability, short safe labels, and normalized hints",
+            (
+                "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
+                "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
+            ),
+            "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
+            "Thinker focus is evidence only; Router owns the final RouterDecision",
             "do not include final event refs; adapter owns deterministic provider-neutral refs",
             "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
             "use transient_input_evidence only as input evidence; do not copy its text into labels",
@@ -756,6 +779,7 @@ def emit_lalm_thinker_semantic_frame(
         ),
         emotion_ref=validated_candidate.optional_refs.get("emotion_ref"),
         audio_caption_ref=validated_candidate.optional_refs.get("audio_caption_ref"),
+        task_focus_hint=validated_candidate.task_focus_hint,
         task_like=validated_candidate.task_like,
         complexity_hint=validated_candidate.complexity_hint,
         focus_confidence=validated_candidate.focus_confidence,
@@ -854,11 +878,21 @@ def _validate_optional_evidence_label(value: object, field: str) -> str:
     return value
 
 
-def _validate_task_focus_hint(value: object) -> tuple[bool | None, str | None, float | None, str | None]:
+def _validate_task_focus_hint(
+    value: object,
+) -> tuple[str | None, bool | None, str | None, float | None, str | None]:
     if value is None:
-        return None, None, None, None
+        return None, None, None, None, None
     if not isinstance(value, Mapping):
         _fail("schema_shape", "task focus hint must be an object")
+    focus_value = value.get("focus")
+    task_focus_hint = None
+    if focus_value not in (None, ""):
+        task_focus_hint = _validate_task_focus_label(
+            focus_value,
+            "focus",
+            _ALLOWED_TASK_FOCUS_HINTS,
+        )
     if not isinstance(value.get("task_like"), bool):
         _fail("schema_shape", "task_like must be a boolean")
     confidence = value.get("focus_confidence")
@@ -880,6 +914,7 @@ def _validate_task_focus_hint(value: object) -> tuple[bool | None, str | None, f
         _ALLOWED_EVIDENCE_UNCERTAINTIES,
     )
     return (
+        task_focus_hint,
         bool(value["task_like"]),
         complexity_hint,
         confidence_value,

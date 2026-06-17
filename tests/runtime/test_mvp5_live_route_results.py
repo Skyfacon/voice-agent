@@ -20,7 +20,13 @@ from voice_agent.runtime.mvp5_live_voice_evidence import (
 def test_fast_only_result_is_metadata_only_and_does_not_mutate_slowtask(
     tmp_path: Path,
 ) -> None:
-    evidence = _live_evidence_result(tmp_path, route_slug="fast-only", task_like=False)
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="fast-only",
+        task_focus_hint="FOREGROUND_CHAT",
+        task_like=False,
+        complexity_hint="simple",
+    )
 
     result = run_mvp5_live_router_runner(
         evidence,
@@ -36,6 +42,7 @@ def test_fast_only_result_is_metadata_only_and_does_not_mutate_slowtask(
     assert result.status == "routed"
     assert metadata["route_result_kind"] == "direct_answer"
     assert metadata["router_decision"] == "FAST_ONLY"
+    assert _event(result.events, "ROUTER_DECISION_EMITTED")["task_focus"] == "FOREGROUND_CHAT"
     assert metadata["response_text_ref"].startswith("response://synthetic/mvp5/")
     assert metadata["real_tts_used"] is False
     assert metadata["voice_output"] == "none"
@@ -52,7 +59,13 @@ def test_fast_only_result_is_metadata_only_and_does_not_mutate_slowtask(
 def test_spawn_slowtask_records_asr_and_thinker_refs_in_slowtask_evidence(
     tmp_path: Path,
 ) -> None:
-    evidence = _live_evidence_result(tmp_path, route_slug="spawn-route", task_like=True)
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="spawn-route",
+        task_focus_hint="NEW_TASK_CANDIDATE",
+        task_like=True,
+        complexity_hint="complex",
+    )
 
     result = run_mvp5_live_router_runner(
         evidence,
@@ -77,6 +90,7 @@ def test_spawn_slowtask_records_asr_and_thinker_refs_in_slowtask_evidence(
         str(thinker_event["semantic_frame_ref"]),
     }
     assert result.to_metadata()["route_result_kind"] == "slowtask_spawn"
+    assert _event(result.events, "ROUTER_DECISION_EMITTED")["task_focus"] == "NEW_TASK_CANDIDATE"
     assert expected_refs.issubset(set(created["source_evidence_refs"]))
     assert expected_refs.issubset(set(reviewed["evidence_refs"]))
     assert slowtask_events
@@ -90,7 +104,13 @@ def test_spawn_slowtask_records_asr_and_thinker_refs_in_slowtask_evidence(
 def test_patch_active_slowtask_receives_current_plan_user_patch_only(
     tmp_path: Path,
 ) -> None:
-    evidence = _live_evidence_result(tmp_path, route_slug="patch-active", task_like=True)
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="patch-active",
+        task_focus_hint="ACTIVE_TASK_PATCH",
+        task_like=True,
+        complexity_hint="medium",
+    )
 
     result = run_mvp5_live_router_runner(
         evidence,
@@ -112,6 +132,7 @@ def test_patch_active_slowtask_receives_current_plan_user_patch_only(
     event_names = [event["event_name"] for event in result.events]
 
     assert result.to_metadata()["route_result_kind"] == "user_patch"
+    assert _event(result.events, "ROUTER_DECISION_EMITTED")["task_focus"] == "ACTIVE_TASK_PATCH"
     assert user_patch["patch_id"] == "patch_mvp5_goal3_patch_active"
     assert user_patch["task_id"] == "task_mvp5_goal3_active"
     assert user_patch["plan_version"] == 4
@@ -152,6 +173,39 @@ def test_patch_active_slowtask_receives_current_plan_user_patch_only(
     _assert_safe_summary(result.to_metadata())
 
 
+def test_active_task_patch_hint_without_active_context_is_blocked_without_mutation(
+    tmp_path: Path,
+) -> None:
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="patch-no-active",
+        task_focus_hint="ACTIVE_TASK_PATCH",
+        task_like=True,
+        complexity_hint="medium",
+    )
+
+    result = run_mvp5_live_router_runner(
+        evidence,
+        config=MVP5LiveRouterConfig(
+            run_id="mvp5-goal3-patch-no-active",
+            expected_route="PATCH_ACTIVE_SLOW_TASK",
+        ),
+    )
+
+    metadata = result.to_metadata()
+    event_names = [event["event_name"] for event in result.events]
+
+    assert metadata["status"] == "blocked_missing_active_task_context"
+    assert metadata["route_result_kind"] == "degraded"
+    assert metadata["router_decision"] is None
+    assert metadata["expected_route"] == "PATCH_ACTIVE_SLOW_TASK"
+    assert metadata["expected_route_matched"] is False
+    assert "USER_PATCH_RECEIVED" not in event_names
+    assert "SLOWTASK_CREATED" not in event_names
+    assert "PLAN_VERSION_ADVANCED" not in event_names
+    _assert_safe_summary(metadata)
+
+
 def _assert_safe_summary(metadata: dict[str, object]) -> None:
     assert metadata["raw_audio_included"] is False
     assert metadata["raw_transcript_included"] is False
@@ -183,7 +237,9 @@ def _live_evidence_result(
     tmp_path: Path,
     *,
     route_slug: str,
+    task_focus_hint: str,
     task_like: bool,
+    complexity_hint: str,
 ):
     wav_path = tmp_path / f"{route_slug}.wav"
     _write_wav_file(wav_path)
@@ -198,7 +254,11 @@ def _live_evidence_result(
             ),
         )
     )
-    thinker_transport = _FakeThinkerAudioTransport(task_like=task_like)
+    thinker_transport = _FakeThinkerAudioTransport(
+        task_focus_hint=task_focus_hint,
+        task_like=task_like,
+        complexity_hint=complexity_hint,
+    )
 
     return run_mvp5_live_voice_evidence(
         local_wav=wav_path,
@@ -218,8 +278,16 @@ def _live_evidence_result(
 
 
 class _FakeThinkerAudioTransport:
-    def __init__(self, *, task_like: bool) -> None:
+    def __init__(
+        self,
+        *,
+        task_focus_hint: str,
+        task_like: bool,
+        complexity_hint: str,
+    ) -> None:
+        self.task_focus_hint = task_focus_hint
         self.task_like = task_like
+        self.complexity_hint = complexity_hint
 
     def complete_audio(
         self,
@@ -249,8 +317,9 @@ class _FakeThinkerAudioTransport:
             "audio_caption": {"status": "available", "label": "speech_available"},
         }
         skeleton["task_focus_hint"] = {
+            "focus": self.task_focus_hint,
             "task_like": self.task_like,
-            "complexity_hint": "complex" if self.task_like else "simple",
+            "complexity_hint": self.complexity_hint,
             "focus_confidence": 0.86,
             "evidence_uncertainty": "low",
         }

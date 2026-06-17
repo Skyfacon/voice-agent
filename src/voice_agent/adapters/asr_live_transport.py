@@ -42,6 +42,13 @@ class AsrLiveCredentialHandle:
     def __post_init__(self) -> None:
         _require_safe_ref(self.credential_ref, "credential_ref")
 
+    def __repr__(self) -> str:
+        return (
+            "AsrLiveCredentialHandle("
+            f"credential_ref={self.credential_ref!r}, credential_present=True, "
+            "secret_materialized=False)"
+        )
+
     def __str__(self) -> str:
         raise DashScopeAsrLiveTransportError(
             "ASR live credential handle is opaque and not string serializable"

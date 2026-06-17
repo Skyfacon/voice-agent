@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import importlib
 import inspect
 from pathlib import Path
 from typing import Any
@@ -9,10 +10,12 @@ from typing import Any
 from voice_agent.adapters.asr_contract import AsrAdapterContract
 from voice_agent.adapters.asr_fake_transport import AsrFakeTransportResult
 from voice_agent.adapters.asr_normalization import AsrRequestBinding, emit_normalized_asr_candidate
+from voice_agent.adapters.asr_normalization import normalize_asr_candidate
 from voice_agent.adapters.event_harness import FakeRealAdapterEventHarness
 from voice_agent.adapters.lalm_thinker_binding import bind_lalm_thinker_request
 from voice_agent.adapters.lalm_thinker_live_transport import (
     LALMThinkerCredentialHandle,
+    LALMThinkerLiveDirectHTTPTransport,
     LALMThinkerLiveTransportError,
 )
 from voice_agent.adapters.lalm_thinker_profile import (
@@ -154,17 +157,11 @@ def run_mvp5_live_voice_evidence(
         env={} if env is None else env,
     )
 
-    if asr_transport is None or thinker_transport is None:
-        return MVP5LiveVoiceEvidenceResult(
-            run_id=run_id,
-            status="blocked_missing_fake_transport",
-            provider_call_used=False,
-            fake_transport_used=False,
-            local_wav_opt_in_used=True,
-            live_provider_approval_used=True,
-            safe_refs=(loaded_audio.safe_audio_ref,),
-            failure_reasons=("fake_transport_required_for_provider_free_goal2_default",),
-        )
+    injected_transport_used = asr_transport is not None or thinker_transport is not None
+    if asr_transport is None:
+        asr_transport = _default_asr_live_transport()
+    if thinker_transport is None:
+        thinker_transport = LALMThinkerLiveDirectHTTPTransport()
 
     journal = _build_journal(config)
     turn_committed_event = _append_committed_audio_turn(
@@ -176,11 +173,15 @@ def run_mvp5_live_voice_evidence(
     audio_bytes = loaded_audio.audio_handle.open_bytes().read()
     boundary = AdapterCallbackAppendBoundary(journal)
 
-    asr_event = _run_asr_adapter_fake_transport(
+    asr_event = _run_asr_adapter_transport(
         boundary=boundary,
         config=config,
         turn_committed_event=turn_committed_event,
         asr_transport=asr_transport,
+        grant=grant,
+        env={} if env is None else env,
+        audio_bytes=audio_bytes,
+        audio_mime_type=loaded_audio.audio_handle.audio_mime_type,
         run_id=run_id,
         created_monotonic_ms=300,
         created_wall_clock_ms=1700000000300,
@@ -193,6 +194,7 @@ def run_mvp5_live_voice_evidence(
         grant=grant,
         env={} if env is None else env,
         audio_bytes=audio_bytes,
+        asr_event=asr_event,
         run_id=run_id,
         created_monotonic_ms=400,
         created_wall_clock_ms=1700000000400,
@@ -218,13 +220,13 @@ def run_mvp5_live_voice_evidence(
         asr_output_mode=asr_output_mode,
         thinker_output_mode=thinker_output_mode,
         safe_refs=safe_refs,
-        provider_call_used=False,
-        fake_transport_used=True,
+        provider_call_used=not injected_transport_used,
+        fake_transport_used=injected_transport_used,
         local_wav_opt_in_used=True,
         live_provider_approval_used=True,
         failure_reasons=()
         if asr_event is not None and thinker_event is not None
-        else ("adapter_evidence_incomplete",),
+        else _failure_reasons_from_events(events),
     )
 
 
@@ -372,12 +374,16 @@ def _append_committed_audio_turn(
     )
 
 
-def _run_asr_adapter_fake_transport(
+def _run_asr_adapter_transport(
     *,
     boundary: AdapterCallbackAppendBoundary,
     config: MVP5LiveVoiceEvidenceConfig,
     turn_committed_event: Mapping[str, Any],
     asr_transport: object,
+    grant: MVP5LiveProviderApprovalGrant,
+    env: Mapping[str, str],
+    audio_bytes: bytes,
+    audio_mime_type: str,
     run_id: str,
     created_monotonic_ms: int,
     created_wall_clock_ms: int,
@@ -388,12 +394,145 @@ def _run_asr_adapter_fake_transport(
     )
     transcribe = getattr(asr_transport, "transcribe", None)
     if not callable(transcribe):
-        raise MVP5LiveVoiceEvidenceError("ASR fake transport must provide transcribe")
-    result = _call_fake_asr_transport(transcribe, binding)
-    if not isinstance(result, AsrFakeTransportResult):
-        raise MVP5LiveVoiceEvidenceError("ASR fake transport returned unsupported result")
-
+        raise MVP5LiveVoiceEvidenceError("ASR transport must provide transcribe")
     event_base = f"evt_mvp5_live_evidence_{_slug(run_id)}_asr"
+    result = _maybe_call_fake_asr_transport(transcribe, binding)
+    if isinstance(result, AsrFakeTransportResult):
+        return _emit_asr_fake_transport_result(
+            boundary=boundary,
+            config=config,
+            turn_committed_event=turn_committed_event,
+            result=result,
+            event_base=event_base,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+        )
+
+    credential_value = env.get(grant.credential_env_var_name)
+    if credential_value is None or credential_value == "":
+        _adapter_harness(
+            boundary=boundary,
+            adapter_id=config.asr_adapter_id,
+            adapter_type="asr",
+            output_mode="degraded",
+            source_module="mvp5_asr_adapter",
+        ).emit_request_failed(
+            event_id=f"{event_base}_request_failed",
+            caused_by_event_id=str(turn_committed_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=binding.adapter_request_id,
+            failure_reason="credential_missing",
+            retryable=False,
+            timeout_ms=grant.timeout_ms,
+        )
+        return None
+
+    try:
+        metadata = transcribe(
+            audio_payload=audio_bytes,
+            audio_mime_type=audio_mime_type,
+            credential_handle=_asr_live_credential_handle(
+                credential_ref="secret-ref://local/asr-live-eval/dashscope",
+            ),
+            credential_value=credential_value,
+            adapter_request_id=binding.adapter_request_id,
+            timeout_ms=grant.timeout_ms,
+            model_alias=_asr_live_selected_model_alias(),
+        )
+    except _asr_live_transport_error_type() as exc:
+        _adapter_harness(
+            boundary=boundary,
+            adapter_id=config.asr_adapter_id,
+            adapter_type="asr",
+            output_mode="degraded",
+            source_module="mvp5_asr_adapter",
+        ).emit_request_failed(
+            event_id=f"{event_base}_request_failed",
+            caused_by_event_id=str(turn_committed_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=binding.adapter_request_id,
+            failure_reason=_safe_provider_failure_reason(exc.failure_reasons),
+            retryable=exc.retryable,
+            timeout_ms=grant.timeout_ms if exc.timeout else None,
+        )
+        return None
+
+    metadata_map = _metadata_from_transport_result(metadata)
+    if metadata_map.get("transcript_present") is not True:
+        _adapter_harness(
+            boundary=boundary,
+            adapter_id=config.asr_adapter_id,
+            adapter_type="asr",
+            output_mode="degraded",
+            source_module="mvp5_asr_adapter",
+        ).emit_output_validation_failed(
+            event_id=f"{event_base}_validation_failed",
+            caused_by_event_id=str(turn_committed_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=binding.adapter_request_id,
+            schema_name="voice_agent.asr.normalized_transcript.v1",
+            failure_reasons=("provider_output_validation_failed",),
+        )
+        return None
+
+    try:
+        candidate = normalize_asr_candidate(
+            binding=binding,
+            asr_frame_ref=str(metadata_map["asr_frame_ref"]),
+            text_ref=str(metadata_map["text_ref"]),
+            audio_timestamps_ref=None,
+            timestamp_status="unavailable",
+            streaming_status="unsupported_final_only",
+            output_mode="degraded",
+        )
+    except Exception:
+        _adapter_harness(
+            boundary=boundary,
+            adapter_id=config.asr_adapter_id,
+            adapter_type="asr",
+            output_mode="degraded",
+            source_module="mvp5_asr_adapter",
+        ).emit_output_validation_failed(
+            event_id=f"{event_base}_validation_failed",
+            caused_by_event_id=str(turn_committed_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=binding.adapter_request_id,
+            schema_name="voice_agent.asr.normalized_transcript.v1",
+            failure_reasons=("provider_output_validation_failed",),
+        )
+        return None
+
+    contract = AsrAdapterContract(
+        boundary=boundary,
+        adapter_id=config.asr_adapter_id,
+        output_mode=candidate.output_mode,
+        source_module="mvp5_asr_adapter",
+    )
+    emission = emit_normalized_asr_candidate(
+        contract=contract,
+        candidate=candidate,
+        turn_committed_event=turn_committed_event,
+        event_id=f"{event_base}_transcript",
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+    )
+    return emission.transcript_event
+
+
+def _emit_asr_fake_transport_result(
+    *,
+    boundary: AdapterCallbackAppendBoundary,
+    config: MVP5LiveVoiceEvidenceConfig,
+    turn_committed_event: Mapping[str, Any],
+    result: AsrFakeTransportResult,
+    event_base: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+) -> dict[str, Any] | None:
     if result.candidate is not None:
         contract = AsrAdapterContract(
             boundary=boundary,
@@ -457,6 +596,7 @@ def _run_thinker_audio_native_transport(
     grant: MVP5LiveProviderApprovalGrant,
     env: Mapping[str, str],
     audio_bytes: bytes,
+    asr_event: Mapping[str, Any] | None,
     run_id: str,
     created_monotonic_ms: int,
     created_wall_clock_ms: int,
@@ -491,8 +631,12 @@ def _run_thinker_audio_native_transport(
     if not callable(complete_audio):
         raise MVP5LiveVoiceEvidenceError("Thinker fake transport must provide complete_audio")
     try:
+        transient_input_text = _transient_asr_text(asr_event)
         provider_text = complete_audio(
-            request_payload=build_lalm_thinker_live_request_payload(binding=binding),
+            request_payload=build_lalm_thinker_live_request_payload(
+                binding=binding,
+                transient_input_text=transient_input_text,
+            ),
             audio_bytes=audio_bytes,
             audio_format="wav",
             credential_handle=LALMThinkerCredentialHandle(
@@ -538,13 +682,102 @@ def _run_thinker_audio_native_transport(
     return None
 
 
-def _call_fake_asr_transport(transcribe: object, binding: AsrRequestBinding) -> object:
+def _maybe_call_fake_asr_transport(
+    transcribe: object,
+    binding: AsrRequestBinding,
+) -> object | None:
     signature = inspect.signature(transcribe)
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
-        return transcribe(binding=binding)
+        return None
     if "binding" in signature.parameters:
         return transcribe(binding=binding)
-    return transcribe(binding)
+    if len(signature.parameters) == 1:
+        return transcribe(binding)
+    return None
+
+
+def _metadata_from_transport_result(value: object) -> Mapping[str, Any]:
+    to_metadata = getattr(value, "to_metadata", None)
+    metadata = to_metadata() if callable(to_metadata) else value
+    if not isinstance(metadata, Mapping):
+        raise MVP5LiveVoiceEvidenceError("ASR transport must return safe metadata")
+    return metadata
+
+
+def _asr_live_transport_module() -> Any:
+    return importlib.import_module("voice_agent.adapters.asr_live_transport")
+
+
+def _default_asr_live_transport() -> object:
+    return _asr_live_transport_module().DashScopeAsrLiveDirectHTTPTransport()
+
+
+def _asr_live_transport_error_type() -> type[Exception]:
+    return _asr_live_transport_module().DashScopeAsrLiveTransportError
+
+
+def _asr_live_credential_handle(*, credential_ref: str) -> object:
+    return _asr_live_transport_module().AsrLiveCredentialHandle(
+        credential_ref=credential_ref,
+    )
+
+
+def _asr_live_selected_model_alias() -> str:
+    return str(_asr_live_transport_module().ASR_LIVE_SELECTED_MODEL_ALIAS)
+
+
+def _resolve_asr_live_transcript_text_ref(text_ref: str) -> str | None:
+    return _asr_live_transport_module().resolve_asr_live_transcript_text_ref(text_ref)
+
+
+def _transient_asr_text(asr_event: Mapping[str, Any] | None) -> str | None:
+    if asr_event is None:
+        return None
+    text_ref = asr_event.get("text_ref")
+    if not isinstance(text_ref, str) or text_ref == "":
+        return None
+    return _resolve_asr_live_transcript_text_ref(text_ref)
+
+
+def _safe_provider_failure_reason(reasons: Sequence[str]) -> str:
+    for reason in reasons:
+        if reason in {
+            "credential_missing",
+            "provider_timeout",
+            "provider_request_failed",
+            "provider_response_parse_failed",
+            "provider_output_validation_failed",
+            "unsupported_audio",
+        }:
+            return reason
+        if reason == "unsupported_audio_mime_type":
+            return "unsupported_audio"
+        if reason == "provider_response_text_missing":
+            return "provider_response_parse_failed"
+        if "credential" in reason:
+            return "credential_missing"
+    return "provider_request_failed"
+
+
+def _failure_reasons_from_events(events: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    reasons: list[str] = []
+    for event in events:
+        if event.get("event_name") == "ADAPTER_REQUEST_FAILED":
+            reason = event.get("failure_reason")
+            if isinstance(reason, str) and reason:
+                reasons.append(reason)
+        elif event.get("event_name") == "ADAPTER_OUTPUT_VALIDATION_FAILED":
+            failure_reasons = event.get("failure_reasons")
+            if isinstance(failure_reasons, Sequence) and not isinstance(
+                failure_reasons,
+                (str, bytes, bytearray),
+            ):
+                reasons.extend(str(reason) for reason in failure_reasons)
+            else:
+                reasons.append("provider_output_validation_failed")
+    if not reasons:
+        reasons.append("adapter_evidence_incomplete")
+    return tuple(dict.fromkeys(reasons))
 
 
 def _adapter_harness(

@@ -100,6 +100,11 @@ def test_fake_transports_emit_asr_and_thinker_evidence_for_same_committed_audio_
     assert thinker_event["semantic_summary_ref"].startswith(
         "summary://synthetic/lalm-thinker/adapter-owned/"
     )
+    assert thinker_event["task_focus_hint"] == "FOREGROUND_CHAT"
+    assert thinker_event["task_like"] is False
+    assert thinker_event["complexity_hint"] == "simple"
+    assert thinker_event["focus_confidence"] == 0.86
+    assert thinker_event["evidence_uncertainty"] == "low"
 
     metadata = result.to_metadata()
     rendered = json.dumps(metadata, sort_keys=True)
@@ -266,8 +271,22 @@ class _ExplodingThinkerTransport:
 
 
 class _FakeThinkerAudioTransport:
-    def __init__(self, *, optional_available: bool) -> None:
+    def __init__(
+        self,
+        *,
+        optional_available: bool,
+        focus: str = "FOREGROUND_CHAT",
+        task_like: bool = False,
+        complexity_hint: str = "simple",
+        focus_confidence: float = 0.86,
+        evidence_uncertainty: str = "low",
+    ) -> None:
         self.optional_available = optional_available
+        self.focus = focus
+        self.task_like = task_like
+        self.complexity_hint = complexity_hint
+        self.focus_confidence = focus_confidence
+        self.evidence_uncertainty = evidence_uncertainty
         self.call_count = 0
         self.audio_bytes_seen: bytes | None = None
 
@@ -301,6 +320,13 @@ class _FakeThinkerAudioTransport:
             "assistant_directedness": {"status": status, "label": "directed"},
             "emotion": {"status": status, "label": "neutral"},
             "audio_caption": {"status": status, "label": "speech_available"},
+        }
+        skeleton["task_focus_hint"] = {
+            "focus": self.focus,
+            "task_like": self.task_like,
+            "complexity_hint": self.complexity_hint,
+            "focus_confidence": self.focus_confidence,
+            "evidence_uncertainty": self.evidence_uncertainty,
         }
         return json.dumps(skeleton, separators=(",", ":"), sort_keys=True)
 

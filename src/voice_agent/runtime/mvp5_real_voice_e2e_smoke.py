@@ -122,6 +122,10 @@ def run_mvp5_real_voice_e2e_single(
     run_id = _require_safe_token(run_id, "run_id")
     approval_packet = _require_mapping(approval_packet, "approval_packet")
     expected_route = _normalize_expected_route(expected_route, allow_auto=True)
+    if expected_route == "PATCH_ACTIVE_SLOW_TASK" and active_task_context is None:
+        raise MVP5RealVoiceE2ESmokeError(
+            "PATCH_ACTIVE_SLOW_TASK expected route requires active task context"
+        )
     credential_env_var_name = _credential_env_var_name(approval_packet)
 
     evidence = run_mvp5_live_voice_evidence(
@@ -292,6 +296,7 @@ def main(
                     fake_route=str(args.provider_free_fake_route),
                     route_slug=args.run_id or "cli-single",
                 )
+            active_task_context = _active_task_context_from_args(args)
             payload = run_mvp5_real_voice_e2e_single(
                 local_wav=args.local_wav,
                 live_provider=bool(args.live_provider),
@@ -302,6 +307,7 @@ def main(
                 env=runtime_env,
                 asr_transport=asr_transport,
                 thinker_transport=thinker_transport,
+                active_task_context=active_task_context,
             )
     except Exception as exc:
         payload = _safe_failure_payload(exc)
@@ -332,6 +338,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--approval-packet", required=True, help="Structured approval packet path.")
     parser.add_argument("--run-id", help="Safe run id for metadata refs.")
+    parser.add_argument("--active-task-id", help="Safe active SlowTask id for PATCH smoke.")
+    parser.add_argument("--active-plan-version", type=int, help="Positive active SlowTask plan version.")
+    parser.add_argument("--active-task-event-seq", type=int, help="Positive active SlowTask event sequence.")
+    parser.add_argument(
+        "--active-lifecycle-phase",
+        default=None,
+        help="Active SlowTask lifecycle phase; defaults to PLANNING when active context is supplied.",
+    )
     parser.add_argument(
         "--provider-free-fake-route",
         choices=tuple(sorted(_PACK_EXPECTED_ROUTES)),
@@ -365,6 +379,26 @@ def _env_with_fake_credential_if_needed(
     fake_env = dict(env)
     fake_env[credential_env_var_name] = "PROVIDER_FREE_FAKE_TRANSPORT_CREDENTIAL"
     return fake_env
+
+
+def _active_task_context_from_args(args: argparse.Namespace) -> MVP5ActiveSlowTaskContext | None:
+    active_task_id = getattr(args, "active_task_id", None)
+    active_plan_version = getattr(args, "active_plan_version", None)
+    active_task_event_seq = getattr(args, "active_task_event_seq", None)
+    lifecycle_phase = getattr(args, "active_lifecycle_phase", None) or "PLANNING"
+    values = (active_task_id, active_plan_version, active_task_event_seq)
+    if all(value in (None, "") for value in values):
+        return None
+    if any(value in (None, "") for value in values):
+        raise MVP5RealVoiceE2ESmokeError(
+            "active task context requires active task id, plan version, and task event seq"
+        )
+    return MVP5ActiveSlowTaskContext(
+        task_id=_require_safe_token(active_task_id, "active_task_id"),
+        current_plan_version=_positive_int(active_plan_version, "active_plan_version"),
+        current_task_event_seq=_positive_int(active_task_event_seq, "active_task_event_seq"),
+        lifecycle_phase=_require_safe_token(lifecycle_phase, "active_lifecycle_phase"),
+    )
 
 
 def _provider_free_fake_pack_transport_factory(case: MVP5SmokePackCase) -> TransportPair:
@@ -439,16 +473,26 @@ class _ProviderFreeFakeThinkerAudioTransport:
 def _fake_task_focus_hint(fake_route: str) -> dict[str, object]:
     if fake_route == "FAST_ONLY":
         return {
+            "focus": "FOREGROUND_CHAT",
             "task_like": False,
             "complexity_hint": "simple",
             "focus_confidence": 0.86,
             "evidence_uncertainty": "low",
         }
-    if fake_route in {"SPAWN_SLOW_TASK", "PATCH_ACTIVE_SLOW_TASK"}:
+    if fake_route == "SPAWN_SLOW_TASK":
         return {
+            "focus": "NEW_TASK_CANDIDATE",
             "task_like": True,
             "complexity_hint": "complex",
             "focus_confidence": 0.9,
+            "evidence_uncertainty": "low",
+        }
+    if fake_route == "PATCH_ACTIVE_SLOW_TASK":
+        return {
+            "focus": "ACTIVE_TASK_PATCH",
+            "task_like": True,
+            "complexity_hint": "medium",
+            "focus_confidence": 0.92,
             "evidence_uncertainty": "low",
         }
     raise MVP5RealVoiceE2ESmokeError("provider-free fake route must be an MVP-5 route")

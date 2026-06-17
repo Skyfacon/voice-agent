@@ -8,7 +8,9 @@ import wave
 import pytest
 
 from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
+from voice_agent.adapters.asr_live_transport import AsrLiveProviderCallMetadata
 from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_MODEL_ALIAS
+import voice_agent.runtime.mvp5_live_voice_evidence as live_voice_evidence_module
 from voice_agent.runtime.mvp5_real_voice_e2e_smoke import (
     MVP5RealVoiceE2ESmokeError,
     MVP5SmokePackCase,
@@ -306,6 +308,100 @@ def test_main_provider_free_fake_route_mode_outputs_actual_route_without_env_sec
     assert "DUMMY_TEST_CREDENTIAL" not in rendered
 
 
+def test_main_single_active_task_context_produces_patch_route_in_provider_free_fake_mode(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    wav_path = tmp_path / "cli-fake-patch-private.wav"
+    _write_wav_file(wav_path)
+    approval_path = tmp_path / "approval-fake-patch-private.json"
+    approval_path.write_text(json.dumps(_approval_packet()), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--live-provider",
+            "--allow-local-wav",
+            "--local-wav",
+            str(wav_path),
+            "--expected-route",
+            "PATCH_ACTIVE_SLOW_TASK",
+            "--active-task-id",
+            "task_local_active",
+            "--active-plan-version",
+            "1",
+            "--active-task-event-seq",
+            "1",
+            "--active-lifecycle-phase",
+            "PLANNING",
+            "--approval-packet",
+            str(approval_path),
+            "--provider-free-fake-route",
+            "PATCH_ACTIVE_SLOW_TASK",
+        ],
+        env={},
+    )
+
+    captured = capsys.readouterr()
+    metadata = json.loads(captured.out)
+    rendered = json.dumps(metadata, sort_keys=True)
+    assert exit_code == 0
+    assert metadata["mode"] == "single"
+    assert metadata["actual_route"] == "PATCH_ACTIVE_SLOW_TASK"
+    assert metadata["route_result_kind"] == "user_patch"
+    assert metadata["task_id"] == "task_local_active"
+    assert metadata["provider_call_used"] is False
+    assert metadata["fake_transport_used"] is True
+    assert str(wav_path) not in rendered
+    assert wav_path.name not in rendered
+    assert str(approval_path) not in rendered
+    assert approval_path.name not in rendered
+
+
+def test_real_provider_mode_constructs_adapter_transports_without_fake_route_or_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wav_path = tmp_path / "real-provider-private.wav"
+    _write_wav_file(wav_path)
+    fake_asr = _ConstructedRealAsrTransport()
+    fake_thinker = _ConstructedRealThinkerTransport(fake_route="FAST_ONLY")
+
+    monkeypatch.setattr(
+        live_voice_evidence_module,
+        "_default_asr_live_transport",
+        lambda: fake_asr,
+    )
+    monkeypatch.setattr(
+        live_voice_evidence_module,
+        "LALMThinkerLiveDirectHTTPTransport",
+        lambda: fake_thinker,
+    )
+
+    metadata = run_mvp5_real_voice_e2e_single(
+        local_wav=wav_path,
+        live_provider=True,
+        allow_local_wav=True,
+        approval_packet=_approval_packet(),
+        expected_route="FAST_ONLY",
+        run_id="mvp5-real-provider-constructed",
+        env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+    )
+
+    rendered = json.dumps(metadata, sort_keys=True)
+    assert metadata["status"] == "routed"
+    assert metadata["actual_route"] == "FAST_ONLY"
+    assert metadata["provider_call_used"] is True
+    assert metadata["fake_transport_used"] is False
+    assert metadata["asr_output_mode"] == "degraded"
+    assert metadata["thinker_output_mode"] == "real"
+    assert fake_asr.call_count == 1
+    assert fake_thinker.call_count == 1
+    assert str(wav_path) not in rendered
+    assert wav_path.name not in rendered
+    assert "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK" not in rendered
+    assert "synthetic transcript" not in rendered
+
+
 def _transport_factory_from_expected_route(
     case: MVP5SmokePackCase,
 ) -> tuple[FakeAsrTransport, _FakeThinkerAudioTransport]:
@@ -361,6 +457,7 @@ class _FakeThinkerAudioTransport:
         }
         if self.fake_route == "FAST_ONLY":
             skeleton["task_focus_hint"] = {
+                "focus": "FOREGROUND_CHAT",
                 "task_like": False,
                 "complexity_hint": "simple",
                 "focus_confidence": 0.86,
@@ -368,6 +465,7 @@ class _FakeThinkerAudioTransport:
             }
         elif self.fake_route == "SPAWN_SLOW_TASK":
             skeleton["task_focus_hint"] = {
+                "focus": "NEW_TASK_CANDIDATE",
                 "task_like": True,
                 "complexity_hint": "complex",
                 "focus_confidence": 0.9,
@@ -375,8 +473,9 @@ class _FakeThinkerAudioTransport:
             }
         elif self.fake_route == "PATCH_ACTIVE_SLOW_TASK":
             skeleton["task_focus_hint"] = {
+                "focus": "ACTIVE_TASK_PATCH",
                 "task_like": True,
-                "complexity_hint": "complex",
+                "complexity_hint": "medium",
                 "focus_confidence": 0.92,
                 "evidence_uncertainty": "low",
             }
@@ -398,6 +497,50 @@ def _approval_packet(*, max_provider_calls: int = 2) -> dict[str, object]:
         "timeout_ms": 30_000,
         "safe_output_ref": "summary://mvp5/goal4/real-voice-e2e-test",
     }
+
+
+class _ConstructedRealAsrTransport:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def transcribe(
+        self,
+        *,
+        audio_payload: bytes,
+        audio_mime_type: str,
+        credential_handle: object,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+    ) -> AsrLiveProviderCallMetadata:
+        assert audio_payload
+        assert audio_mime_type == "audio/wav"
+        assert "secret_materialized=False" in repr(credential_handle)
+        assert credential_value == "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"
+        assert adapter_request_id.startswith("adapter-request-mvp5-asr-")
+        assert timeout_ms == 30_000
+        assert model_alias
+        self.call_count += 1
+        return AsrLiveProviderCallMetadata(
+            adapter_request_id=adapter_request_id,
+            provider_url_ref="provider-url://dashscope/qwen-asr/openai-compatible-chat-completions",
+            model_alias=model_alias,
+            transcript_present=True,
+            asr_frame_ref=f"asr-frame://provider/dashscope/{adapter_request_id}",
+            text_ref=f"text://provider/dashscope/{adapter_request_id}",
+            response_text_size_bucket="small",
+        )
+
+
+class _ConstructedRealThinkerTransport(_FakeThinkerAudioTransport):
+    def __init__(self, *, fake_route: str) -> None:
+        super().__init__(fake_route=fake_route)
+        self.call_count = 0
+
+    def complete_audio(self, **kwargs: object) -> str:
+        self.call_count += 1
+        return super().complete_audio(**kwargs)
 
 
 def _write_pack(pack_path: Path, *, cases: list[dict[str, object]]) -> None:

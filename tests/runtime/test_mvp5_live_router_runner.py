@@ -19,7 +19,13 @@ from voice_agent.runtime.mvp5_live_voice_evidence import (
 def test_runner_routes_goal2_evidence_refs_through_router_without_selecting_winner(
     tmp_path: Path,
 ) -> None:
-    evidence = _live_evidence_result(tmp_path, route_slug="spawn", task_like=True)
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="spawn",
+        task_focus_hint="NEW_TASK_CANDIDATE",
+        task_like=True,
+        complexity_hint="complex",
+    )
 
     result = run_mvp5_live_router_runner(
         evidence,
@@ -37,6 +43,7 @@ def test_runner_routes_goal2_evidence_refs_through_router_without_selecting_winn
     assert result.status == "routed"
     assert result.router_decision == "SPAWN_SLOW_TASK"
     assert router_event["router_decision"] == "SPAWN_SLOW_TASK"
+    assert router_event["task_focus"] == "NEW_TASK_CANDIDATE"
     assert router_event["turn_committed_event_id"] == committed["event_id"]
     assert router_event["asr_frame_event_id"] == asr_event["event_id"]
     assert router_event["thinker_frame_event_id"] == thinker_event["event_id"]
@@ -66,7 +73,13 @@ def test_runner_routes_goal2_evidence_refs_through_router_without_selecting_winn
 def test_expected_route_mismatch_reports_actual_decision_without_forcing_route_events(
     tmp_path: Path,
 ) -> None:
-    evidence = _live_evidence_result(tmp_path, route_slug="actual-spawn", task_like=True)
+    evidence = _live_evidence_result(
+        tmp_path,
+        route_slug="actual-spawn",
+        task_focus_hint="NEW_TASK_CANDIDATE",
+        task_like=True,
+        complexity_hint="complex",
+    )
 
     result = run_mvp5_live_router_runner(
         evidence,
@@ -95,7 +108,9 @@ def _live_evidence_result(
     tmp_path: Path,
     *,
     route_slug: str,
+    task_focus_hint: str,
     task_like: bool,
+    complexity_hint: str,
 ):
     wav_path = tmp_path / f"{route_slug}.wav"
     _write_wav_file(wav_path)
@@ -110,7 +125,11 @@ def _live_evidence_result(
             ),
         )
     )
-    thinker_transport = _FakeThinkerAudioTransport(task_like=task_like)
+    thinker_transport = _FakeThinkerAudioTransport(
+        task_focus_hint=task_focus_hint,
+        task_like=task_like,
+        complexity_hint=complexity_hint,
+    )
 
     return run_mvp5_live_voice_evidence(
         local_wav=wav_path,
@@ -130,8 +149,16 @@ def _live_evidence_result(
 
 
 class _FakeThinkerAudioTransport:
-    def __init__(self, *, task_like: bool) -> None:
+    def __init__(
+        self,
+        *,
+        task_focus_hint: str,
+        task_like: bool,
+        complexity_hint: str,
+    ) -> None:
+        self.task_focus_hint = task_focus_hint
         self.task_like = task_like
+        self.complexity_hint = complexity_hint
 
     def complete_audio(
         self,
@@ -161,8 +188,9 @@ class _FakeThinkerAudioTransport:
             "audio_caption": {"status": "available", "label": "speech_available"},
         }
         skeleton["task_focus_hint"] = {
+            "focus": self.task_focus_hint,
             "task_like": self.task_like,
-            "complexity_hint": "complex" if self.task_like else "simple",
+            "complexity_hint": self.complexity_hint,
             "focus_confidence": 0.86,
             "evidence_uncertainty": "low",
         }

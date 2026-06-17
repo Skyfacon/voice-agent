@@ -27,7 +27,10 @@ LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION = (
     "Return only one lalm_thinker_semantic_frame_candidate.v1 JSON object. "
     "No markdown or prose. No arrays or multiple objects. Copy request_binding "
     "exactly from required_output_skeleton. The output is evidence only: "
-    "availability flags, short safe labels, and normalized hints. Do not include "
+    "availability flags, short safe labels, and normalized routing hints. "
+    "Classify task_focus_hint.focus as FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
+    "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT; use AMBIGUOUS with high "
+    "uncertainty when unclear. Router owns the final RouterDecision. Do not include "
     "final event refs, raw payloads, provider schema, tool_calls/function_call, "
     "native tool execution, SemanticCommitment, confirmation, playback, or "
     "coverage/truthfulness ownership claims."
@@ -344,6 +347,12 @@ def _build_openai_compatible_request_body(
             "do not wrap JSON in markdown, prose, arrays, or multiple objects",
             "copy required_output_skeleton.request_binding exactly",
             "express only evidence availability, short safe labels, and normalized hints",
+            (
+                "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
+                "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
+            ),
+            "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
+            "Thinker focus is evidence only; Router owns the final RouterDecision",
             "do not include final event refs; adapter owns deterministic provider-neutral refs",
             "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
             "use transient_input_evidence only as input evidence; do not copy its text into labels",
@@ -388,6 +397,12 @@ def _build_openai_compatible_audio_request_body(
             "copy required_output_skeleton.request_binding exactly",
             "use the attached audio as primary evidence for the Thinker candidate",
             "express only evidence availability, short safe labels, and normalized hints",
+            (
+                "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
+                "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
+            ),
+            "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
+            "Thinker focus is evidence only; Router owns the final RouterDecision",
             "do not include final event refs; adapter owns deterministic provider-neutral refs",
             "do not include raw provider request, raw provider response, provider schema, raw audio, or raw semantic payload",
             "do not call tools, request native tool execution, or include tool_calls/function_call",
@@ -451,10 +466,11 @@ def _build_required_output_skeleton(request_payload: Mapping[str, Any]) -> dict[
             "audio_caption": {"status": "unavailable"},
         },
         "task_focus_hint": {
-            "task_like": True,
-            "complexity_hint": "complex",
-            "focus_confidence": 0.75,
-            "evidence_uncertainty": "medium",
+            "focus": "AMBIGUOUS",
+            "task_like": False,
+            "complexity_hint": "unknown",
+            "focus_confidence": 0.5,
+            "evidence_uncertainty": "high",
         },
         "boundary_assertions": {
             "candidate_is_evidence_only": True,
