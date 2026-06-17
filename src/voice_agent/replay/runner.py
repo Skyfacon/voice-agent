@@ -261,6 +261,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_thinker_semantic_frame_output_contract(ordered_events)
     _validate_slow_llm_structured_output_contract(ordered_events)
     _validate_tts_synthesis_output_contract(ordered_events)
+    _validate_slowtask_spawn_voice_evidence_refs(ordered_events, manifest=manifest)
     _validate_user_patch_evidence_pack_source_links(ordered_events)
     _validate_tool_execution_gate_links(ordered_events)
     _validate_spoken_plan_source_links(ordered_events)
@@ -1492,6 +1493,11 @@ def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Map
                 source_id_field="asr_frame_event_id",
                 source_event_ids=source_event_ids,
             )
+            _validate_user_patch_asr_evidence_matches_router(
+                authoritative=authoritative,
+                router_event=router_event,
+                events_by_id=events_by_id,
+            )
 
         if hypothesis.get("semantic_frame_ref") not in (None, "") or hypothesis.get("semantic_summary_ref") not in (None, ""):
             provenance = hypothesis.get("provenance", {})
@@ -1529,6 +1535,171 @@ def _validate_user_patch_evidence_pack_source_links(ordered_events: Sequence[Map
                     raise ReplayValidationError(
                         "USER_PATCH_RECEIVED non_authoritative_hypothesis_refs must match evidence_pack hypothesis refs"
                     )
+
+
+def _validate_slowtask_spawn_voice_evidence_refs(
+    ordered_events: Sequence[Mapping[str, Any]],
+    *,
+    manifest: ReplayManifest,
+) -> None:
+    if not _is_mvp4_fixture_manifest(manifest):
+        return
+    events_by_id = {str(event["event_id"]): event for event in ordered_events}
+    expected_refs_by_task_id: dict[str, tuple[str, str]] = {}
+    reviewed_tasks: set[str] = set()
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "SLOWTASK_CREATED":
+            router_event = events_by_id.get(str(event.get("caused_by_event_id")))
+            if not _is_spawn_router_event_with_voice_evidence(router_event):
+                continue
+            expected_refs = _router_voice_evidence_refs(router_event, events_by_id)
+            if expected_refs is None:
+                continue
+            _require_refs_contain(
+                event.get("source_evidence_refs", ()),
+                expected_refs=expected_refs,
+                error_prefix="SLOWTASK_CREATED source_evidence_refs",
+            )
+            expected_refs_by_task_id[str(event["task_id"])] = expected_refs
+            continue
+
+        if event_name != "EVIDENCE_REVIEWED":
+            continue
+        task_id = str(event.get("task_id", ""))
+        expected_refs = expected_refs_by_task_id.get(task_id)
+        if expected_refs is None or task_id in reviewed_tasks:
+            continue
+        _require_refs_contain(
+            event.get("evidence_refs", ()),
+            expected_refs=expected_refs,
+            error_prefix="EVIDENCE_REVIEWED evidence_refs",
+        )
+        reviewed_tasks.add(task_id)
+
+
+def _is_mvp4_fixture_manifest(manifest: ReplayManifest) -> bool:
+    return manifest.replay_id.startswith("replay_mvp4") or manifest.source_trace_ref.startswith("fixture://mvp4/")
+
+
+def _is_spawn_router_event_with_voice_evidence(event: Mapping[str, Any] | None) -> bool:
+    if event is None or event.get("event_name") != "ROUTER_DECISION_EMITTED":
+        return False
+    if event.get("router_decision") != "SPAWN_SLOW_TASK":
+        return False
+    return event.get("asr_frame_event_id") not in (None, "") and event.get("thinker_frame_event_id") not in (None, "")
+
+
+def _router_voice_evidence_refs(
+    router_event: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, str] | None:
+    asr_event = events_by_id.get(str(router_event["asr_frame_event_id"]))
+    thinker_event = events_by_id.get(str(router_event["thinker_frame_event_id"]))
+    if asr_event is None or thinker_event is None:
+        return None
+    asr_ref = asr_event.get("asr_frame_ref")
+    thinker_ref = thinker_event.get("semantic_frame_ref")
+    if not isinstance(asr_ref, str) or asr_ref == "":
+        return None
+    if not isinstance(thinker_ref, str) or thinker_ref == "":
+        return None
+    return asr_ref, thinker_ref
+
+
+def _require_refs_contain(
+    refs: object,
+    *,
+    expected_refs: tuple[str, ...],
+    error_prefix: str,
+) -> None:
+    actual_refs = _string_set_for_refs(refs, error_prefix=error_prefix)
+    missing_refs = [ref for ref in expected_refs if ref not in actual_refs]
+    if missing_refs:
+        raise ReplayValidationError(f"{error_prefix} must contain Router voice evidence refs")
+
+
+def _validate_user_patch_asr_evidence_matches_router(
+    *,
+    authoritative: Mapping[str, Any],
+    router_event: Mapping[str, Any],
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    expected_asr_event_id = router_event.get("asr_frame_event_id")
+    if expected_asr_event_id in (None, ""):
+        raise ReplayValidationError("USER_PATCH_RECEIVED ASR evidence requires router asr_frame_event_id")
+    expected_asr_event_id = str(expected_asr_event_id)
+    asr_event = events_by_id.get(expected_asr_event_id)
+    if asr_event is None or asr_event.get("event_name") not in {
+        "MOCK_ASR_FRAME_EMITTED",
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+    }:
+        raise ReplayValidationError("USER_PATCH_RECEIVED ASR evidence must reference prior ASR output")
+
+    if authoritative.get("asr_frame_ref") not in (None, ""):
+        if authoritative.get("asr_frame_ref") != asr_event.get("asr_frame_ref"):
+            raise ReplayValidationError(
+                "USER_PATCH_RECEIVED asr_frame_ref must match referenced ASR output"
+            )
+    if authoritative.get("asr_text_ref") not in (None, ""):
+        if authoritative.get("asr_text_ref") != asr_event.get("text_ref"):
+            raise ReplayValidationError(
+                "USER_PATCH_RECEIVED asr_text_ref must match referenced ASR output"
+            )
+    if authoritative.get("transcript_hint_ref") not in (None, "") and asr_event.get("text_ref") not in (None, ""):
+        if authoritative.get("transcript_hint_ref") != asr_event.get("text_ref"):
+            raise ReplayValidationError(
+                "USER_PATCH_RECEIVED transcript_hint_ref must match referenced ASR output"
+            )
+
+    _validate_user_patch_asr_nbest_matches_router(
+        authoritative.get("asr_nbest", ()),
+        expected_asr_event_id=expected_asr_event_id,
+        asr_event=asr_event,
+        label="asr_nbest",
+    )
+
+    provenance = authoritative.get("provenance", {})
+    if provenance not in (None, "") and not isinstance(provenance, Mapping):
+        raise ReplayValidationError("USER_PATCH_RECEIVED ASR provenance must be an object")
+    if isinstance(provenance, Mapping):
+        _validate_user_patch_asr_nbest_matches_router(
+            provenance.get("asr_nbest", ()),
+            expected_asr_event_id=expected_asr_event_id,
+            asr_event=asr_event,
+            label="asr_nbest provenance",
+        )
+
+
+def _validate_user_patch_asr_nbest_matches_router(
+    value: object,
+    *,
+    expected_asr_event_id: str,
+    asr_event: Mapping[str, Any],
+    label: str,
+) -> None:
+    if value in (None, ""):
+        return
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ReplayValidationError(f"USER_PATCH_RECEIVED {label} must be a list")
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ReplayValidationError(f"USER_PATCH_RECEIVED {label} entries must be objects")
+        if str(item.get("source_event_id", "")) != expected_asr_event_id:
+            raise ReplayValidationError(
+                f"USER_PATCH_RECEIVED {label} source_event_id must match router asr_frame_event_id"
+            )
+        if item.get("text_ref") not in (None, "") and asr_event.get("text_ref") not in (None, ""):
+            if item.get("text_ref") != asr_event.get("text_ref"):
+                raise ReplayValidationError(
+                    f"USER_PATCH_RECEIVED {label} text_ref must match referenced ASR output"
+                )
+        if item.get("evidence_ref") not in (None, "") and asr_event.get("asr_frame_ref") not in (None, ""):
+            if item.get("evidence_ref") != asr_event.get("asr_frame_ref"):
+                raise ReplayValidationError(
+                    f"USER_PATCH_RECEIVED {label} evidence_ref must match referenced ASR output"
+                )
 
 
 def _validate_tool_execution_gate_links(ordered_events: Sequence[Mapping[str, Any]]) -> None:
@@ -2555,6 +2726,16 @@ def _string_set(value: object) -> set[str]:
         return {str(value)}
     if not isinstance(value, Sequence):
         raise ReplayValidationError("USER_PATCH_RECEIVED source_event_ids must be a list")
+    return {str(item) for item in value}
+
+
+def _string_set_for_refs(value: object, *, error_prefix: str) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, (str, bytes)):
+        return {str(value)}
+    if not isinstance(value, Sequence):
+        raise ReplayValidationError(f"{error_prefix} must be a list")
     return {str(item) for item in value}
 
 

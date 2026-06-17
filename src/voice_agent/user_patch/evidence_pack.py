@@ -144,7 +144,7 @@ def construct_user_patch_evidence_pack(
     if text_input_event is not None:
         _validate_text_input_event(text_input_event, turn_committed_event=turn_committed_event)
     if asr_frame_event is not None:
-        _validate_mock_frame(asr_frame_event, "MOCK_ASR_FRAME_EMITTED", turn_committed_event)
+        _validate_asr_frame(asr_frame_event, turn_committed_event)
     if thinker_frame_event is not None:
         _validate_thinker_frame(thinker_frame_event, turn_committed_event)
     semantic_summary_ref = _bind_thinker_semantic_summary_ref(
@@ -210,6 +210,8 @@ def _build_authoritative_evidence(
     if asr_frame_event is not None:
         source_event_ids.append(str(asr_frame_event["event_id"]))
         evidence["asr_frame_ref"] = str(asr_frame_event["asr_frame_ref"])
+        if asr_frame_event.get("text_ref") not in (None, ""):
+            evidence["asr_text_ref"] = str(asr_frame_event["text_ref"])
         evidence["asr_nbest"] = _normalize_asr_nbest(asr_nbest, asr_frame_event=asr_frame_event)
         evidence["provenance"]["asr_nbest"] = [
             {
@@ -306,6 +308,9 @@ def _authoritative_evidence_refs(authoritative_evidence: Mapping[str, Any]) -> l
     asr_frame_ref = authoritative_evidence.get("asr_frame_ref")
     if isinstance(asr_frame_ref, str) and asr_frame_ref:
         refs.append(asr_frame_ref)
+    asr_text_ref = authoritative_evidence.get("asr_text_ref")
+    if isinstance(asr_text_ref, str) and asr_text_ref:
+        refs.append(asr_text_ref)
     audio_span_id = authoritative_evidence.get("audio_span_id")
     if isinstance(audio_span_id, str) and audio_span_id:
         refs.append(f"audio-span://{audio_span_id}")
@@ -408,6 +413,28 @@ def _validate_mock_frame(
     for field in ("turn_id", "utterance_id"):
         if event.get(field) != turn_committed_event.get(field):
             raise ValueError(f"{expected_event_name} must match committed turn {field}")
+
+
+def _validate_asr_frame(
+    event: Mapping[str, Any],
+    turn_committed_event: Mapping[str, Any],
+) -> None:
+    event_name = str(event.get("event_name"))
+    if event_name == "MOCK_ASR_FRAME_EMITTED":
+        _validate_mock_frame(event, "MOCK_ASR_FRAME_EMITTED", turn_committed_event)
+        return
+    if event_name != "ASR_TRANSCRIPT_OUTPUT_EMITTED":
+        raise ValueError("Expected MOCK_ASR_FRAME_EMITTED or ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    if event.get("output_mode") not in {"real", "fallback", "degraded"}:
+        raise ValueError("ASR_TRANSCRIPT_OUTPUT_EMITTED must use output_mode=real, fallback, or degraded")
+    if event.get("transcript_finality") != "final":
+        raise ValueError("ASR_TRANSCRIPT_OUTPUT_EMITTED must be final before UserPatch use")
+    for ref_field in ("asr_frame_ref", "text_ref"):
+        if not isinstance(event.get(ref_field), str) or event.get(ref_field) == "":
+            raise ValueError(f"ASR_TRANSCRIPT_OUTPUT_EMITTED requires {ref_field}")
+    for field in ("turn_id", "utterance_id", "audio_span_id", "input_modality"):
+        if event.get(field) != turn_committed_event.get(field):
+            raise ValueError(f"ASR_TRANSCRIPT_OUTPUT_EMITTED must match committed turn {field}")
 
 
 def _validate_thinker_frame(
