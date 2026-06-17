@@ -14,6 +14,7 @@ from conftest import REPO_ROOT, load_json_fixture
 SCENARIO_SPEC = REPO_ROOT / "docs" / "specs" / "mvp5-acceptance-scenarios.md"
 MVP5_MANIFEST = REPO_ROOT / "tests" / "fixtures" / "replay" / "mvp5" / "manifest.index.json"
 APPROVAL_TEMPLATE = REPO_ROOT / "docs" / "implementation" / "mvp5-live-eval-approval-template.md"
+CLOSEOUT_DOC = REPO_ROOT / "docs" / "implementation" / "mvp5-closeout.md"
 
 MVP4_PREREQUISITES = {
     "provider_free_voice_e2e_orchestrator": REPO_ROOT
@@ -90,6 +91,29 @@ REQUIRED_SAFETY_FLAGS = {
     "local_wav_read_allowed_by_default": False,
     "replay_reruns_provider": False,
 }
+REQUIRED_CLOSEOUT_PHRASES = (
+    "provider-free tests evidence",
+    "fake transport evidence",
+    "replay safety evidence",
+    "stdout/fixture safety evidence",
+    "optional live smoke evidence status",
+    "remaining non-goals",
+)
+REQUIRED_CLOSEOUT_NON_GOALS = (
+    "no realtime mic",
+    "no full-duplex/AEC/barge-in",
+    "no real TTS/voice out",
+    "no real Slow LLM loop",
+    "no production privacy claim",
+    "no real external side effects",
+)
+REQUIRED_MANIFEST_TRACKS = {
+    "provider_free_tests",
+    "fake_transport_tests",
+    "replay_safety_tests",
+    "stdout_fixture_safety_tests",
+    "optional_live_smoke_status",
+}
 
 
 class MVP5AcceptanceError(AssertionError):
@@ -135,6 +159,56 @@ def test_mvp5_manifest_is_metadata_only_and_github_safe() -> None:
         "fixture://mvp5/metadata-only-placeholder",
         "summary://mvp5/live-redacted-placeholder",
     ]
+
+
+def test_mvp5_manifest_has_goal5_scenario_coverage_and_evidence_tracks() -> None:
+    manifest = _load_manifest()
+    required_scenarios = _scenario_ids_from_spec()
+
+    scenario_coverage = manifest["scenario_coverage"]
+    assert [entry["scenario_id"] for entry in scenario_coverage] == required_scenarios
+    for entry in scenario_coverage:
+        assert entry["coverage_status"] == "covered"
+        assert entry["evidence"], entry["scenario_id"]
+        assert entry["summary"], entry["scenario_id"]
+        _assert_no_unsafe_manifest_values(entry)
+
+    evidence_tracks = manifest["goal5_evidence_tracks"]
+    assert set(evidence_tracks) >= REQUIRED_MANIFEST_TRACKS
+    for track_name in REQUIRED_MANIFEST_TRACKS:
+        track = evidence_tracks[track_name]
+        assert track["status"] in {"passed", "covered", "not_run_no_approved_local_wav", "pending"}
+        assert track["evidence"], track_name
+        _assert_no_unsafe_manifest_values(track)
+
+
+def test_mvp5_closeout_exists_and_records_required_goal5_sections() -> None:
+    required_scenarios = _scenario_ids_from_spec()
+    content = CLOSEOUT_DOC.read_text(encoding="utf-8")
+    lowered = content.lower()
+
+    for phrase in REQUIRED_CLOSEOUT_PHRASES:
+        assert phrase in lowered
+    for non_goal in REQUIRED_CLOSEOUT_NON_GOALS:
+        assert non_goal.lower() in lowered
+    for scenario_id in required_scenarios:
+        assert scenario_id in content
+
+    for forbidden in (
+        "DASHSCOPE_API_KEY=",
+        "sk-",
+        "file://",
+        "data:audio",
+        "raw transcript",
+        "provider body",
+        "prompt dump",
+        "/Users/",
+        "audio/raw/",
+        "diagnostics/",
+        "traces/",
+        "replays/local/",
+    ):
+        assert forbidden not in content
 
 
 def test_mvp5_manifest_safety_gate_rejects_unsafe_refs() -> None:
@@ -193,7 +267,11 @@ def _assert_manifest_is_repo_safe(manifest: dict[str, Any]) -> None:
     for key, expected in REQUIRED_SAFETY_FLAGS.items():
         if manifest.get(key) is not expected:
             raise MVP5AcceptanceError(f"{key} must be {expected!r}")
-    rendered = json.dumps(manifest.get("safe_ref_examples", []), sort_keys=True)
+    _assert_no_unsafe_manifest_values(manifest)
+
+
+def _assert_no_unsafe_manifest_values(value: Any) -> None:
+    rendered = json.dumps(value, sort_keys=True)
     unsafe_markers = (
         "file://",
         "data:",
