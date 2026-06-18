@@ -64,7 +64,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     button:disabled { cursor: not-allowed; opacity: 0.55; }
     button.primary { background: var(--blue); color: #ffffff; border-color: var(--blue); }
     button.danger { border-color: var(--red); color: var(--red); }
-    select, input {
+    select, input:not([type="checkbox"]) {
       width: 100%;
       min-height: 34px;
       border: 1px solid #aeb8c6;
@@ -72,7 +72,14 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       padding: 4px 8px;
       background: #ffffff;
     }
+    input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
     label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+    label.checkRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+    }
     pre {
       min-height: 220px;
       margin: 0;
@@ -159,7 +166,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       <label>Active task id <input id="activeTaskId" autocomplete="off"></label>
       <label>Active plan version <input id="activePlanVersion" type="number" min="1"></label>
       <label>Active task event seq <input id="activeTaskEventSeq" type="number" min="1"></label>
-      <label><input id="saveQaHistory" type="checkbox" checked> Save QA history locally</label>
+      <label class="checkRow"><input id="saveQaHistory" type="checkbox" checked> Save QA history locally</label>
       <p class="muted">QA history is local-only and may contain ASR user text.</p>
     </section>
 
