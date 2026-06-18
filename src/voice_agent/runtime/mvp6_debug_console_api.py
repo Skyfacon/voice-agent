@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
+import importlib
 import io
 from pathlib import Path
 import re
@@ -157,10 +158,9 @@ def run_mvp6_debug_console_audio(
     if expected_route == "PATCH_ACTIVE_SLOW_TASK" and not request.active_task_id:
         return _blocked_missing_active_task_context(provider_mode=provider_mode)
     if provider_mode == "dashscope_live":
-        return _safe_failure_response(
-            status="live_provider_not_enabled",
-            provider_mode=provider_mode,
-        )
+        failure = _live_gate_failure(config=config, env=env)
+        if failure is not None:
+            return _safe_failure_response(status=failure, provider_mode=provider_mode)
 
     _require_wav_upload(request.audio_bytes, request.audio_mime_type)
     run_id = _run_id(request.audio_bytes)
@@ -215,6 +215,13 @@ def resolve_mvp6_question_text(
 ) -> str | None:
     if provider_mode == "fake":
         return _synthetic_question_text(str(metadata.get("actual_route") or "FAST_ONLY"))
+    for ref in metadata.get("safe_refs", ()):
+        if isinstance(ref, str) and ref.startswith("text://provider/dashscope/"):
+            module = importlib.import_module("voice_agent.adapters.asr_live_transport")
+            resolver = getattr(module, "resolve_asr_live_transcript_text_ref")
+            text = resolver(ref)
+            if isinstance(text, str) and text.strip():
+                return text
     return None
 
 
@@ -260,6 +267,19 @@ def _positive_int(value: object, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise MVP6DebugConsoleError(f"{field_name} must be positive")
     return value
+
+
+def _live_gate_failure(
+    *,
+    config: MVP6DebugConsoleConfig,
+    env: Mapping[str, str],
+) -> str | None:
+    if config.approval_packet is None:
+        return "approval_missing"
+    credential_name = _credential_env_var_name(config.approval_packet)
+    if not credential_name or not env.get(credential_name):
+        return "credential_missing"
+    return None
 
 
 def _provider_mode(value: str) -> str:

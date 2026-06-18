@@ -121,7 +121,7 @@ def test_rejects_non_wav_upload_without_calling_runtime(tmp_path: Path) -> None:
         )
 
 
-def test_live_provider_mode_is_blocked_before_task4_live_gate(
+def test_live_provider_mode_delegates_after_approval_and_credential_without_network(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -133,11 +133,27 @@ def test_live_provider_mode_is_blocked_before_task4_live_gate(
         output_root=tmp_path / "outputs" / "mvp6-debug-console",
         approval_packet=_approval_packet(),
     )
+    captured_kwargs: dict[str, object] = {}
 
-    def fail_if_runtime_called(**_: object) -> dict[str, object]:
-        raise AssertionError("live provider mode must not reach MVP5 runtime in Task 3")
+    def fake_runtime(**kwargs: object) -> dict[str, object]:
+        captured_kwargs.update(kwargs)
+        return {
+            "status": "routed",
+            "run_id": "mvp6_run_live_gate",
+            "actual_route": "FAST_ONLY",
+            "router_decision": "FAST_ONLY",
+            "route_result_kind": "direct_answer",
+            "expected_route": "auto",
+            "expected_route_matched": True,
+            "provider_call_used": True,
+            "fake_transport_used": False,
+            "asr_output_mode": "real",
+            "thinker_output_mode": "real",
+            "event_ids": ["evt_mvp6_live_gate"],
+            "safe_refs": ["text://provider/dashscope/adapter-request-mvp6"],
+        }
 
-    monkeypatch.setattr(api, "run_mvp5_real_voice_e2e_single", fail_if_runtime_called)
+    monkeypatch.setattr(api, "run_mvp5_real_voice_e2e_single", fake_runtime)
 
     response = run_mvp6_debug_console_audio(
         config=config,
@@ -151,9 +167,83 @@ def test_live_provider_mode_is_blocked_before_task4_live_gate(
         env={"MVP6_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
     )
 
-    assert response["status"] == "live_provider_not_enabled"
+    assert response["status"] == "completed"
+    assert response["provider_call_used"] is True
+    assert response["fake_transport_used"] is False
+    assert captured_kwargs["live_provider"] is True
+    assert captured_kwargs["asr_transport"] is None
+    assert captured_kwargs["thinker_transport"] is None
+
+
+def test_live_provider_mode_requires_approval_and_credential(tmp_path: Path) -> None:
+    wav_path = tmp_path / "live.wav"
+    wav_bytes = _write_wav_file(wav_path)
+    config = MVP6DebugConsoleConfig(output_root=tmp_path / "outputs" / "mvp6-debug-console")
+
+    response = run_mvp6_debug_console_audio(
+        config=config,
+        request=MVP6RunRequest(
+            audio_bytes=wav_bytes,
+            audio_mime_type="audio/wav",
+            provider_mode="dashscope_live",
+            expected_route="auto",
+            save_qa_history=False,
+        ),
+        env={},
+    )
+
+    assert response["status"] == "approval_missing"
     assert response["provider_call_used"] is False
     assert response["fake_transport_used"] is False
+
+
+def test_live_provider_mode_reports_credential_missing_without_provider_call(tmp_path: Path) -> None:
+    wav_path = tmp_path / "live-missing-credential.wav"
+    wav_bytes = _write_wav_file(wav_path)
+    config = MVP6DebugConsoleConfig(
+        output_root=tmp_path / "outputs" / "mvp6-debug-console",
+        approval_packet=_approval_packet(),
+    )
+
+    response = run_mvp6_debug_console_audio(
+        config=config,
+        request=MVP6RunRequest(
+            audio_bytes=wav_bytes,
+            audio_mime_type="audio/wav",
+            provider_mode="dashscope_live",
+            expected_route="auto",
+            save_qa_history=False,
+        ),
+        env={},
+    )
+
+    assert response["status"] == "credential_missing"
+    assert response["provider_call_used"] is False
+    assert response["fake_transport_used"] is False
+
+
+def test_live_question_text_resolves_from_process_local_asr_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from voice_agent.runtime import mvp6_debug_console_api as api
+
+    class FakeAsrLiveModule:
+        @staticmethod
+        def resolve_asr_live_transcript_text_ref(text_ref: str) -> str | None:
+            assert text_ref == "text://provider/dashscope/adapter-request-mvp6"
+            return "Plan a three day Tokyo trip"
+
+    monkeypatch.setattr(api.importlib, "import_module", lambda name: FakeAsrLiveModule)
+    metadata = {
+        "safe_refs": ["text://provider/dashscope/adapter-request-mvp6"],
+        "asr_output_mode": "degraded",
+    }
+
+    assert (
+        api.resolve_mvp6_question_text(metadata, provider_mode="dashscope_live")
+        == "Plan a three day Tokyo trip"
+    )
 
 
 def _write_wav_file(path: Path) -> bytes:
