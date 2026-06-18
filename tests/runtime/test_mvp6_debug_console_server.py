@@ -117,6 +117,22 @@ def test_run_endpoint_rejects_non_utf8_text_field_safely(tmp_path: Path) -> None
         thread.join(timeout=5)
 
 
+def test_cli_help_lists_local_console_options() -> None:
+    import subprocess
+
+    result = subprocess.run(
+        ["scripts/mvp6-debug-console", "--help"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "--approval-packet" in result.stdout
+    assert "--output-root" in result.stdout
+    assert "--host" in result.stdout
+    assert "--port" in result.stdout
+
+
 def _start_server(tmp_path: Path):
     config = MVP6DebugConsoleConfig(output_root=tmp_path / "outputs" / "mvp6-debug-console")
     server = create_mvp6_http_server(config=config, env={}, host="127.0.0.1", port=0)

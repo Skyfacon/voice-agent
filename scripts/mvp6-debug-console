@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+PYTHON_BIN="${VOICE_AGENT_PYTHON:-python3}"
+export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PYTHON_BIN" -m voice_agent.runtime.mvp6_debug_console_server "$@"

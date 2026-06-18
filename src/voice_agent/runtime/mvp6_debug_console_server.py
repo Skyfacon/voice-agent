@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import argparse
 from collections.abc import Mapping
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 from voice_agent.runtime.mvp6_debug_console_api import (
@@ -22,6 +25,41 @@ from voice_agent.runtime.mvp6_debug_console_static import MVP6_DEBUG_CONSOLE_HTM
 
 
 _LOCAL_BIND_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run the MVP6 local debug console.")
+    parser.add_argument("--approval-packet", default=None, help="Local-only approval packet JSON path.")
+    parser.add_argument(
+        "--output-root",
+        default="outputs/mvp6-debug-console",
+        help="Ignored local output root.",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Local bind host.")
+    parser.add_argument("--port", type=int, default=8766, help="Local bind port.")
+    args = parser.parse_args(argv)
+    approval_packet = (
+        _load_approval_packet(Path(args.approval_packet))
+        if args.approval_packet
+        else None
+    )
+    config = MVP6DebugConsoleConfig(
+        output_root=Path(args.output_root),
+        approval_packet=approval_packet,
+        bind_host=args.host,
+    )
+    server = create_mvp6_http_server(
+        config=config,
+        env=os.environ,
+        host=args.host,
+        port=args.port,
+    )
+    print(f"MVP6 debug console listening on http://{args.host}:{server.server_address[1]}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 130
+    return 0
 
 
 def create_mvp6_http_server(
@@ -176,3 +214,15 @@ def _safe_error_message(exc: Exception) -> str:
     if any(marker in lowered for marker in ("/users/", "/private/", "file://", "data:")):
         return "request_failed_safely"
     return message
+
+
+def _load_approval_packet(path: Path) -> dict[str, Any]:
+    with path.open(encoding="utf-8") as stream:
+        payload = json.load(stream)
+    if not isinstance(payload, dict):
+        raise MVP6DebugConsoleError("approval packet must be a JSON object")
+    return payload
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
