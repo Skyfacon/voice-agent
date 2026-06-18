@@ -408,6 +408,16 @@ def _provider_free_fake_pack_transport_factory(case: MVP5SmokePackCase) -> Trans
     )
 
 
+def build_mvp5_provider_free_fake_transports(
+    *,
+    fake_route: str,
+    route_slug: str,
+) -> TransportPair:
+    """Build deterministic adapter fake transports for local debug/runtime tests."""
+
+    return _provider_free_fake_transports(fake_route=fake_route, route_slug=route_slug)
+
+
 def _provider_free_fake_transports(*, fake_route: str, route_slug: str) -> TransportPair:
     fake_route = _normalize_expected_route(fake_route, allow_auto=False)
     route_slug = _safe_slug(_require_safe_token(route_slug, "route_slug"))
