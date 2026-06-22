@@ -15,6 +15,7 @@ from voice_agent.adapters.asr_live_transport import (
     AsrLiveCredentialHandle,
     DashScopeAsrLiveDirectHTTPTransport,
     DashScopeAsrLiveTransportError,
+    resolve_asr_live_model_io_debug,
     resolve_asr_live_transcript_text_ref,
 )
 
@@ -78,6 +79,18 @@ def test_direct_http_transport_builds_audio_request_without_sdk_or_raw_metadata(
     assert resolve_asr_live_transcript_text_ref(str(metadata["text_ref"])) == (
         "synthetic transcript"
     )
+    model_io = resolve_asr_live_model_io_debug("adapter_request_asr_live_001")
+    assert model_io is not None
+    assert model_io["adapter"] == "asr"
+    assert model_io["request_body"]["model"] == "qwen3-asr-flash"
+    assert model_io["request_body"]["messages"][0]["content"][0]["input_audio"]["data"] == (
+        "[redacted-audio-base64]"
+    )
+    assert model_io["provider_text"] == "synthetic transcript"
+    assert model_io["raw_audio_visible"] is False
+    assert model_io["authorization_header_visible"] is False
+    assert "runtime-credential-value-for-test-only" not in repr(model_io)
+    assert "UklGRiBzeW50aGV0aWM" not in repr(model_io)
     assert "synthetic transcript" not in repr(metadata)
     assert "runtime-credential-value-for-test-only" not in repr(metadata)
 

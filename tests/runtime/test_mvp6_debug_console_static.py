@@ -16,6 +16,17 @@ def test_static_html_contains_core_controls_and_provider_state() -> None:
     assert "PATCH_ACTIVE_SLOW_TASK" in html
 
 
+def test_static_html_keeps_active_task_context_in_advanced_details() -> None:
+    html = MVP6_DEBUG_CONSOLE_HTML
+
+    assert '<details id="activeTaskContextDetails"' in html
+    assert "Advanced active-task context" in html
+    assert html.index('<details id="activeTaskContextDetails"') < html.index('id="activeTaskId"')
+    assert "form.append('active_task_id', document.getElementById('activeTaskId').value);" in html
+    assert "form.append('active_plan_version', document.getElementById('activePlanVersion').value);" in html
+    assert "form.append('active_task_event_seq', document.getElementById('activeTaskEventSeq').value);" in html
+
+
 def test_static_html_contains_pipeline_and_history_surfaces() -> None:
     html = MVP6_DEBUG_CONSOLE_HTML
     assert "local_audio_gate" in html
@@ -23,7 +34,18 @@ def test_static_html_contains_pipeline_and_history_surfaces() -> None:
     assert "thinker" in html
     assert "router" in html
     assert "qa_history" in html
+    assert "Latency" in html
+    assert 'id="latencyPanel"' in html
     assert "QA history is local-only" in html
+    assert 'id="showModelIo"' in html
+    assert 'id="modelIoPanel"' in html
+    assert 'id="modelIoEmpty"' in html
+    assert 'id="modelIoAsrText"' in html
+    assert 'id="modelIoThinkerSystem"' in html
+    assert "Thinker User Payload" in html
+    assert 'id="modelIoThinkerRequest"' in html
+    assert 'id="modelIoThinkerOutput"' in html
+    assert 'id="modelIoMetadata"' in html
 
 
 def test_static_js_encodes_wav_and_requires_explicit_run() -> None:
@@ -34,3 +56,24 @@ def test_static_js_encodes_wav_and_requires_explicit_run() -> None:
     assert "function runDraft" in html
     assert "function encodeWav" in html
     assert "new Blob([wavBytes], { type: 'audio/wav' })" in html
+
+
+def test_static_js_resets_unreturned_pipeline_stages_for_gated_runs() -> None:
+    html = MVP6_DEBUG_CONSOLE_HTML
+    assert "const STAGE_NAMES = ['local_audio_gate', 'asr', 'thinker', 'router', 'qa_history'];" in html
+    assert "setStages(payload.status === 'completed' ? 'waiting' : 'not_run');" in html
+
+
+def test_static_js_submits_and_renders_model_io_debug() -> None:
+    html = MVP6_DEBUG_CONSOLE_HTML
+    assert "form.append('show_model_io', document.getElementById('showModelIo').checked ? 'true' : 'false');" in html
+    assert "renderModelIoDebug(payload.model_io_debug || null);" in html
+    assert "function renderModelIoDebug(modelIo)" in html
+    assert "setText('modelIoAsrText', modelIo.asr.provider_text || '(not available)');" in html
+    assert "setText('modelIoThinkerSystem', modelIo.thinker.system_message || '(not available)');" in html
+    assert "setText('modelIoThinkerOutput', modelIo.thinker.provider_text || '(not available)');" in html
+    assert "formatThinkerRequestPayload(modelIo.thinker.request_body)" in html
+    assert "function formatThinkerRequestPayload(requestBody)" in html
+    assert "JSON.parse(userMessage.content)" in html
+    assert "JSON.stringify(buildModelIoMetadata(modelIo), null, 2)" in html
+    assert "document.getElementById('latencyPanel').textContent = JSON.stringify(payload.latency_debug || {}, null, 2);" in html

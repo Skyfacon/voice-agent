@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
@@ -146,6 +147,24 @@ def run_mvp5_real_voice_e2e_single(
         asr_transport=asr_transport,
         thinker_transport=thinker_transport,
     )
+    evidence_latency_debug = _normalize_latency_debug(
+        getattr(evidence, "latency_debug", {}),
+    )
+    thinker_transient_asr_text_used = bool(
+        getattr(evidence, "thinker_transient_asr_text_used", False)
+    )
+    if evidence.status == "evidence_failed":
+        metadata = _incomplete_evidence_metadata(
+            evidence=evidence,
+            run_id=run_id,
+            expected_route=expected_route,
+        )
+        metadata["latency_debug"] = evidence_latency_debug
+        metadata["thinker_transient_asr_text_used"] = thinker_transient_asr_text_used
+        _validate_smoke_metadata(metadata)
+        return metadata
+
+    router_started = time.monotonic()
     route_result = run_mvp5_live_router_runner(
         evidence,
         config=MVP5LiveRouterConfig(
@@ -154,6 +173,7 @@ def run_mvp5_real_voice_e2e_single(
             active_task_context=active_task_context,
         ),
     )
+    evidence_latency_debug["router_ms"] = _elapsed_ms(router_started)
 
     metadata = route_result.to_metadata()
     metadata.update(
@@ -168,11 +188,42 @@ def run_mvp5_real_voice_e2e_single(
             "provider_headers_included": False,
             "local_pack_path_included": False,
             "approval_packet_path_included": False,
+            "thinker_transient_asr_text_used": thinker_transient_asr_text_used,
+            "latency_debug": evidence_latency_debug,
         }
     )
     if evidence.safe_refs:
         metadata["safe_refs"] = list(evidence.safe_refs)
     _validate_smoke_metadata(metadata)
+    return metadata
+
+
+def _incomplete_evidence_metadata(
+    *,
+    evidence: Any,
+    run_id: str,
+    expected_route: str,
+) -> dict[str, Any]:
+    metadata = evidence.to_metadata()
+    metadata.update(
+        {
+            "run_id": run_id,
+            "mode": "single",
+            "input_source": "local_wav_opt_in",
+            "route_result_kind": "blocked",
+            "actual_route": None,
+            "router_decision": None,
+            "expected_route": expected_route,
+            "expected_route_matched": False,
+            "asr_output_mode": evidence.asr_output_mode,
+            "thinker_output_mode": evidence.thinker_output_mode,
+            "local_wav_opt_in_used": evidence.local_wav_opt_in_used,
+            "live_provider_approval_used": evidence.live_provider_approval_used,
+            "provider_headers_included": False,
+            "local_pack_path_included": False,
+            "approval_packet_path_included": False,
+        }
+    )
     return metadata
 
 
@@ -677,6 +728,50 @@ def _aggregate_status(
     if all(case.get("status") == "routed" and case.get("expected_route_matched") is True for case in case_summaries):
         return "passed"
     return "failed"
+
+
+def _normalize_latency_debug(value: object) -> dict[str, Any]:
+    fields = (
+        "total_server_ms",
+        "wav_validate_ms",
+        "temp_wav_write_ms",
+        "local_audio_gate_ms",
+        "approval_gate_ms",
+        "asr_provider_http_ms",
+        "asr_normalize_emit_ms",
+        "thinker_provider_http_ms",
+        "thinker_parse_validate_emit_ms",
+        "router_ms",
+        "qa_history_ms",
+    )
+    bool_fields = (
+        "provider_calls_parallel",
+        "asr_started_before_thinker_finished",
+        "thinker_started_before_asr_finished",
+    )
+    source = value if isinstance(value, Mapping) else {}
+    latency_debug: dict[str, Any] = {}
+    for field in fields:
+        latency_debug[field] = _non_negative_int(source.get(field, 0), field)
+    for field in bool_fields:
+        latency_debug[field] = bool(source.get(field, False))
+    return latency_debug
+
+
+def _non_negative_int(value: object, field: str) -> int:
+    if isinstance(value, bool):
+        raise MVP5RealVoiceE2ESmokeError(f"{field} must be a non-negative integer")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise MVP5RealVoiceE2ESmokeError(f"{field} must be a non-negative integer")
+        value = int(value)
+    if not isinstance(value, int) or value < 0:
+        raise MVP5RealVoiceE2ESmokeError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
 
 
 def _safe_failure_payload(exc: Exception) -> dict[str, Any]:

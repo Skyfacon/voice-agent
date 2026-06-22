@@ -7,6 +7,7 @@ import threading
 import wave
 
 from voice_agent.runtime.mvp6_debug_console_api import MVP6DebugConsoleConfig
+import voice_agent.runtime.mvp6_debug_console_server as server_module
 from voice_agent.runtime.mvp6_debug_console_server import create_mvp6_http_server
 
 
@@ -112,6 +113,52 @@ def test_run_endpoint_rejects_non_utf8_text_field_safely(tmp_path: Path) -> None
         assert response.status == 400
         assert payload["status"] == "failed"
         assert "browser-draft.wav" not in json.dumps(payload, sort_keys=True)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_run_endpoint_returns_safe_json_when_runtime_raises(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    wav_path = tmp_path / "http-run-runtime-error.wav"
+    wav_bytes = _write_wav_file(wav_path)
+    boundary = "mvp6boundary"
+    body = _multipart_body(
+        boundary=boundary,
+        fields={
+            "provider_mode": "fake",
+            "expected_route": "FAST_ONLY",
+            "save_qa_history": "false",
+        },
+        file_field="audio",
+        file_name="browser-draft.wav",
+        file_content_type="audio/wav",
+        file_bytes=wav_bytes,
+    )
+
+    def raising_runtime(**_kwargs):
+        raise RuntimeError("unsafe provider failure under /Users/a123/private.wav")
+
+    monkeypatch.setattr(server_module, "run_mvp6_debug_console_audio", raising_runtime)
+    server, thread = _start_server(tmp_path)
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
+        connection.request(
+            "POST",
+            "/api/runs",
+            body=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        rendered = json.dumps(payload, sort_keys=True)
+        assert response.status == 500
+        assert payload["status"] == "failed"
+        assert payload["failure_reason"] == "request_failed_safely"
+        assert "browser-draft.wav" not in rendered
+        assert "/Users/" not in rendered
     finally:
         server.shutdown()
         thread.join(timeout=5)

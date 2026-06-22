@@ -15,6 +15,7 @@ from voice_agent.adapters.lalm_thinker_binding import (
     LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
     bind_lalm_thinker_request,
 )
+from voice_agent.adapters.lalm_thinker_prompt_rules import LALM_THINKER_ROUTING_OUTPUT_RULES
 from voice_agent.adapters.lalm_thinker_skeleton import (
     LALMThinkerCandidateParseError,
     LALMThinkerCandidateValidationError,
@@ -42,12 +43,31 @@ def test_parser_accepts_exactly_one_candidate_object() -> None:
     assert parsed == candidate
 
 
+def test_parser_accepts_single_fenced_candidate_object() -> None:
+    candidate = _valid_candidate()
+    content = "```json\n" + json.dumps(candidate, sort_keys=True) + "\n```"
+
+    parsed = parse_lalm_thinker_candidate_text(content)
+
+    assert parsed == candidate
+
+
+def test_parser_accepts_candidate_object_with_trailing_fence_marker() -> None:
+    candidate = _valid_candidate()
+    content = "\n" + json.dumps(candidate, sort_keys=True) + "\n```"
+
+    parsed = parse_lalm_thinker_candidate_text(content)
+
+    assert parsed == candidate
+
+
 @pytest.mark.parametrize(
     "content",
     (
         "",
         "The answer is {\"schema_version\":\"lalm_thinker_semantic_frame_candidate.v1\"}",
-        "```json\n{\"schema_version\":\"lalm_thinker_semantic_frame_candidate.v1\"}\n```",
+        "prefix\n```json\n{\"schema_version\":\"lalm_thinker_semantic_frame_candidate.v1\"}\n```",
+        "```\n[{\"schema_version\":\"lalm_thinker_semantic_frame_candidate.v1\"}]\n```",
         "{\"schema_version\":\"lalm_thinker_semantic_frame_candidate.v1\"} {\"extra\": true}",
         "[{\"schema_version\":\"lalm_thinker_semantic_frame_candidate.v1\"}]",
     ),
@@ -185,6 +205,21 @@ def test_validator_accepts_unavailable_optional_evidence_as_degraded_evidence() 
         "supports_emotion",
         "supports_audio_caption",
     }
+
+
+def test_validator_degrades_available_optional_evidence_when_label_is_missing() -> None:
+    binding = _binding()
+    candidate = _valid_candidate(binding=binding)
+    candidate["optional_evidence_refs"]["assistant_directedness"] = {
+        "status": "available",
+    }
+
+    validated = validate_lalm_thinker_candidate(candidate, expected_binding=binding)
+
+    assert validated.output_mode == "degraded"
+    assert "assistant_directedness_ref" not in validated.optional_refs
+    assert validated.optional_statuses["assistant_directedness_status"] == "unavailable"
+    assert "supports_assistant_directedness" in validated.missing_capabilities
 
 
 @pytest.mark.parametrize(
@@ -512,24 +547,23 @@ def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candi
         "focus_confidence": 0.5,
         "evidence_uncertainty": "high",
     }
-    assert payload["output_rules"] == [
-        "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
-        "do not wrap JSON in markdown, prose, arrays, or multiple objects",
-        "copy required_output_skeleton.request_binding exactly",
-        "express only evidence availability, short safe labels, and normalized hints",
-        (
-            "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
-            "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
-        ),
-        "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
-        "Thinker focus is evidence only; Router owns the final RouterDecision",
-        "do not include final event refs; adapter owns deterministic provider-neutral refs",
-        "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
-        "use transient_input_evidence only as input evidence; do not copy its text into labels",
-        "do not call tools, request native tool execution, or include tool_calls/function_call",
-        "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
-    ]
+    assert payload["output_rules"] == list(LALM_THINKER_ROUTING_OUTPUT_RULES)
     assert _forbidden_request_terms_are_absent(payload)
+
+
+def test_live_request_payload_contains_semantic_routing_rubric_and_short_examples() -> None:
+    payload = build_lalm_thinker_live_request_payload(binding=_binding())
+
+    rules_text = "\n".join(payload["output_rules"])
+
+    assert "FOREGROUND_CHAT is for one-turn direct answers" in rules_text
+    assert "NEW_TASK_CANDIDATE is for multi-step planning" in rules_text
+    assert "ACTIVE_TASK_PATCH only when active task context exists" in rules_text
+    assert "AMBIGUOUS instead of guessing" in rules_text
+    assert "NON_ASSISTANT for clearly non-assistant-directed input" in rules_text
+    assert "Example: 讲冷笑话 -> FOREGROUND_CHAT" in rules_text
+    assert "Example: 帮我规划一个三天旅行并列步骤 -> NEW_TASK_CANDIDATE" in rules_text
+    assert "available optional_evidence_refs entry must include a short non-empty label" in rules_text
 
 
 def test_live_request_payload_can_include_adapter_private_transient_input_text() -> None:
@@ -597,6 +631,44 @@ def test_valid_live_provider_text_emits_only_normalized_contract_events() -> Non
     ]
 
 
+def test_live_provider_text_missing_optional_label_emits_degraded_thinker_frame() -> None:
+    startup = _start_lalm_thinker_session(session_id="sess_lalm_thinker_live_missing_label")
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix="evt_lalm_thinker_live_missing_label",
+    )
+    binding = _binding(turn_committed_event=committed_turn)
+    candidate = _valid_candidate(binding=binding)
+    candidate["optional_evidence_refs"]["assistant_directedness"] = {
+        "status": "available",
+    }
+
+    result = emit_lalm_thinker_provider_text_result(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
+        provider_text=json.dumps(candidate, sort_keys=True),
+        expected_binding=binding,
+        success_event_id="evt_lalm_thinker_live_missing_label_frame",
+        validation_failed_event_id="evt_lalm_thinker_live_missing_label_validation_failed",
+        caused_by_event_id=str(committed_turn["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+    )
+
+    assert result.success is True
+    assert result.validation_failed_event is None
+    assert result.thinker_emission is not None
+    assert [event["event_name"] for event in startup.journal.events()[-2:]] == [
+        "ADAPTER_OUTPUT_DEGRADED",
+        "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
+    ]
+    thinker_event = result.thinker_emission.thinker_event
+    assert thinker_event["output_mode"] == "degraded"
+    assert thinker_event["assistant_directedness_status"] == "unavailable"
+    assert "assistant_directedness_ref" not in thinker_event
+
+
 def test_invalid_live_provider_text_emits_validation_failure_without_thinker_frame() -> None:
     startup = _start_lalm_thinker_session(session_id="sess_lalm_thinker_live_invalid")
     committed_turn = _append_committed_text_turn(
@@ -608,7 +680,7 @@ def test_invalid_live_provider_text_emits_validation_failure_without_thinker_fra
     result = emit_lalm_thinker_provider_text_result(
         boundary=AdapterCallbackAppendBoundary(startup.journal),
         adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
-        provider_text="```json\n{}\n```",
+        provider_text="prose before ```json\n{}\n```",
         expected_binding=binding,
         success_event_id="evt_lalm_thinker_live_invalid_frame",
         validation_failed_event_id="evt_lalm_thinker_live_invalid_validation_failed",
@@ -627,6 +699,37 @@ def test_invalid_live_provider_text_emits_validation_failure_without_thinker_fra
     event_names = [event["event_name"] for event in startup.journal.events()]
     assert "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED" not in event_names
     assert "```json" not in repr(result.validation_failed_event)
+
+
+def test_fenced_live_provider_json_emits_thinker_frame() -> None:
+    startup = _start_lalm_thinker_session(session_id="sess_lalm_thinker_live_fenced")
+    committed_turn = _append_committed_text_turn(
+        startup.journal,
+        event_id_prefix="evt_lalm_thinker_live_fenced",
+    )
+    binding = _binding(turn_committed_event=committed_turn)
+    provider_text = "```json\n" + fake_lalm_thinker_transport(binding) + "\n```"
+
+    result = emit_lalm_thinker_provider_text_result(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        adapter_id=LALM_THINKER_RUNTIME_ADAPTER_ID,
+        provider_text=provider_text,
+        expected_binding=binding,
+        success_event_id="evt_lalm_thinker_live_fenced_frame",
+        validation_failed_event_id="evt_lalm_thinker_live_fenced_validation_failed",
+        caused_by_event_id=str(committed_turn["event_id"]),
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        turn_committed_event=committed_turn,
+    )
+
+    assert result.success is True
+    assert result.thinker_emission is not None
+    assert result.validation_failed_event is None
+    assert result.thinker_emission.thinker_event["event_name"] == (
+        "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"
+    )
+    assert "```json" not in repr(result.to_metadata())
 
 
 def test_live_provider_path_uses_injected_transport_and_keeps_secret_out_of_metadata() -> None:

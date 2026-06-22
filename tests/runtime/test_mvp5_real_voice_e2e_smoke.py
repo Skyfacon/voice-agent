@@ -402,6 +402,68 @@ def test_real_provider_mode_constructs_adapter_transports_without_fake_route_or_
     assert "synthetic transcript" not in rendered
 
 
+def test_single_wav_smoke_reports_incomplete_evidence_without_router_traceback(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "real-provider-validation-failure.wav"
+    wav_bytes = _write_wav_file(wav_path)
+
+    metadata = run_mvp5_real_voice_e2e_single(
+        local_wav=wav_path,
+        live_provider=True,
+        allow_local_wav=True,
+        approval_packet=_approval_packet(),
+        expected_route="auto",
+        run_id="mvp5-real-provider-validation-failure",
+        env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_fake_asr_transport("validation-failure"),
+        thinker_transport=_MalformedThinkerAudioTransport(),
+    )
+
+    rendered = json.dumps(metadata, sort_keys=True)
+    assert metadata["status"] == "evidence_failed"
+    assert metadata["route_result_kind"] == "blocked"
+    assert metadata["actual_route"] is None
+    assert metadata["router_decision"] is None
+    assert metadata["expected_route"] == "auto"
+    assert metadata["asr_output_mode"] == "real"
+    assert metadata["thinker_output_mode"] is None
+    assert metadata["failure_reasons"] == ["invalid_json"]
+    assert metadata["provider_call_used"] is False
+    assert metadata["fake_transport_used"] is True
+    assert metadata["raw_provider_body_included"] is False
+    assert str(wav_path) not in rendered
+    assert wav_path.name not in rendered
+    assert base64.b64encode(wav_bytes).decode("ascii") not in rendered
+
+
+def test_single_wav_smoke_accepts_fenced_thinker_json_and_routes(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "real-provider-fenced-json.wav"
+    _write_wav_file(wav_path)
+
+    metadata = run_mvp5_real_voice_e2e_single(
+        local_wav=wav_path,
+        live_provider=True,
+        allow_local_wav=True,
+        approval_packet=_approval_packet(),
+        expected_route="FAST_ONLY",
+        run_id="mvp5-real-provider-fenced-json",
+        env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_fake_asr_transport("fenced-json"),
+        thinker_transport=_FencedThinkerAudioTransport(fake_route="FAST_ONLY"),
+    )
+
+    rendered = json.dumps(metadata, sort_keys=True)
+    assert metadata["status"] == "routed"
+    assert metadata["actual_route"] == "FAST_ONLY"
+    assert metadata["router_decision"] == "FAST_ONLY"
+    assert metadata["thinker_output_mode"] == "real"
+    assert "fenced_markdown" not in rendered
+    assert "```json" not in rendered
+
+
 def _transport_factory_from_expected_route(
     case: MVP5SmokePackCase,
 ) -> tuple[FakeAsrTransport, _FakeThinkerAudioTransport]:
@@ -541,6 +603,16 @@ class _ConstructedRealThinkerTransport(_FakeThinkerAudioTransport):
     def complete_audio(self, **kwargs: object) -> str:
         self.call_count += 1
         return super().complete_audio(**kwargs)
+
+
+class _MalformedThinkerAudioTransport:
+    def complete_audio(self, **_kwargs: object) -> str:
+        return "{bad}"
+
+
+class _FencedThinkerAudioTransport(_FakeThinkerAudioTransport):
+    def complete_audio(self, **kwargs: object) -> str:
+        return "```json\n" + super().complete_audio(**kwargs) + "\n```"
 
 
 def _write_pack(pack_path: Path, *, cases: list[dict[str, object]]) -> None:

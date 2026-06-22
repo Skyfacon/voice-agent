@@ -104,6 +104,7 @@ def create_mvp6_http_server(
                             provider_mode=str(fields.get("provider_mode", "fake")),
                             expected_route=str(fields.get("expected_route", "auto")),
                             save_qa_history=_bool_field(fields.get("save_qa_history", "true")),
+                            show_model_io=_bool_field(fields.get("show_model_io", "false")),
                             active_task_id=_optional_string(fields.get("active_task_id")),
                             active_plan_version=_optional_int(fields.get("active_plan_version")),
                             active_task_event_seq=_optional_int(
@@ -117,6 +118,9 @@ def create_mvp6_http_server(
                     )
                 except MVP6DebugConsoleError as exc:
                     self._send_json_error(400, _safe_error_message(exc))
+                    return
+                except Exception as exc:
+                    self._send_json_error(500, _safe_error_message(exc))
                     return
                 self._send_json(payload)
                 return

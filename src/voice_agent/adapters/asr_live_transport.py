@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import urllib.error
@@ -132,6 +133,11 @@ class DashScopeAsrLiveDirectHTTPTransport:
             audio_format=audio_format,
             model_alias=model_alias,
         )
+        _store_asr_model_io_request(
+            adapter_request_id=adapter_request_id,
+            model_alias=model_alias,
+            request_body=request_body,
+        )
         request = urllib.request.Request(
             self._provider_url,
             data=json.dumps(request_body, separators=(",", ":"), sort_keys=True).encode(
@@ -181,6 +187,10 @@ class DashScopeAsrLiveDirectHTTPTransport:
             ) from exc
 
         response_text = _extract_response_text(response_payload)
+        _store_asr_model_io_response(
+            adapter_request_id=adapter_request_id,
+            provider_text=response_text,
+        )
         asr_frame_ref, text_ref = _store_local_transcript_projection(
             adapter_request_id=adapter_request_id,
             transcript_text=response_text,
@@ -217,6 +227,7 @@ def validate_asr_live_credential_handle(
 
 
 _LOCAL_TRANSCRIPT_TEXT_BY_REF: dict[str, str] = {}
+_LOCAL_ASR_MODEL_IO_BY_ADAPTER_REQUEST_ID: dict[str, dict[str, Any]] = {}
 
 
 def resolve_asr_live_transcript_text_ref(text_ref: str) -> str | None:
@@ -228,6 +239,12 @@ def resolve_asr_live_transcript_text_ref(text_ref: str) -> str | None:
 
     text_ref = _require_safe_ref(text_ref, "text_ref")
     return _LOCAL_TRANSCRIPT_TEXT_BY_REF.get(text_ref)
+
+
+def resolve_asr_live_model_io_debug(adapter_request_id: str) -> dict[str, Any] | None:
+    adapter_request_id = _require_safe_ref(adapter_request_id, "adapter_request_id")
+    value = _LOCAL_ASR_MODEL_IO_BY_ADAPTER_REQUEST_ID.get(adapter_request_id)
+    return deepcopy(value) if value is not None else None
 
 
 def _store_local_transcript_projection(
@@ -268,6 +285,76 @@ def _build_openai_compatible_asr_request_body(
         ],
         "stream": False,
     }
+
+
+def _store_asr_model_io_request(
+    *,
+    adapter_request_id: str,
+    model_alias: str,
+    request_body: Mapping[str, Any],
+) -> None:
+    _LOCAL_ASR_MODEL_IO_BY_ADAPTER_REQUEST_ID[adapter_request_id] = {
+        "adapter": "asr",
+        "adapter_request_id": adapter_request_id,
+        "model_alias": model_alias,
+        "provider_url_ref": ASR_LIVE_DASHSCOPE_PROVIDER_URL_REF,
+        "request_body": _redact_model_io_value(request_body),
+        "provider_text": None,
+        "raw_audio_visible": False,
+        "authorization_header_visible": False,
+    }
+
+
+def _store_asr_model_io_response(
+    *,
+    adapter_request_id: str,
+    provider_text: str,
+) -> None:
+    current = _LOCAL_ASR_MODEL_IO_BY_ADAPTER_REQUEST_ID.setdefault(
+        adapter_request_id,
+        {
+            "adapter": "asr",
+            "adapter_request_id": adapter_request_id,
+            "provider_url_ref": ASR_LIVE_DASHSCOPE_PROVIDER_URL_REF,
+            "request_body": None,
+            "raw_audio_visible": False,
+            "authorization_header_visible": False,
+        },
+    )
+    current["provider_text"] = _redact_debug_string(provider_text)
+
+
+def _redact_model_io_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _redact_model_io_value(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_redact_model_io_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_model_io_value(item) for item in value]
+    if isinstance(value, str):
+        if value.startswith("data:"):
+            return "[redacted-audio-base64]"
+        return _redact_debug_string(value)
+    return value
+
+
+def _redact_debug_string(value: str) -> str:
+    redacted = value
+    for marker in (
+        "Bearer ",
+        "authorization:",
+        "cookie:",
+        "api_key=",
+        "token=",
+        "file://",
+        "/Users/",
+        "\\Users\\",
+        "/private/",
+        ".env",
+    ):
+        redacted = redacted.replace(marker, "[redacted]")
+        redacted = redacted.replace(marker.lower(), "[redacted]")
+    return redacted
 
 
 def _extract_response_text(response_payload: Mapping[str, Any]) -> str:

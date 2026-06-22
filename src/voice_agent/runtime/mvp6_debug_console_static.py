@@ -80,6 +80,19 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       gap: 8px;
       color: var(--text);
     }
+    details {
+      border: 1px solid var(--line-soft);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fbfcfe;
+    }
+    summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    details .grid { margin-top: 10px; }
     pre {
       min-height: 220px;
       margin: 0;
@@ -123,6 +136,31 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     }
     .historyList { display: grid; gap: 8px; }
     .historyItem { border-top: 1px solid var(--line-soft); padding-top: 8px; font-size: 13px; }
+    .modelIoPanel {
+      display: grid;
+      gap: 10px;
+    }
+    .modelIoSection {
+      display: grid;
+      gap: 6px;
+      border-top: 1px solid var(--line-soft);
+      padding-top: 10px;
+    }
+    .modelIoSection:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+    .modelIoSection h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .modelIoSection pre {
+      min-height: 72px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .hidden { display: none; }
     @media (max-width: 860px) {
       header { align-items: flex-start; flex-direction: column; }
       main { grid-template-columns: 1fr; }
@@ -163,10 +201,17 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
           <option value="PATCH_ACTIVE_SLOW_TASK">PATCH_ACTIVE_SLOW_TASK</option>
         </select>
       </label>
-      <label>Active task id <input id="activeTaskId" autocomplete="off"></label>
-      <label>Active plan version <input id="activePlanVersion" type="number" min="1"></label>
-      <label>Active task event seq <input id="activeTaskEventSeq" type="number" min="1"></label>
+      <details id="activeTaskContextDetails">
+        <summary>Advanced active-task context</summary>
+        <div class="grid">
+          <label>Active task id <input id="activeTaskId" autocomplete="off"></label>
+          <label>Active plan version <input id="activePlanVersion" type="number" min="1"></label>
+          <label>Active task event seq <input id="activeTaskEventSeq" type="number" min="1"></label>
+          <p class="muted">Only needed when manually exercising PATCH_ACTIVE_SLOW_TASK.</p>
+        </div>
+      </details>
       <label class="checkRow"><input id="saveQaHistory" type="checkbox" checked> Save QA history locally</label>
+      <label class="checkRow"><input id="showModelIo" type="checkbox"> Show model I/O for this run</label>
       <p class="muted">QA history is local-only and may contain ASR user text.</p>
     </section>
 
@@ -178,7 +223,33 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       <div class="stage"><strong>thinker</strong><span id="stage-thinker">waiting</span></div>
       <div class="stage"><strong>router</strong><span id="stage-router">waiting</span></div>
       <div class="stage"><strong>qa_history</strong><span id="stage-qa_history">waiting</span></div>
+      <h2>Latency</h2>
+      <pre id="latencyPanel">{}</pre>
       <pre id="metadataPanel">{}</pre>
+      <h2>Model I/O</h2>
+      <div id="modelIoEmpty" class="muted">Enable model I/O before running to inspect provider inputs and outputs.</div>
+      <div id="modelIoPanel" class="modelIoPanel hidden">
+        <div class="modelIoSection">
+          <h3>ASR Output Text</h3>
+          <pre id="modelIoAsrText"></pre>
+        </div>
+        <div class="modelIoSection">
+          <h3>Thinker System Prompt</h3>
+          <pre id="modelIoThinkerSystem"></pre>
+        </div>
+        <div class="modelIoSection">
+          <h3>Thinker User Payload</h3>
+          <pre id="modelIoThinkerRequest"></pre>
+        </div>
+        <div class="modelIoSection">
+          <h3>Thinker Model Output</h3>
+          <pre id="modelIoThinkerOutput"></pre>
+        </div>
+        <details id="modelIoMetadataDetails">
+          <summary>Debug metadata</summary>
+          <pre id="modelIoMetadata"></pre>
+        </details>
+      </div>
       <div class="row">
         <button id="refreshHistoryButton" onclick="loadHistory()">Refresh History</button>
         <button id="clearHistoryButton" class="danger" onclick="clearHistory()">Clear History</button>
@@ -194,6 +265,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     let recordedBuffers = [];
     let draftBlob = null;
     let recordingStartedAt = 0;
+    const STAGE_NAMES = ['local_audio_gate', 'asr', 'thinker', 'router', 'qa_history'];
 
     async function loadStatus() {
       const response = await fetch('/api/status');
@@ -267,6 +339,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       form.append('active_plan_version', document.getElementById('activePlanVersion').value);
       form.append('active_task_event_seq', document.getElementById('activeTaskEventSeq').value);
       form.append('save_qa_history', document.getElementById('saveQaHistory').checked ? 'true' : 'false');
+      form.append('show_model_io', document.getElementById('showModelIo').checked ? 'true' : 'false');
       setStages('running');
       const response = await fetch('/api/runs', { method: 'POST', body: form });
       const payload = await response.json();
@@ -276,11 +349,72 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
 
     function renderResult(payload) {
       document.getElementById('answerDisplay').textContent = payload.answer_display || payload.status;
+      setStages(payload.status === 'completed' ? 'waiting' : 'not_run');
       for (const stage of payload.pipeline || []) {
         const element = document.getElementById('stage-' + stage.stage);
         if (element) element.textContent = stage.status + (stage.output_mode ? ' / ' + stage.output_mode : '');
       }
+      document.getElementById('latencyPanel').textContent = JSON.stringify(payload.latency_debug || {}, null, 2);
       document.getElementById('metadataPanel').textContent = JSON.stringify(payload, null, 2);
+      renderModelIoDebug(payload.model_io_debug || null);
+    }
+
+    function renderModelIoDebug(modelIo) {
+      const panel = document.getElementById('modelIoPanel');
+      const empty = document.getElementById('modelIoEmpty');
+      const hasModelIo = modelIo && typeof modelIo === 'object' && (modelIo.asr || modelIo.thinker);
+      panel.classList.toggle('hidden', !hasModelIo);
+      empty.classList.toggle('hidden', hasModelIo);
+      if (!hasModelIo) {
+        setText('modelIoAsrText', '');
+        setText('modelIoThinkerSystem', '');
+        setText('modelIoThinkerRequest', '');
+        setText('modelIoThinkerOutput', '');
+        setText('modelIoMetadata', '');
+        return;
+      }
+      modelIo.asr = modelIo.asr || {};
+      modelIo.thinker = modelIo.thinker || {};
+      setText('modelIoAsrText', modelIo.asr.provider_text || '(not available)');
+      setText('modelIoThinkerSystem', modelIo.thinker.system_message || '(not available)');
+      setText('modelIoThinkerRequest', formatThinkerRequestPayload(modelIo.thinker.request_body));
+      setText('modelIoThinkerOutput', modelIo.thinker.provider_text || '(not available)');
+      setText('modelIoMetadata', JSON.stringify(buildModelIoMetadata(modelIo), null, 2));
+    }
+
+    function formatThinkerRequestPayload(requestBody) {
+      if (!requestBody || typeof requestBody !== 'object') return '(not available)';
+      const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+      const userMessage = messages.find((message) => message && message.role === 'user');
+      if (!userMessage || typeof userMessage.content !== 'string') {
+        return JSON.stringify(requestBody, null, 2);
+      }
+      try {
+        return JSON.stringify(JSON.parse(userMessage.content), null, 2);
+      } catch (_error) {
+        return userMessage.content;
+      }
+    }
+
+    function buildModelIoMetadata(modelIo) {
+      return {
+        saved_to_history: modelIo.saved_to_history === true,
+        asr: stripModelIoContent(modelIo.asr || {}, ['provider_text']),
+        thinker: stripModelIoContent(modelIo.thinker || {}, ['system_message', 'provider_text'])
+      };
+    }
+
+    function stripModelIoContent(source, omittedKeys) {
+      const omitted = new Set(omittedKeys);
+      const result = {};
+      for (const [key, value] of Object.entries(source || {})) {
+        if (!omitted.has(key)) result[key] = value;
+      }
+      return result;
+    }
+
+    function setText(id, value) {
+      document.getElementById(id).textContent = value;
     }
 
     async function loadHistory() {
@@ -302,7 +436,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     }
 
     function setStages(status) {
-      for (const name of ['local_audio_gate', 'asr', 'thinker', 'router', 'qa_history']) {
+      for (const name of STAGE_NAMES) {
         document.getElementById('stage-' + name).textContent = status;
       }
     }

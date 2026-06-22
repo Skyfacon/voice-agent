@@ -20,6 +20,7 @@ from voice_agent.adapters.lalm_thinker_live_transport import (
     validate_lalm_thinker_credential_handle,
 )
 from voice_agent.adapters.lalm_thinker_profile import LALM_THINKER_RUNTIME_ADAPTER_ID
+from voice_agent.adapters.lalm_thinker_prompt_rules import LALM_THINKER_ROUTING_OUTPUT_RULES
 from voice_agent.adapters.thinker_contract import (
     ThinkerAdapterContract,
     ThinkerSemanticFrameEmission,
@@ -282,7 +283,7 @@ def parse_lalm_thinker_candidate_text(content: str) -> dict[str, Any]:
     if not stripped:
         raise LALMThinkerCandidateParseError("empty_content")
     if "```" in stripped:
-        raise LALMThinkerCandidateParseError("fenced_markdown")
+        stripped = _unwrap_single_json_fence(stripped)
     if not stripped.startswith("{") or not stripped.endswith("}"):
         raise LALMThinkerCandidateParseError("prose_wrapper")
 
@@ -296,6 +297,30 @@ def parse_lalm_thinker_candidate_text(content: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise LALMThinkerCandidateParseError("candidate_not_object")
     return parsed
+
+
+def _unwrap_single_json_fence(content: str) -> str:
+    if not content.startswith("```") and content.endswith("```"):
+        inner = content.removesuffix("```").strip()
+        if "```" in inner:
+            raise LALMThinkerCandidateParseError("fenced_markdown")
+        if not inner:
+            raise LALMThinkerCandidateParseError("empty_content")
+        return inner
+
+    lines = content.splitlines()
+    if len(lines) < 3:
+        raise LALMThinkerCandidateParseError("fenced_markdown")
+    opening = lines[0].strip().lower()
+    closing = lines[-1].strip()
+    if opening not in {"```", "```json"} or closing != "```":
+        raise LALMThinkerCandidateParseError("fenced_markdown")
+    inner = "\n".join(lines[1:-1]).strip()
+    if "```" in inner:
+        raise LALMThinkerCandidateParseError("fenced_markdown")
+    if not inner:
+        raise LALMThinkerCandidateParseError("empty_content")
+    return inner
 
 
 def validate_lalm_thinker_candidate(
@@ -360,8 +385,7 @@ def validate_lalm_thinker_candidate(
         candidate.get("optional_evidence_refs"),
         expected_binding=expected_binding,
     )
-    if missing_capabilities and output_mode != "degraded":
-        _fail("degraded_mode_required", "missing optional evidence requires degraded output mode")
+    normalized_output_mode = "degraded" if missing_capabilities else str(output_mode)
 
     (
         task_focus_hint,
@@ -373,7 +397,7 @@ def validate_lalm_thinker_candidate(
 
     return LALMThinkerValidatedCandidate(
         adapter_request_id=expected_binding.adapter_request_id,
-        output_mode=str(output_mode),
+        output_mode=normalized_output_mode,
         semantic_frame_ref=semantic_frame_ref,
         semantic_summary_ref=semantic_summary_ref,
         optional_refs=optional_refs,
@@ -496,23 +520,7 @@ def build_lalm_thinker_live_request_payload(
     payload = {
         "request_metadata": request_metadata,
         "required_output_skeleton": skeleton,
-        "output_rules": [
-            "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
-            "do not wrap JSON in markdown, prose, arrays, or multiple objects",
-            "copy required_output_skeleton.request_binding exactly",
-            "express only evidence availability, short safe labels, and normalized hints",
-            (
-                "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
-                "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
-            ),
-            "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
-            "Thinker focus is evidence only; Router owns the final RouterDecision",
-            "do not include final event refs; adapter owns deterministic provider-neutral refs",
-            "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
-            "use transient_input_evidence only as input evidence; do not copy its text into labels",
-            "do not call tools, request native tool execution, or include tool_calls/function_call",
-            "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
-        ],
+        "output_rules": list(LALM_THINKER_ROUTING_OUTPUT_RULES),
     }
     if transient_input_text is not None:
         payload["transient_input_evidence"] = _build_transient_input_evidence(
@@ -833,19 +841,25 @@ def _validate_optional_evidence_refs(
         status = entry.get("status")
         if status not in {"available", "unavailable"}:
             _fail("schema_shape", f"optional evidence status is invalid: {evidence_name}")
-        optional_statuses[status_field] = str(status)
         ref_value = entry.get("ref")
         if status == "available":
             if ref_value not in (None, ""):
                 _reject_unsafe_text(str(ref_value))
                 _fail("unsafe_ref", f"candidate must not include final optional ref: {evidence_name}")
-            _validate_optional_evidence_label(entry.get("label"), evidence_name)
+            label_value = entry.get("label")
+            if label_value in (None, ""):
+                optional_statuses[status_field] = "unavailable"
+                missing_capabilities.append(missing_capability)
+                continue
+            _validate_optional_evidence_label(label_value, evidence_name)
+            optional_statuses[status_field] = "available"
             optional_refs[ref_field] = _adapter_owned_ref(
                 scheme=_optional_ref_scheme(evidence_name),
                 expected_binding=expected_binding,
                 suffix=evidence_name.replace("_", "-"),
             )
         else:
+            optional_statuses[status_field] = "unavailable"
             if ref_value not in (None, ""):
                 _reject_unsafe_text(str(ref_value))
                 _fail("schema_shape", f"unavailable evidence must not include ref: {evidence_name}")

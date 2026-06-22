@@ -64,7 +64,6 @@ _UNSAFE_RESPONSE_MARKERS = tuple(
     marker.lower()
     for marker in (
         "file://",
-        "data:",
         "/Users/",
         "\\Users\\",
         "/private/",
@@ -84,6 +83,25 @@ _UNSAFE_RESPONSE_MARKERS = tuple(
         "approval_packet_path",
     )
 )
+_LATENCY_DEBUG_MS_FIELDS = (
+    "total_server_ms",
+    "wav_validate_ms",
+    "temp_wav_write_ms",
+    "local_audio_gate_ms",
+    "approval_gate_ms",
+    "asr_provider_http_ms",
+    "asr_normalize_emit_ms",
+    "thinker_provider_http_ms",
+    "thinker_parse_validate_emit_ms",
+    "router_ms",
+    "qa_history_ms",
+)
+_LATENCY_DEBUG_BOOL_FIELDS = (
+    "provider_calls_parallel",
+    "asr_started_before_thinker_finished",
+    "thinker_started_before_asr_finished",
+)
+_LATENCY_DEBUG_FIELDS = frozenset((*_LATENCY_DEBUG_MS_FIELDS, *_LATENCY_DEBUG_BOOL_FIELDS))
 
 
 @dataclass(frozen=True)
@@ -112,6 +130,7 @@ class MVP6RunRequest:
     provider_mode: str
     expected_route: str
     save_qa_history: bool
+    show_model_io: bool = False
     active_task_id: str | None = None
     active_plan_version: int | None = None
     active_task_event_seq: int | None = None
@@ -153,6 +172,8 @@ def run_mvp6_debug_console_audio(
     request: MVP6RunRequest,
     env: Mapping[str, str],
 ) -> dict[str, Any]:
+    total_started = time.monotonic()
+    latency_debug = _normalize_mvp6_latency_debug({})
     provider_mode = _provider_mode(request.provider_mode)
     expected_route = _expected_route(request.expected_route)
     if expected_route == "PATCH_ACTIVE_SLOW_TASK" and not request.active_task_id:
@@ -162,9 +183,15 @@ def run_mvp6_debug_console_audio(
         if failure is not None:
             return _safe_failure_response(status=failure, provider_mode=provider_mode)
 
+    wav_validate_started = time.monotonic()
     _require_wav_upload(request.audio_bytes, request.audio_mime_type)
+    wav_validate_ms = _elapsed_ms(wav_validate_started)
+    latency_debug["wav_validate_ms"] = wav_validate_ms
     run_id = _run_id(request.audio_bytes)
+    temp_wav_write_started = time.monotonic()
     audio_path = _write_temp_wav(config.output_root, run_id, request.audio_bytes)
+    temp_wav_write_ms = _elapsed_ms(temp_wav_write_started)
+    latency_debug["temp_wav_write_ms"] = temp_wav_write_ms
     active_context = _active_task_context(request)
 
     asr_transport = None
@@ -194,16 +221,26 @@ def run_mvp6_debug_console_audio(
         thinker_transport=thinker_transport,
         active_task_context=active_context,
     )
+    latency_debug.update(_normalize_mvp6_latency_debug(metadata.get("latency_debug", {})))
+    latency_debug["wav_validate_ms"] = wav_validate_ms
+    latency_debug["temp_wav_write_ms"] = temp_wav_write_ms
+    question_text = resolve_mvp6_question_text(metadata, provider_mode=provider_mode)
     response = _response_from_mvp5_metadata(
         metadata,
         provider_mode=provider_mode,
-        question_text=resolve_mvp6_question_text(metadata, provider_mode=provider_mode),
+        question_text=question_text,
         history_written=False,
     )
+    if request.show_model_io:
+        response["model_io_debug"] = _resolve_mvp6_model_io_debug(metadata)
+    qa_history_started = time.monotonic()
     if request.save_qa_history:
         append_mvp6_qa_history(config.history_path, _history_entry_from_response(response))
         response["pipeline"][-1]["status"] = "completed"
         response["history_written"] = True
+    latency_debug["qa_history_ms"] = _elapsed_ms(qa_history_started)
+    latency_debug["total_server_ms"] = _elapsed_ms(total_started)
+    response["latency_debug"] = latency_debug
     validate_mvp6_safe_response(response)
     return response
 
@@ -364,8 +401,9 @@ def _response_from_mvp5_metadata(
 ) -> dict[str, Any]:
     actual_route = _optional_string(metadata.get("actual_route"))
     task_focus_hint = metadata.get("task_focus_hint")
+    status = "completed" if metadata.get("status") == "routed" else metadata.get("status")
     response: dict[str, Any] = {
-        "status": "completed" if metadata.get("status") == "routed" else metadata.get("status"),
+        "status": status,
         "run_id": metadata.get("run_id"),
         "provider_mode": provider_mode,
         "actual_route": actual_route,
@@ -377,26 +415,125 @@ def _response_from_mvp5_metadata(
         "answer_display": _answer_display(actual_route, task_focus_hint),
         "provider_call_used": bool(metadata.get("provider_call_used")),
         "fake_transport_used": bool(metadata.get("fake_transport_used")),
+        "thinker_transient_asr_text_used": bool(
+            metadata.get("thinker_transient_asr_text_used", False)
+        ),
         "asr_output_mode": _optional_string(metadata.get("asr_output_mode")),
         "thinker_output_mode": _optional_string(metadata.get("thinker_output_mode")),
+        "failure_reasons": [str(reason) for reason in metadata.get("failure_reasons", ())],
+        "thinker_io_shape": _thinker_io_shape(
+            transient_asr_text_used=bool(
+                metadata.get("thinker_transient_asr_text_used", False)
+            ),
+            failure_reasons=metadata.get("failure_reasons", ()),
+        ),
         "event_ids": [str(event_id) for event_id in metadata.get("event_ids", ())],
         "safe_refs": [str(ref) for ref in metadata.get("safe_refs", ())],
-        "pipeline": [
-            {"stage": "local_audio_gate", "status": "passed"},
-            {"stage": "asr", "status": "completed", "output_mode": metadata.get("asr_output_mode")},
-            {
-                "stage": "thinker",
-                "status": "completed",
-                "output_mode": metadata.get("thinker_output_mode"),
-            },
-            {"stage": "router", "status": "completed", "actual_route": actual_route},
-            {"stage": "qa_history", "status": "completed" if history_written else "skipped"},
-        ],
+        "pipeline": _pipeline_from_mvp5_metadata(
+            metadata,
+            actual_route=actual_route,
+            history_written=history_written,
+        ),
         "history_written": history_written,
+        "latency_debug": _normalize_mvp6_latency_debug(metadata.get("latency_debug", {})),
         "safety": _safety_flags(),
     }
     validate_mvp6_safe_response(response)
     return response
+
+
+def _thinker_io_shape(
+    *,
+    transient_asr_text_used: bool,
+    failure_reasons: object,
+) -> dict[str, Any]:
+    return {
+        "input_modality": "audio",
+        "audio_passed_to_adapter": True,
+        "transient_asr_text_present": transient_asr_text_used,
+        "candidate_schema": "lalm_thinker_semantic_frame_candidate.v1",
+        "expected_output": "single_json_object",
+        "routing_hint_field": "task_focus_hint.focus",
+        "provider_text_visible": False,
+        "raw_audio_visible": False,
+        "failure_reasons": [str(reason) for reason in failure_reasons]
+        if isinstance(failure_reasons, Sequence)
+        and not isinstance(failure_reasons, (str, bytes, bytearray))
+        else [],
+    }
+
+
+def _resolve_mvp6_model_io_debug(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    asr_debug = None
+    asr_adapter_request_id = _asr_adapter_request_id_from_refs(metadata)
+    if asr_adapter_request_id is not None:
+        module = importlib.import_module("voice_agent.adapters.asr_live_transport")
+        resolver = getattr(module, "resolve_asr_live_model_io_debug")
+        asr_debug = resolver(asr_adapter_request_id)
+
+    thinker_debug = None
+    run_id = metadata.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        thinker_adapter_request_id = f"adapter-request-mvp5-thinker-{_slug(run_id)}"
+        module = importlib.import_module("voice_agent.adapters.lalm_thinker_live_transport")
+        resolver = getattr(module, "resolve_lalm_thinker_live_model_io_debug")
+        thinker_debug = resolver(thinker_adapter_request_id)
+
+    return {
+        "local_only": True,
+        "saved_to_history": False,
+        "replay_included": False,
+        "raw_audio_visible": False,
+        "authorization_header_visible": False,
+        "asr": asr_debug,
+        "thinker": thinker_debug,
+    }
+
+
+def _asr_adapter_request_id_from_refs(metadata: Mapping[str, Any]) -> str | None:
+    for ref in metadata.get("safe_refs", ()):
+        if isinstance(ref, str) and ref.startswith("text://provider/dashscope/"):
+            adapter_request_id = ref.rsplit("/", 1)[-1]
+            return _require_safe_model_io_id(adapter_request_id, "asr_adapter_request_id")
+    return None
+
+
+def _require_safe_model_io_id(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or value == "":
+        raise MVP6DebugConsoleError(f"{field_name} must be a safe id")
+    _validate_safe_string(value)
+    return value
+
+
+def _slug(value: str) -> str:
+    return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-") or "unknown"
+
+
+def _pipeline_from_mvp5_metadata(
+    metadata: Mapping[str, Any],
+    *,
+    actual_route: str | None,
+    history_written: bool,
+) -> list[dict[str, Any]]:
+    asr_output_mode = metadata.get("asr_output_mode")
+    thinker_output_mode = metadata.get("thinker_output_mode")
+    routed = metadata.get("status") == "routed"
+    asr_status = "completed" if asr_output_mode else "failed"
+    thinker_status = "completed" if thinker_output_mode else (
+        "failed" if asr_output_mode else "not_run"
+    )
+    router_status = "completed" if routed else "not_run"
+    return [
+        {"stage": "local_audio_gate", "status": "passed"},
+        {"stage": "asr", "status": asr_status, "output_mode": asr_output_mode},
+        {
+            "stage": "thinker",
+            "status": thinker_status,
+            "output_mode": thinker_output_mode,
+        },
+        {"stage": "router", "status": router_status, "actual_route": actual_route},
+        {"stage": "qa_history", "status": "completed" if history_written else "skipped"},
+    ]
 
 
 def _synthetic_question_text(actual_route: str) -> str:
@@ -408,6 +545,16 @@ def _synthetic_question_text(actual_route: str) -> str:
 
 
 def _answer_display(actual_route: object, task_focus_hint: object) -> str:
+    if actual_route in (None, ""):
+        return "Run did not reach router."
+    if actual_route == "FAST_ONLY":
+        return "FAST_ONLY selected; real fast answer is not implemented in MVP6.1 debug console."
+    if actual_route == "SPAWN_SLOW_TASK":
+        return "我帮你看一下，请稍等。"
+    if actual_route == "PATCH_ACTIVE_SLOW_TASK":
+        return "收到，我会把这点补充到当前任务里。"
+    if actual_route == "IGNORE":
+        return "Debug: input ignored as non-assistant or unsupported."
     if isinstance(task_focus_hint, str) and task_focus_hint:
         focus = task_focus_hint
     elif actual_route == "SPAWN_SLOW_TASK":
@@ -474,6 +621,42 @@ def _safety_flags() -> dict[str, bool]:
     }
 
 
+def _normalize_mvp6_latency_debug(value: object) -> dict[str, Any]:
+    if value in (None, ""):
+        source: Mapping[str, Any] = {}
+    elif isinstance(value, Mapping):
+        source = value
+    else:
+        raise MVP6DebugConsoleError("latency_debug must be metadata-only")
+    unknown_fields = set(source) - _LATENCY_DEBUG_FIELDS
+    if unknown_fields:
+        raise MVP6DebugConsoleError("latency_debug contains unsafe field")
+
+    latency_debug: dict[str, Any] = {}
+    for field in _LATENCY_DEBUG_MS_FIELDS:
+        latency_debug[field] = _non_negative_int(source.get(field, 0), field)
+    for field in _LATENCY_DEBUG_BOOL_FIELDS:
+        latency_debug[field] = bool(source.get(field, False))
+    validate_mvp6_safe_response(latency_debug)
+    return latency_debug
+
+
+def _non_negative_int(value: object, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise MVP6DebugConsoleError(f"{field_name} must be a non-negative integer")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise MVP6DebugConsoleError(f"{field_name} must be a non-negative integer")
+        value = int(value)
+    if not isinstance(value, int) or value < 0:
+        raise MVP6DebugConsoleError(f"{field_name} must be a non-negative integer")
+    return value
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
 def _require_safe_token(value: object, field_name: str) -> str:
     if not isinstance(value, str) or not value or not _SAFE_TOKEN_RE.fullmatch(value):
         raise MVP6DebugConsoleError(f"{field_name} must be a safe token")
@@ -483,6 +666,8 @@ def _require_safe_token(value: object, field_name: str) -> str:
 
 def _validate_safe_string(value: str) -> None:
     value_lower = value.lower()
+    if value_lower.startswith("data:"):
+        raise MVP6DebugConsoleError("unsafe response value rejected")
     for marker in _UNSAFE_RESPONSE_MARKERS:
         if marker in value_lower:
             raise MVP6DebugConsoleError("unsafe response value rejected")

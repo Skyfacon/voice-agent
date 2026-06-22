@@ -15,6 +15,11 @@ from voice_agent.adapters.lalm_thinker_binding import (
     LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
     LALMThinkerRequestBinding,
 )
+from voice_agent.adapters.lalm_thinker_prompt_rules import (
+    LALM_THINKER_AUDIO_ROUTING_OUTPUT_RULES,
+    LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION,
+    LALM_THINKER_ROUTING_OUTPUT_RULES,
+)
 
 
 LALM_THINKER_DASHSCOPE_OPENAI_COMPATIBLE_CHAT_COMPLETIONS_URL = (
@@ -23,25 +28,13 @@ LALM_THINKER_DASHSCOPE_OPENAI_COMPATIBLE_CHAT_COMPLETIONS_URL = (
 LALM_THINKER_CREDENTIAL_SOURCE_METADATA = (
     "runtime_env_var:DASHSCOPE_API_KEY via ~/.voice-agent-secrets/dashscope.env"
 )
-LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION = (
-    "Return only one lalm_thinker_semantic_frame_candidate.v1 JSON object. "
-    "No markdown or prose. No arrays or multiple objects. Copy request_binding "
-    "exactly from required_output_skeleton. The output is evidence only: "
-    "availability flags, short safe labels, and normalized routing hints. "
-    "Classify task_focus_hint.focus as FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
-    "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT; use AMBIGUOUS with high "
-    "uncertainty when unclear. Router owns the final RouterDecision. Do not include "
-    "final event refs, raw payloads, provider schema, tool_calls/function_call, "
-    "native tool execution, SemanticCommitment, confirmation, playback, or "
-    "coverage/truthfulness ownership claims."
-)
-
 _DISALLOWED_REF_MARKERS = (
     "audio/raw/",
     "diagnostics/",
     "traces/",
     "replays/local/",
 )
+_LOCAL_THINKER_MODEL_IO_BY_ADAPTER_REQUEST_ID: dict[str, dict[str, Any]] = {}
 
 
 class LALMThinkerLiveTransportError(ValueError):
@@ -92,6 +85,12 @@ class LALMThinkerCredentialHandle:
         }
 
 
+def resolve_lalm_thinker_live_model_io_debug(adapter_request_id: str) -> dict[str, Any] | None:
+    _require_safe_token(adapter_request_id, "adapter_request_id")
+    value = _LOCAL_THINKER_MODEL_IO_BY_ADAPTER_REQUEST_ID.get(adapter_request_id)
+    return deepcopy(value) if value is not None else None
+
+
 class LALMThinkerLiveDirectHTTPTransport:
     """Adapter-internal direct HTTP transport; tests inject an opener."""
 
@@ -131,11 +130,21 @@ class LALMThinkerLiveDirectHTTPTransport:
             model_alias=model_alias,
             request_payload=request_payload,
         )
-        return self._complete_streaming_request_body(
+        _store_lalm_thinker_model_io_request(
+            adapter_request_id=adapter_request_id,
+            model_alias=model_alias,
+            request_body=request_body,
+        )
+        provider_text = self._complete_streaming_request_body(
             request_body=request_body,
             credential_value=credential_value,
             timeout_ms=timeout_ms,
         )
+        _store_lalm_thinker_model_io_response(
+            adapter_request_id=adapter_request_id,
+            provider_text=provider_text,
+        )
+        return provider_text
 
     def complete_audio(
         self,
@@ -164,11 +173,21 @@ class LALMThinkerLiveDirectHTTPTransport:
             audio_bytes=audio_bytes,
             audio_format=audio_format,
         )
-        return self._complete_streaming_request_body(
+        _store_lalm_thinker_model_io_request(
+            adapter_request_id=adapter_request_id,
+            model_alias=model_alias,
+            request_body=request_body,
+        )
+        provider_text = self._complete_streaming_request_body(
             request_body=request_body,
             credential_value=credential_value,
             timeout_ms=timeout_ms,
         )
+        _store_lalm_thinker_model_io_response(
+            adapter_request_id=adapter_request_id,
+            provider_text=provider_text,
+        )
+        return provider_text
 
     def _complete_request_body(
         self,
@@ -342,23 +361,7 @@ def _build_openai_compatible_request_body(
     user_payload = {
         "request_payload": request_payload_dict,
         "required_output_skeleton": _build_required_output_skeleton(request_payload_dict),
-        "output_rules": [
-            "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
-            "do not wrap JSON in markdown, prose, arrays, or multiple objects",
-            "copy required_output_skeleton.request_binding exactly",
-            "express only evidence availability, short safe labels, and normalized hints",
-            (
-                "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
-                "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
-            ),
-            "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
-            "Thinker focus is evidence only; Router owns the final RouterDecision",
-            "do not include final event refs; adapter owns deterministic provider-neutral refs",
-            "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
-            "use transient_input_evidence only as input evidence; do not copy its text into labels",
-            "do not call tools, request native tool execution, or include tool_calls/function_call",
-            "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
-        ],
+        "output_rules": list(LALM_THINKER_ROUTING_OUTPUT_RULES),
     }
     return {
         "model": model_alias,
@@ -375,6 +378,7 @@ def _build_openai_compatible_request_body(
         "stream": True,
         "stream_options": {"include_usage": True},
         "modalities": ["text"],
+        "response_format": {"type": "json_object"},
         "max_tokens": 900,
         "temperature": 0.1,
     }
@@ -391,23 +395,7 @@ def _build_openai_compatible_audio_request_body(
     user_payload = {
         "request_payload": request_payload_dict,
         "required_output_skeleton": _build_required_output_skeleton(request_payload_dict),
-        "output_rules": [
-            "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
-            "do not wrap JSON in markdown, prose, arrays, or multiple objects",
-            "copy required_output_skeleton.request_binding exactly",
-            "use the attached audio as primary evidence for the Thinker candidate",
-            "express only evidence availability, short safe labels, and normalized hints",
-            (
-                "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
-                "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
-            ),
-            "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
-            "Thinker focus is evidence only; Router owns the final RouterDecision",
-            "do not include final event refs; adapter owns deterministic provider-neutral refs",
-            "do not include raw provider request, raw provider response, provider schema, raw audio, or raw semantic payload",
-            "do not call tools, request native tool execution, or include tool_calls/function_call",
-            "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
-        ],
+        "output_rules": list(LALM_THINKER_AUDIO_ROUTING_OUTPUT_RULES),
     }
     return {
         "model": model_alias,
@@ -420,15 +408,15 @@ def _build_openai_compatible_audio_request_body(
                 "role": "user",
                 "content": [
                     {
+                        "type": "text",
+                        "text": json.dumps(user_payload, separators=(",", ":"), sort_keys=True),
+                    },
+                    {
                         "type": "input_audio",
                         "input_audio": {
                             "data": f"data:;base64,{base64.b64encode(audio_bytes).decode('ascii')}",
                             "format": audio_format,
                         },
-                    },
-                    {
-                        "type": "text",
-                        "text": json.dumps(user_payload, separators=(",", ":"), sort_keys=True),
                     },
                 ],
             },
@@ -436,6 +424,7 @@ def _build_openai_compatible_audio_request_body(
         "stream": True,
         "stream_options": {"include_usage": True},
         "modalities": ["text"],
+        "response_format": {"type": "json_object"},
         "max_tokens": 900,
         "temperature": 0.1,
     }
@@ -493,6 +482,91 @@ def _build_required_output_skeleton(request_payload: Mapping[str, Any]) -> dict[
             "raw_artifacts_retained": False,
         },
     }
+
+
+def _store_lalm_thinker_model_io_request(
+    *,
+    adapter_request_id: str,
+    model_alias: str,
+    request_body: Mapping[str, Any],
+) -> None:
+    _LOCAL_THINKER_MODEL_IO_BY_ADAPTER_REQUEST_ID[adapter_request_id] = {
+        "adapter": "thinker",
+        "adapter_request_id": adapter_request_id,
+        "model_alias": model_alias,
+        "provider_url_ref": "provider-url://dashscope/openai-compatible-chat-completions",
+        "system_message": _extract_system_message(request_body),
+        "request_body": _redact_model_io_value(request_body),
+        "provider_text": None,
+        "raw_audio_visible": False,
+        "authorization_header_visible": False,
+    }
+
+
+def _store_lalm_thinker_model_io_response(
+    *,
+    adapter_request_id: str,
+    provider_text: str,
+) -> None:
+    current = _LOCAL_THINKER_MODEL_IO_BY_ADAPTER_REQUEST_ID.setdefault(
+        adapter_request_id,
+        {
+            "adapter": "thinker",
+            "adapter_request_id": adapter_request_id,
+            "provider_url_ref": "provider-url://dashscope/openai-compatible-chat-completions",
+            "system_message": LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION,
+            "request_body": None,
+            "raw_audio_visible": False,
+            "authorization_header_visible": False,
+        },
+    )
+    current["provider_text"] = _redact_debug_string(provider_text)
+
+
+def _extract_system_message(request_body: Mapping[str, Any]) -> str:
+    messages = request_body.get("messages")
+    if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes, bytearray)):
+        for message in messages:
+            if (
+                isinstance(message, Mapping)
+                and message.get("role") == "system"
+                and isinstance(message.get("content"), str)
+            ):
+                return _redact_debug_string(str(message["content"]))
+    return LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION
+
+
+def _redact_model_io_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _redact_model_io_value(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_redact_model_io_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_model_io_value(item) for item in value]
+    if isinstance(value, str):
+        if value.startswith("data:"):
+            return "[redacted-audio-base64]"
+        return _redact_debug_string(value)
+    return value
+
+
+def _redact_debug_string(value: str) -> str:
+    redacted = value
+    for marker in (
+        "Bearer ",
+        "authorization:",
+        "cookie:",
+        "api_key=",
+        "token=",
+        "file://",
+        "/Users/",
+        "\\Users\\",
+        "/private/",
+        ".env",
+    ):
+        redacted = redacted.replace(marker, "[redacted]")
+        redacted = redacted.replace(marker.lower(), "[redacted]")
+    return redacted
 
 
 def _extract_provider_text(response_payload: Mapping[str, Any]) -> str:
