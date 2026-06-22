@@ -8,10 +8,12 @@ import urllib.error
 import pytest
 
 from voice_agent.adapters.lalm_thinker_binding import bind_lalm_thinker_request
+from voice_agent.adapters.lalm_thinker_prompt_rules import LALM_THINKER_ROUTING_OUTPUT_RULES
 from voice_agent.adapters.lalm_thinker_live_transport import (
     LALMThinkerCredentialHandle,
     LALMThinkerLiveDirectHTTPTransport,
     LALMThinkerLiveTransportError,
+    resolve_lalm_thinker_live_model_io_debug,
     validate_lalm_thinker_credential_handle,
 )
 from voice_agent.adapters.lalm_thinker_skeleton import (
@@ -129,11 +131,17 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
     assert request_body["stream"] is True
     assert request_body["stream_options"] == {"include_usage": True}
     assert request_body["modalities"] == ["text"]
+    assert request_body["response_format"] == {"type": "json_object"}
     assert request_body["messages"][0]["role"] == "system"
     assert request_body["messages"][1]["role"] == "user"
     assert "lalm_thinker_semantic_frame_candidate.v1" in request_body["messages"][0]["content"]
-    assert "No markdown" in request_body["messages"][0]["content"]
+    assert "Do not wrap JSON in markdown" in request_body["messages"][0]["content"]
     assert "tool_calls" in request_body["messages"][0]["content"]
+    assert "Example: 讲冷笑话 -> FOREGROUND_CHAT" in request_body["messages"][0]["content"]
+    assert (
+        "Example: 帮我规划一个三天旅行并列步骤 -> NEW_TASK_CANDIDATE"
+        in request_body["messages"][0]["content"]
+    )
     user_payload = json.loads(request_body["messages"][1]["content"])
     skeleton = user_payload["required_output_skeleton"]
     assert "semantic_frame_ref" not in skeleton
@@ -153,23 +161,7 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
         "focus_confidence": 0.5,
         "evidence_uncertainty": "high",
     }
-    assert user_payload["output_rules"] == [
-        "return exactly one lalm_thinker_semantic_frame_candidate.v1 JSON object",
-        "do not wrap JSON in markdown, prose, arrays, or multiple objects",
-        "copy required_output_skeleton.request_binding exactly",
-        "express only evidence availability, short safe labels, and normalized hints",
-        (
-            "set task_focus_hint.focus to one of FOREGROUND_CHAT, NEW_TASK_CANDIDATE, "
-            "ACTIVE_TASK_PATCH, AMBIGUOUS, or NON_ASSISTANT"
-        ),
-        "use AMBIGUOUS with high evidence_uncertainty when routing evidence is unclear",
-        "Thinker focus is evidence only; Router owns the final RouterDecision",
-        "do not include final event refs; adapter owns deterministic provider-neutral refs",
-        "do not include raw provider request, raw provider response, provider schema, or raw semantic payload",
-        "use transient_input_evidence only as input evidence; do not copy its text into labels",
-        "do not call tools, request native tool execution, or include tool_calls/function_call",
-        "do not claim SemanticCommitment, confirmation, tool, playback, coverage, or truthfulness ownership",
-    ]
+    assert user_payload["output_rules"] == list(LALM_THINKER_ROUTING_OUTPUT_RULES)
     assert user_payload["request_payload"]["transient_input_evidence"] == {
         "input_modality": "text",
         "input_ref": "text://synthetic/lalm-thinker/live-001",
@@ -184,6 +176,15 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
     }
     assert "raw_provider_request" not in repr(request_body)
     assert "runtime-secret-value-for-test-only" not in repr(request_body)
+    model_io = resolve_lalm_thinker_live_model_io_debug(binding.adapter_request_id)
+    assert model_io is not None
+    assert model_io["adapter"] == "thinker"
+    assert "lalm_thinker_semantic_frame_candidate.v1" in model_io["system_message"]
+    assert model_io["request_body"]["response_format"] == {"type": "json_object"}
+    assert model_io["provider_text"] == expected_provider_text
+    assert model_io["raw_audio_visible"] is False
+    assert model_io["authorization_header_visible"] is False
+    assert "runtime-secret-value-for-test-only" not in repr(model_io)
 
     metadata = transport.to_metadata()
     assert metadata == {
@@ -244,18 +245,30 @@ def test_direct_http_transport_audio_uses_input_audio_without_retaining_raw_audi
     assert request_body["stream"] is True
     assert request_body["stream_options"] == {"include_usage": True}
     assert request_body["modalities"] == ["text"]
+    assert request_body["response_format"] == {"type": "json_object"}
     user_content = request_body["messages"][1]["content"]
-    assert [part["type"] for part in user_content] == ["input_audio", "text"]
+    assert [part["type"] for part in user_content] == ["text", "input_audio"]
     expected_audio_data_url = f"data:;base64,{base64.b64encode(audio_bytes).decode('ascii')}"
-    assert user_content[0] == {
+    assert user_content[1] == {
         "type": "input_audio",
         "input_audio": {
             "data": expected_audio_data_url,
             "format": "wav",
         },
     }
-    user_payload = json.loads(user_content[1]["text"])
+    user_payload = json.loads(user_content[0]["text"])
     assert user_payload["required_output_skeleton"]["request_binding"] == binding.to_dict()
+    assert (
+        "do not answer or chat with the user; classify the utterance as routing evidence only"
+        in user_payload["output_rules"]
+    )
+    model_io = resolve_lalm_thinker_live_model_io_debug(binding.adapter_request_id)
+    assert model_io is not None
+    assert model_io["request_body"]["messages"][1]["content"][1]["input_audio"]["data"] == (
+        "[redacted-audio-base64]"
+    )
+    assert model_io["provider_text"] == expected_provider_text
+    assert base64.b64encode(audio_bytes).decode("ascii") not in repr(model_io)
     metadata = transport.to_metadata()
     assert metadata["audio_input_supported"] is True
     assert metadata["raw_audio_included"] is False
