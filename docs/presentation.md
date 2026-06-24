@@ -8,11 +8,7 @@
 
 **核心判断：快系统负责响应，慢系统负责承诺。**
 
-这份展示文档建议按 5 分钟阅读节奏理解：
-
-1. 先看愿景：为什么语音 Agent 需要快慢双系统。
-2. 再看架构：控制面如何拆分职责。
-3. 最后看证据：仓库里哪些边界已经被 ADR、代码和 replay 固定下来。
+我们设想的最终形态，是一个真正的实时任务副驾驶：它能在用户说话时保持在线，在复杂任务中持续吸收新约束，在需要行动时主动确认，在完成之后还能解释每一步为什么发生。用户感受到的是自然流动的语音协作，系统内部运行的是一套快慢协同、事实可追踪、行动可治理的 Agent 控制面。
 
 ## 1. 设计命题
 
@@ -166,50 +162,42 @@ sequenceDiagram
 | Event Journal | 关键状态迁移必须写入 per-session append-only event journal。 |
 | Plan binding | ToolCall、ToolResult、UserPatch、SemanticCommitment 必须绑定 `task_id`、`plan_version`、`task_event_seq`。 |
 | Stale policy | 旧计划结果不得推进当前任务，除非 SlowTask 显式 adopt/rebase。 |
-| Tool authorization | MVP 工具只能在 demo sandbox 执行，高风险动作必须经过确认和授权。 |
+| Tool authorization | 工具执行必须经过授权边界，高风险动作先预览、再确认、再执行。 |
 | Composer contract | Composer 只做表达融合，不得改写 immutable facts、tool status、risk warnings。 |
 | Replay discipline | 默认 replay 不重跑真实模型、真实工具、网络、时钟或随机数。 |
 
 这些边界让系统不仅“会说”，还知道自己什么时候不能说、不能做、不能把旧证据当成当前事实。
 
-## 6. 当前工程证据
+## 6. 工程原则：让愿景可落地
 
-当前仓库已经落地的是一个 control-plane spine，而不是完整生产语音产品。它的价值在于：核心边界已经被 ADR、规格、代码、replay fixture 和测试共同固定下来。
+这个蓝图不依赖某一个“万能模型”突然解决所有问题，而是把实时语音 Agent 拆成可替换、可验证、可治理的系统边界。模型可以变，工具可以变，业务场景可以变，但控制面需要长期稳定。
 
-| 方向 | 仓库证据 |
+| 原则 | 目标形态 |
 | --- | --- |
-| 架构治理 | `stage_b_adr_register.md`、`docs/adr/` 下的 accepted ADR |
-| 事件规范 | `docs/specs/event-registry.md`、`src/voice_agent/events/` |
-| 确定性回放 | `docs/specs/replay-spec.md`、`src/voice_agent/replay/` |
-| 快慢分流 | `src/voice_agent/router/router.py` |
-| 慢任务状态 | `src/voice_agent/state/slowtask_state.py`、`src/voice_agent/slowtask/` |
-| 工具边界 | `src/voice_agent/tools/executor.py`、demo sandbox policy |
-| 表达与检查 | `src/voice_agent/composer/`、`src/voice_agent/checks/` |
-| 本地语音调试 | `scripts/mvp6-debug-console`、MVP5/MVP6 runtime docs |
+| 模型能力插件化 | ASR、Thinker、Slow LLM、TTS 都通过 adapter 接入，能力差异通过 capability matrix 显式表达。 |
+| 状态事实账本化 | 关键状态进入 Event Journal，让系统能解释自己如何理解、如何行动、如何承诺。 |
+| 复杂任务有 owner | SlowTask 持有任务事实、计划版本和证据，不让多轮语音补充变成 prompt 漂移。 |
+| 行动经过授权边界 | Tool Executor 负责确认、授权、幂等、风险等级和执行结果，模型不能用一句话直接驱动外部动作。 |
+| 表达和事实分离 | Composer 让回答更自然，但不能改写事实、风险提示、工具状态或确认结果。 |
+| 回放成为基础能力 | Replay 不只是调试工具，而是评估、审计、复盘和持续改进的底座。 |
 
-从项目结构上看，当前实现重点覆盖：
-
-- MVP0 live loop skeleton：ingress、interrupt/truncate、mock understanding、playback、journal、replay。
-- MVP1 SlowTask spine：UserPatch、`plan_version`、stale evidence、task-focus routing。
-- MVP2 tool/composer boundary：demo Tool Executor、confirmation gate、truthfulness checks。
-- MVP3-MVP6 adapter 与本地语音路由验证：provider-free / opt-in local wav / debug console。
+最终我们希望构建的不是一个“更会聊天”的语音助手，而是一个可以逐步接入真实工具、真实任务和真实业务约束的任务型 Agent 操作系统。
 
 ## 7. 演进路线
 
 ```mermaid
 flowchart LR
-    M0["MVP0<br/>live loop skeleton"]
-    M1["MVP1<br/>SlowTask / UserPatch"]
-    M2["MVP2<br/>Tool Executor / Composer"]
-    M3["MVP3<br/>real adapter contracts"]
-    M4["MVP4-MVP5<br/>voice input routing"]
-    M6["MVP6<br/>local debug console"]
-    Future["Next<br/>streaming mic / full-duplex / real TTS / production privacy"]
+    P1["实时交互底座<br/>turn / interrupt / playback"]
+    P2["慢任务系统<br/>UserPatch / plan_version"]
+    P3["工具执行闭环<br/>authorization / result / UI patch"]
+    P4["真实模型接入<br/>ASR / Thinker / Slow LLM / TTS"]
+    P5["真实语音体验<br/>streaming mic / full-duplex / real TTS"]
+    P6["生产级 Agent<br/>privacy / eval / audit / external tools"]
 
-    M0 --> M1 --> M2 --> M3 --> M4 --> M6 --> Future
+    P1 --> P2 --> P3 --> P4 --> P5 --> P6
 ```
 
-下一阶段的关键不是扩大概念，而是在不破坏现有边界的前提下，把 mock / provider-free 路径逐步替换为真实 adapter、真实流式音频和更完整的工具执行闭环。
+演进的关键不是把功能堆得更满，而是让实时交互、慢任务推理、工具执行、语义承诺和回放评估在同一套控制面上持续生长。
 
 ## 一句话总结
 
