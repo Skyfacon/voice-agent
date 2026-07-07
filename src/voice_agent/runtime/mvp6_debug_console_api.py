@@ -11,6 +11,9 @@ import time
 from typing import Any
 import wave
 
+from voice_agent.adapters.lalm_thinker_routing_profiles import (
+    get_default_lalm_thinker_routing_profile,
+)
 from voice_agent.runtime.mvp5_live_router_runner import MVP5ActiveSlowTaskContext
 from voice_agent.runtime.mvp5_real_voice_e2e_smoke import (
     build_mvp5_provider_free_fake_transports,
@@ -152,6 +155,7 @@ def build_mvp6_status_response(
         "credential_present": bool(credential_env_var_name and env.get(credential_env_var_name)),
         "metadata_only_output": True,
         "qa_history_enabled_default": config.qa_history_enabled_default,
+        "routing_prompt_profile": get_default_lalm_thinker_routing_profile().to_metadata(),
     }
     if config.approval_packet is not None:
         status["max_provider_calls"] = _positive_int(

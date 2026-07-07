@@ -20,7 +20,10 @@ from voice_agent.adapters.lalm_thinker_live_transport import (
     validate_lalm_thinker_credential_handle,
 )
 from voice_agent.adapters.lalm_thinker_profile import LALM_THINKER_RUNTIME_ADAPTER_ID
-from voice_agent.adapters.lalm_thinker_prompt_rules import LALM_THINKER_ROUTING_OUTPUT_RULES
+from voice_agent.adapters.lalm_thinker_prompt_rules import (
+    LALM_THINKER_ROUTING_OUTPUT_RULES,
+    LALM_THINKER_ROUTING_PROMPT_PROFILE_METADATA,
+)
 from voice_agent.adapters.thinker_contract import (
     ThinkerAdapterContract,
     ThinkerSemanticFrameEmission,
@@ -519,6 +522,7 @@ def build_lalm_thinker_live_request_payload(
     }
     payload = {
         "request_metadata": request_metadata,
+        "routing_prompt_profile": dict(LALM_THINKER_ROUTING_PROMPT_PROFILE_METADATA),
         "required_output_skeleton": skeleton,
         "output_rules": list(LALM_THINKER_ROUTING_OUTPUT_RULES),
     }
@@ -662,6 +666,11 @@ def emit_lalm_thinker_provider_text_result(
             validation_failed_event=validation_failed,
         )
     except LALMThinkerCandidateValidationError as exc:
+        failure_reasons = (
+            ("fenced_markdown",)
+            if "```" in provider_text
+            else exc.failure_reasons
+        )
         validation_failed = _emit_lalm_thinker_output_validation_failed(
             boundary=boundary,
             adapter_id=adapter_id,
@@ -670,7 +679,7 @@ def emit_lalm_thinker_provider_text_result(
             created_monotonic_ms=created_monotonic_ms,
             created_wall_clock_ms=created_wall_clock_ms,
             adapter_request_id=expected_binding.adapter_request_id,
-            failure_reasons=exc.failure_reasons,
+            failure_reasons=failure_reasons,
         )
         return LALMThinkerProviderTextEmissionResult(
             success=False,

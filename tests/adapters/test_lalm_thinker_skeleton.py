@@ -492,6 +492,11 @@ def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candi
     binding = _binding()
 
     payload = build_lalm_thinker_live_request_payload(binding=binding)
+    from voice_agent.adapters.lalm_thinker_routing_profiles import (
+        get_default_lalm_thinker_routing_profile,
+    )
+
+    profile = get_default_lalm_thinker_routing_profile()
 
     assert payload["request_metadata"] == {
         "request_binding": binding.to_dict(),
@@ -530,6 +535,13 @@ def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candi
             "owns_coverage_truthfulness_checks": False,
         },
     }
+    assert payload["routing_prompt_profile"] == {
+        "profile_id": profile.profile_id,
+        "profile_version": profile.version,
+        "profile_hash": profile.profile_hash,
+        "locale": "zh-CN",
+        "candidate_schema_version": LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
+    }
     assert payload["required_output_skeleton"]["schema_version"] == (
         LALM_THINKER_CANDIDATE_SCHEMA_VERSION
     )
@@ -551,19 +563,56 @@ def test_live_request_payload_is_refs_only_and_provider_output_is_evidence_candi
     assert _forbidden_request_terms_are_absent(payload)
 
 
-def test_live_request_payload_contains_semantic_routing_rubric_and_short_examples() -> None:
+def test_default_routing_prompt_profile_is_chinese_and_keeps_schema_enums() -> None:
+    from voice_agent.adapters.lalm_thinker_routing_profiles import (
+        get_default_lalm_thinker_routing_profile,
+    )
+
+    profile = get_default_lalm_thinker_routing_profile()
+
+    assert profile.profile_id == "lalm-thinker-routing-control"
+    assert profile.version == "mvp6.2.zh-CN.v1"
+    assert profile.locale == "zh-CN"
+    assert profile.candidate_schema_version == LALM_THINKER_CANDIDATE_SCHEMA_VERSION
+    assert profile.profile_hash.startswith("sha256:")
+    assert len(profile.profile_hash.removeprefix("sha256:")) == 64
+
+    rules_text = "\n".join(profile.output_rules)
+    system_instruction = profile.system_instruction
+
+    assert "只输出一个 lalm_thinker_semantic_frame_candidate.v1 JSON object" in rules_text
+    assert "不要回答用户，也不要和用户聊天" in rules_text
+    assert "FOREGROUND_CHAT" in rules_text
+    assert "NEW_TASK_CANDIDATE" in rules_text
+    assert "ACTIVE_TASK_PATCH" in rules_text
+    assert "AMBIGUOUS" in rules_text
+    assert "NON_ASSISTANT" in rules_text
+    assert "task_focus_hint.focus" in rules_text
+    assert "required_output_skeleton.request_binding" in rules_text
+    assert "SemanticCommitment" in rules_text
+    assert "Router owns the final RouterDecision" in rules_text
+    assert "讲冷笑话 -> FOREGROUND_CHAT" in rules_text
+    assert "帮我规划一个三天旅行并列步骤 -> NEW_TASK_CANDIDATE" in rules_text
+    assert "使用随附的音频作为 Thinker candidate 的主要证据" in "\n".join(
+        profile.audio_output_rules
+    )
+    assert system_instruction == profile.system_instruction
+    assert system_instruction.endswith(".")
+
+
+def test_live_request_payload_contains_chinese_semantic_routing_rubric_and_short_examples() -> None:
     payload = build_lalm_thinker_live_request_payload(binding=_binding())
 
     rules_text = "\n".join(payload["output_rules"])
 
-    assert "FOREGROUND_CHAT is for one-turn direct answers" in rules_text
-    assert "NEW_TASK_CANDIDATE is for multi-step planning" in rules_text
-    assert "ACTIVE_TASK_PATCH only when active task context exists" in rules_text
-    assert "AMBIGUOUS instead of guessing" in rules_text
-    assert "NON_ASSISTANT for clearly non-assistant-directed input" in rules_text
-    assert "Example: 讲冷笑话 -> FOREGROUND_CHAT" in rules_text
-    assert "Example: 帮我规划一个三天旅行并列步骤 -> NEW_TASK_CANDIDATE" in rules_text
-    assert "available optional_evidence_refs entry must include a short non-empty label" in rules_text
+    assert "FOREGROUND_CHAT 表示闲聊、轻问答、翻译一句话或小型单轮解释" in rules_text
+    assert "NEW_TASK_CANDIDATE 表示需要多步骤规划、持续跟踪、后续执行、外部工具或较大产物" in rules_text
+    assert "ACTIVE_TASK_PATCH 只能在 active task context 存在" in rules_text
+    assert "证据或任务归属不清楚时使用 AMBIGUOUS" in rules_text
+    assert "NON_ASSISTANT 表示明确不是对助手说的话" in rules_text
+    assert "讲冷笑话 -> FOREGROUND_CHAT" in rules_text
+    assert "帮我规划一个三天旅行并列步骤 -> NEW_TASK_CANDIDATE" in rules_text
+    assert "available optional_evidence_refs entry 必须包含短且非空的 label" in rules_text
 
 
 def test_live_request_payload_can_include_adapter_private_transient_input_text() -> None:
