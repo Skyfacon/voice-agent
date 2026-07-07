@@ -21,6 +21,9 @@ def test_status_endpoint_returns_json(tmp_path: Path) -> None:
         assert response.status == 200
         assert body["default_provider_mode"] == "fake"
         assert body["metadata_only_output"] is True
+        assert body["routing_prompt_profile"]["profile_id"] == "lalm-thinker-routing-control"
+        assert body["routing_prompt_profile"]["profile_version"] == "mvp6.2.zh-CN.v1"
+        assert body["routing_prompt_profile"]["profile_hash"].startswith("sha256:")
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -35,6 +38,7 @@ def test_root_serves_debug_console_html(tmp_path: Path) -> None:
         body = response.read().decode("utf-8")
         assert response.status == 200
         assert "MVP6 Local Debug Console" in body
+        assert "Prompt Profile" in body
         assert "Record" in body
         assert "Run" in body
     finally:

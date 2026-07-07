@@ -175,6 +175,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       <span id="providerStatus" class="pill">Provider: fake</span>
       <span id="approvalStatus" class="pill">Approval: unknown</span>
       <span id="credentialStatus" class="pill">Credential: unknown</span>
+      <span id="promptProfileStatus" class="pill">Prompt Profile: unknown</span>
     </div>
   </header>
   <main>
@@ -272,6 +273,12 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       const status = await response.json();
       document.getElementById('approvalStatus').textContent = 'Approval: ' + (status.approval_loaded ? 'loaded' : 'missing');
       document.getElementById('credentialStatus').textContent = 'Credential: ' + (status.credential_present ? 'present' : 'missing');
+      const profile = status.routing_prompt_profile || {};
+      document.getElementById('promptProfileStatus').textContent = 'Prompt Profile: ' + [
+        profile.profile_id || 'unknown',
+        profile.profile_version || 'unknown',
+        profile.profile_hash || 'unknown'
+      ].join(' / ');
       updateProviderLabel();
     }
 

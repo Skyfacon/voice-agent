@@ -9,6 +9,9 @@ import pytest
 
 from voice_agent.adapters.lalm_thinker_binding import bind_lalm_thinker_request
 from voice_agent.adapters.lalm_thinker_prompt_rules import LALM_THINKER_ROUTING_OUTPUT_RULES
+from voice_agent.adapters.lalm_thinker_routing_profiles import (
+    get_default_lalm_thinker_routing_profile,
+)
 from voice_agent.adapters.lalm_thinker_live_transport import (
     LALMThinkerCredentialHandle,
     LALMThinkerLiveDirectHTTPTransport,
@@ -88,6 +91,7 @@ def test_request_provider_text_uses_fake_transport_without_network_or_sdk() -> N
 
 def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body() -> None:
     binding = _binding()
+    profile = get_default_lalm_thinker_routing_profile()
     expected_provider_text = fake_lalm_thinker_transport(
         binding,
         optional_refs_available=True,
@@ -135,14 +139,21 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
     assert request_body["messages"][0]["role"] == "system"
     assert request_body["messages"][1]["role"] == "user"
     assert "lalm_thinker_semantic_frame_candidate.v1" in request_body["messages"][0]["content"]
-    assert "Do not wrap JSON in markdown" in request_body["messages"][0]["content"]
+    assert "不要用 markdown" in request_body["messages"][0]["content"]
     assert "tool_calls" in request_body["messages"][0]["content"]
-    assert "Example: 讲冷笑话 -> FOREGROUND_CHAT" in request_body["messages"][0]["content"]
+    assert "讲冷笑话 -> FOREGROUND_CHAT" in request_body["messages"][0]["content"]
     assert (
-        "Example: 帮我规划一个三天旅行并列步骤 -> NEW_TASK_CANDIDATE"
+        "帮我规划一个三天旅行并列步骤 -> NEW_TASK_CANDIDATE"
         in request_body["messages"][0]["content"]
     )
     user_payload = json.loads(request_body["messages"][1]["content"])
+    assert user_payload["routing_prompt_profile"] == {
+        "profile_id": profile.profile_id,
+        "profile_version": profile.version,
+        "profile_hash": profile.profile_hash,
+        "locale": "zh-CN",
+        "candidate_schema_version": "lalm_thinker_semantic_frame_candidate.v1",
+    }
     skeleton = user_payload["required_output_skeleton"]
     assert "semantic_frame_ref" not in skeleton
     assert "semantic_summary_ref" not in skeleton
@@ -180,6 +191,7 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
     assert model_io is not None
     assert model_io["adapter"] == "thinker"
     assert "lalm_thinker_semantic_frame_candidate.v1" in model_io["system_message"]
+    assert profile.profile_hash in repr(model_io)
     assert model_io["request_body"]["response_format"] == {"type": "json_object"}
     assert model_io["provider_text"] == expected_provider_text
     assert model_io["raw_audio_visible"] is False
@@ -207,6 +219,7 @@ def test_direct_http_transport_uses_injected_opener_and_does_not_retain_raw_body
 
 def test_direct_http_transport_audio_uses_input_audio_without_retaining_raw_audio() -> None:
     binding = _audio_binding()
+    profile = get_default_lalm_thinker_routing_profile()
     expected_provider_text = fake_lalm_thinker_transport(
         binding,
         optional_refs_available=True,
@@ -258,10 +271,12 @@ def test_direct_http_transport_audio_uses_input_audio_without_retaining_raw_audi
     }
     user_payload = json.loads(user_content[0]["text"])
     assert user_payload["required_output_skeleton"]["request_binding"] == binding.to_dict()
+    assert user_payload["routing_prompt_profile"]["profile_hash"] == profile.profile_hash
     assert (
-        "do not answer or chat with the user; classify the utterance as routing evidence only"
+        "不要回答用户，也不要和用户聊天；只把用户输入分类为 routing evidence"
         in user_payload["output_rules"]
     )
+    assert "使用随附的音频作为 Thinker candidate 的主要证据" in user_payload["output_rules"]
     model_io = resolve_lalm_thinker_live_model_io_debug(binding.adapter_request_id)
     assert model_io is not None
     assert model_io["request_body"]["messages"][1]["content"][1]["input_audio"]["data"] == (

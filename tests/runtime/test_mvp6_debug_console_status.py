@@ -26,6 +26,10 @@ def test_status_defaults_to_fake_and_redacts_paths_and_secrets(tmp_path: Path) -
     assert status["credential_present"] is False
     assert status["metadata_only_output"] is True
     assert status["qa_history_enabled_default"] is True
+    assert status["routing_prompt_profile"]["profile_id"] == "lalm-thinker-routing-control"
+    assert status["routing_prompt_profile"]["profile_version"] == "mvp6.2.zh-CN.v1"
+    assert status["routing_prompt_profile"]["profile_hash"].startswith("sha256:")
+    assert status["routing_prompt_profile"]["locale"] == "zh-CN"
     assert str(tmp_path) not in rendered
     assert "SECRET" not in rendered
     assert "approval_packet_path" not in rendered

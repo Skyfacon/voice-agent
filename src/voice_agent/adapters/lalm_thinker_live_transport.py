@@ -19,6 +19,7 @@ from voice_agent.adapters.lalm_thinker_prompt_rules import (
     LALM_THINKER_AUDIO_ROUTING_OUTPUT_RULES,
     LALM_THINKER_EVIDENCE_SCHEMA_INSTRUCTION,
     LALM_THINKER_ROUTING_OUTPUT_RULES,
+    LALM_THINKER_ROUTING_PROMPT_PROFILE_METADATA,
 )
 
 
@@ -360,8 +361,9 @@ def _build_openai_compatible_request_body(
     request_payload_dict = deepcopy(dict(request_payload))
     user_payload = {
         "request_payload": request_payload_dict,
+        "routing_prompt_profile": _routing_prompt_profile_metadata(request_payload_dict),
         "required_output_skeleton": _build_required_output_skeleton(request_payload_dict),
-        "output_rules": list(LALM_THINKER_ROUTING_OUTPUT_RULES),
+        "output_rules": _routing_output_rules(request_payload_dict),
     }
     return {
         "model": model_alias,
@@ -394,8 +396,9 @@ def _build_openai_compatible_audio_request_body(
     request_payload_dict = deepcopy(dict(request_payload))
     user_payload = {
         "request_payload": request_payload_dict,
+        "routing_prompt_profile": _routing_prompt_profile_metadata(request_payload_dict),
         "required_output_skeleton": _build_required_output_skeleton(request_payload_dict),
-        "output_rules": list(LALM_THINKER_AUDIO_ROUTING_OUTPUT_RULES),
+        "output_rules": _routing_audio_output_rules(request_payload_dict),
     }
     return {
         "model": model_alias,
@@ -482,6 +485,35 @@ def _build_required_output_skeleton(request_payload: Mapping[str, Any]) -> dict[
             "raw_artifacts_retained": False,
         },
     }
+
+
+def _routing_prompt_profile_metadata(request_payload: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = request_payload.get("routing_prompt_profile")
+    if isinstance(metadata, Mapping):
+        return deepcopy(dict(metadata))
+    return dict(LALM_THINKER_ROUTING_PROMPT_PROFILE_METADATA)
+
+
+def _routing_output_rules(request_payload: Mapping[str, Any]) -> list[str]:
+    rules = request_payload.get("output_rules")
+    if isinstance(rules, Sequence) and not isinstance(rules, (str, bytes, bytearray)):
+        return [str(rule) for rule in rules]
+    return list(LALM_THINKER_ROUTING_OUTPUT_RULES)
+
+
+def _routing_audio_output_rules(request_payload: Mapping[str, Any]) -> list[str]:
+    profile_metadata = _routing_prompt_profile_metadata(request_payload)
+    default_metadata = dict(LALM_THINKER_ROUTING_PROMPT_PROFILE_METADATA)
+    if profile_metadata == default_metadata:
+        return list(LALM_THINKER_AUDIO_ROUTING_OUTPUT_RULES)
+    rules = _routing_output_rules(request_payload)
+    if "使用随附的音频作为 Thinker candidate 的主要证据" in rules:
+        return rules
+    return [
+        *rules[:14],
+        "使用随附的音频作为 Thinker candidate 的主要证据",
+        *rules[14:],
+    ]
 
 
 def _store_lalm_thinker_model_io_request(
