@@ -224,7 +224,7 @@ Replay 要求：
 - replay 不得重新调用 Fast Interaction Adapter、ASR、Thinker、Slow LLM、TTS 或工具。
 - shareable replay / GitHub fixture 不得包含 raw audio、raw prompt、provider body、secret、unredacted real user input 或 large raw webSearch content。
 - local debug 可以保存更详细 refs，但必须受 ADR-010 redaction/export gate 约束。
-- `FOREGROUND_OUTPUT_COMMITTED` 必须引用 gate pass event，或引用 gate fail 后的模板 fallback policy event / reason。
+- `FOREGROUND_OUTPUT_COMMITTED` 必须引用 gate pass event；若提交的是 gate fail 后的模板 ack / clarify / silence policy，则必须引用 fallback policy ref / reason。二者至少其一必须存在，不能产生无因果来源的用户可见输出。
 - `FOREGROUND_OUTPUT_DISCARDED` 必须引用 candidate event 和 discard reason。
 
 ### 8. Adapter capability requirements

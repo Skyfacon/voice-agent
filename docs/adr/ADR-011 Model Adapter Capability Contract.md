@@ -90,7 +90,7 @@ MVP-0 capability expectations：
 - All mocks must still declare capabilities honestly.
 - Mock 不得伪装成目标架构真实能力，除非字段标记为 `mocked=true`。
 
-API Integration Phase must-have：
+API Integration Phase must-have（原 MVP-3，不新增架构能力）：
 
 - ASR final transcript or equivalent text projection
 - Slow LLM structured JSON output
@@ -98,8 +98,11 @@ API Integration Phase must-have：
 - HTTP/WebSocket adapter healthcheck
 - timeout / retry / error reporting
 - Thinker basic SemanticFrame output or mock-compatible equivalent
-- Fast Interaction Adapter route hint / foreground act / candidate schema or explicit template fallback
 - Thinker-as-Composer SpokenPlan output or fallback template composer
+
+Post-ADR-017 / MVP6 fast foreground must-have：
+
+- Fast Interaction Adapter route hint / foreground act / candidate schema or explicit template fallback
 
 API Integration Phase nice-to-have / can mock：
 

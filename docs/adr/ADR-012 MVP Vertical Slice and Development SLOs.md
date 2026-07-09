@@ -146,6 +146,7 @@ Scope control rules:
 2. 不允许为了 MVP-0 偷偷实现 MVP-2 的工具体系。
 3. 不允许为了 MVP-2 引入真实外部副作用工具。
 4. MVP-3 只替换 adapter，不新增架构能力。
+   ADR-017 / MVP6 fast foreground 是 MVP-3+ 架构扩展，不 retroactively 改变原 MVP-3 完成条件。
 5. 每个 slice 完成前，必须有 replay scenario 或 eval case。
 6. 未被 event journal 记录的行为，不算该 slice 验证通过。
 7. mock 能力必须标记为 mock，不能冒充 real capability。

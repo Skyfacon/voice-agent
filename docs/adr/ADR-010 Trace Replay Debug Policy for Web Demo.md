@@ -24,7 +24,7 @@ accepted
 Trace 数据按存储域分级：
 
 1. `LOCAL_DEBUG_TRACE`
-   本地详细 trace，用于开发调试和 replay。可以包含 event journal、ASR/Thinker output、UserPatch、SlowTask state、ToolCall/ToolResult、demo backend state patch、SpokenPlan、coverage check result。
+   本地详细 trace，用于开发调试和 replay。可以包含 event journal、ASR/Thinker output、Fast Interaction output、foreground candidate / gate / committed / discarded output、UserPatch、SlowTask state、ToolCall/ToolResult、demo backend state patch、SpokenPlan、coverage check result。
 
 2. `LOCAL_RAW_AUDIO`
    本地原始音频，仅 dev/debug opt-in。用于排查 VAD、Duplex、barge-in、ASR/Thinker audio understanding 问题。
@@ -83,6 +83,7 @@ Replay 策略：
 - local replay 可以使用详细 local debug trace。
 - 没有 raw audio 时，replay 重建事件状态，不重跑音频推理。
 - 有 raw audio 且 dev opt-in 时，可以做 audio-level replay。
+- Fast foreground replay 使用已记录的 candidate refs、gate decision 和 committed / discarded output，不重跑 Fast Interaction Adapter。
 - shareable replay 必须使用 synthetic/redacted 数据。
 - replay export 必须执行 repo-safe export gate，检查 raw audio、raw trace、secret、unredacted real user input、大段 raw web content、credential-like header。
 
@@ -168,7 +169,8 @@ MVP-0 / MVP-2 必须验证：
 12. webSearch 原始大段结果不进入 GitHub fixture。
 13. 发现 secret-like 内容时，trace 写入被 redacted 或 blocked。
 14. shareable replay export gate 能阻止 unredacted real user input、credential-like header 和 raw tool auth payload。
-15. `TRACE_SECRET_REDACTION_APPLIED` / `TRACE_WRITE_BLOCKED_SECRET_DETECTED` event 本身不包含原始 secret 值。
+15. Fast foreground candidate / gate / committed / discarded output 可在 local replay 中重建；shareable export 不包含 raw prompt、provider body、secret 或 unredacted real user input。
+16. `TRACE_SECRET_REDACTION_APPLIED` / `TRACE_WRITE_BLOCKED_SECRET_DETECTED` event 本身不包含原始 secret 值。
 
 ## Open Questions
 

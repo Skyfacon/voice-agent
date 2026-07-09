@@ -176,7 +176,7 @@ MVP-1 必须验证：
 
 ## Open Questions
 
-- `foreground_mode` 的枚举是否先定义为 `IDLE` / `FAST_RESPONSE` / `SLOWTASK_ACTIVE` / `WAITING_CONFIRMATION`？
+- `foreground_mode` 的枚举是否保持为 `IDLE` / `FAST_RESPONSE` / `SLOWTASK_ACTIVE` / `WAITING_CONFIRMATION`？该字段是 Router / UI metadata，不是 ADR-002 canonical event；SlowTask confirmation 事件名仍为 `WAITING_FOR_USER_CONFIRMATION`。
 - brief response 是否允许打断 SlowTask progress feedback，还是 progress feedback 优先？
 - switch-task confirmation prompt 的口语化模板由 Composer 统一生成，还是 SlowTask 提供更完整 `prompt_ref`？
 - `AMBIGUOUS` 的澄清话术由 Router metadata 驱动，还是交给 Composer 统一生成？

@@ -85,11 +85,12 @@ accepted
 
 12. **Do not broaden MVP scope silently**
     - MVP-3 只替换真实 adapter，不新增架构能力。
+    - ADR-017 / MVP6 fast foreground 属于 MVP-3+ 架构扩展，必须通过独立 accepted ADR 管理。
     - 多 active SlowTask、pause/resume、真实外部副作用工具、生产隐私策略都需要后续 ADR。
 
 Repository structure guidance：
 
-- Accepted ADR files live under `ADRs/`.
+- Accepted ADR files live under `docs/adr/`.
 - `stage_b_adr_register.md` tracks accepted ADR status.
 - Local traces, raw audio, replay cache must live under ignored paths.
 - Shareable fixtures should be synthetic or redacted.
