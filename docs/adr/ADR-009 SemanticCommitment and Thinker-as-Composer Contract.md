@@ -28,6 +28,10 @@ Composer 是一个架构角色，不要求独立模型或独立服务。MVP 可�
 
 二者可复用同一个模型服务，但必须在调用契约、输入范围、输出 schema 和权限边界上区分。
 
+ADR-017 进一步把低延迟前台回答收束为 `Fast Interaction Adapter` role。该 role 可以复用 Thinker / LALM provider，但必须使用独立 prompt profile 和 schema，在一次调用中输出 route evidence、foreground act 和 candidate reply。低风险 foreground reply 可以绕过 SemanticCommitment，但必须先通过 ADR-017 Fast Foreground Gate；未通过 gate 的 candidate 不得进入 SpokenPlan、Talker 或用户可见 UI。
+
+复杂任务、工具结果、confirmation prompt、current-plan facts 和 SlowTask progress 仍由本 ADR 的 SemanticCommitment / Thinker-as-Composer / coverage check 边界保护。Fast foreground reply 不得改写或替代 SemanticCommitment。
+
 SemanticCommitment 是复杂任务最终事实源，至少包含：
 
 - `commitment_id`
@@ -76,6 +80,7 @@ SpokenPlan 至少包含：
 - `spoken_plan_id`
 - `source_commitment_id`
 - `source_progress_event_ids`
+- `source_fast_foreground_output_id` optional
 - `source_events`
 - `text`
 - `emotion`
@@ -141,6 +146,8 @@ Thinker-as-Composer 输出 SpokenPlan 后，必须执行 `CommitmentCoverageChec
 - `COMMITMENT_COVERAGE_CHECK_PASSED` 必须引用 `spoken_plan_id`
 - Talker 的 `PLAYBACK_SPAN_STARTED.approved_check_event_id` 必须引用该通过事件或其 `check_result_ref`
 - Talker 只能播放已通过检查的 SemanticCommitment-derived SpokenPlan
+
+对于 ADR-017 已通过 Fast Foreground Gate 的低风险 fast foreground output，系统可以直接展示文本，或将其包装成 `SPOKEN_PLAN_EMITTED(source=fast_foreground)` 交给 Talker。该路径不需要 `CommitmentCoverageCheck`，但必须保留 `FOREGROUND_ACT_GATE_PASSED` / `FOREGROUND_OUTPUT_COMMITTED` 因果链，且不得表达复杂任务事实、tool status、confirmation state 或 current-plan facts。
 
 ## Alternatives Considered
 
@@ -217,6 +224,6 @@ MVP-2 必须验证：
 - CoverageCheck MVP 是规则/模板检查，还是 LLM judge + rule hybrid？
 - Thinker-as-Composer 是否需要独立 prompt profile / adapter method？
 - `immutable_facts` 是否只支持结构化字段，还是也支持短文本 span？
-- 低风险闲聊是否绕过 SemanticCommitment，直接由 Thinker-as-Fast-System 输出 SpokenPlan？
+- 低风险闲聊 / 轻问答绕过 SemanticCommitment 的条件由 ADR-017 Fast Foreground Gate 定义；开放点只剩 fast foreground output 是否总是包装成 SpokenPlan。
 - Composer 多次失败后的 degraded response 模板如何定义？
 - `must_say_fields` 是否允许在多段 SpokenPlan 中分步覆盖？

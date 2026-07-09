@@ -25,6 +25,7 @@ accepted
 
 - ASR Adapter
 - Thinker / LALM Adapter
+- Fast Interaction Adapter
 - Thinker-as-Composer Adapter
 - Slow LLM Adapter
 - TTS / Talker Adapter
@@ -64,10 +65,19 @@ Capability matrix 至少包含：
 - `supports_tts_pause_resume`
 - `supports_semantic_close`
 - `supports_assistant_directedness`
+- `supports_fast_interaction_output`
+- `supports_route_hint`
+- `supports_foreground_act`
+- `supports_reply_candidate`
+- `supports_reply_delta_streaming`
+- `supports_final_fast_evidence`
 - `max_audio_seconds`
 - `max_context_tokens`
 - `max_output_tokens`
+- `max_reply_candidate_tokens`
 - `expected_first_token_latency_ms`
+- `expected_first_candidate_latency_ms`
+- `expected_final_gate_ready_latency_ms`
 - `expected_first_audio_latency_ms`
 
 MVP-0 capability expectations：
@@ -88,12 +98,14 @@ API Integration Phase must-have：
 - HTTP/WebSocket adapter healthcheck
 - timeout / retry / error reporting
 - Thinker basic SemanticFrame output or mock-compatible equivalent
+- Fast Interaction Adapter route hint / foreground act / candidate schema or explicit template fallback
 - Thinker-as-Composer SpokenPlan output or fallback template composer
 
 API Integration Phase nice-to-have / can mock：
 
 - streaming audio understanding
 - token-level or frame-level partial semantic output
+- streaming fast reply delta with buffer-before-gate policy
 - emotion detection
 - audio_caption
 - semantic_close
@@ -113,6 +125,7 @@ Adapter behavior rules：
 7. Timeouts and retries must be visible in event journal.
 8. Adapter must not log secrets in trace.
 9. Adapter must identify whether an output is real, mock, fallback, or degraded.
+10. If one provider backs multiple roles, each role must still use a distinct adapter method, prompt profile, schema, output event, and capability declaration.
 
 Adapter event contract:
 
@@ -130,6 +143,7 @@ Degradation examples：
 - No audio timestamps: omit exact timing and mark timestamp source unavailable.
 - No emotion: set emotion unavailable, not neutral unless model truly predicts neutral.
 - No semantic_close: rely on Duplex mock/rule-based or Interaction policy.
+- No safe fast reply candidate: use Fast Foreground Gate template fallback and mark Fast Interaction output as degraded or candidate-unavailable.
 - No TTS truncate: MVP barge-in validation cannot pass target architecture criteria.
 - No structured JSON from Slow LLM: use parser/validator retry; if still invalid, fail task or fallback mock.
 
@@ -168,6 +182,7 @@ Degradation examples：
 
 - ASR Adapter
 - Thinker / LALM Adapter
+- Fast Interaction Adapter
 - Thinker-as-Composer Adapter
 - Slow LLM Adapter
 - TTS / Talker Adapter
@@ -195,12 +210,15 @@ MVP-0 / API Integration Phase 必须验证：
 8. timeout / retry / error 必须以 `ADAPTER_REQUEST_RETRYING` / `ADAPTER_REQUEST_FAILED` 进入 event journal。
 9. adapter 不会把 secret 写入 trace。
 10. API endpoint 可配置，支持本地 mock、远程 API、自部署 endpoint 切换。
+11. Fast Interaction Adapter 必须声明 route hint、foreground act、reply candidate / delta、final fast evidence、risk tags、confidence 和 schema validation 能力。
+12. Fast Interaction Adapter output schema validation 失败时会触发 `ADAPTER_OUTPUT_VALIDATION_FAILED`，不得把 malformed candidate 交给 Router 或 Fast Foreground Gate。
+13. 当 provider 复用 Thinker / LALM 服务时，`fast_interaction`、`thinker`、`composer` 仍必须在 role contract、prompt profile、schema 和 output events 上可区分。
 
 ## Open Questions
 
 - capability matrix 是静态配置、启动探测，还是两者结合？
 - adapter capability 是否需要暴露给前端 demo，用于显示当前能力模式？
 - structured JSON validation failure 是否允许自动 retry 几次？
-- Thinker-as-Fast-System 和 Thinker-as-Composer 是否共用 adapter，但使用不同 method/profile？
+- Thinker-as-Fast-System、Fast Interaction Adapter 和 Thinker-as-Composer 是否共用 provider，但使用不同 adapter method / prompt profile？
 - latency_class 是否先用枚举，还是直接记录 measured latency histogram？
 - self-hosted A100 阶段是否需要 adapter compatibility test suite？

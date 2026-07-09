@@ -13,6 +13,7 @@ accepted
 - 为了快，直接调用外部模型 endpoint，绕过 adapter。
 - 为了 demo，直接让前端根据模型文本改 UI，绕过 Tool Executor。
 - 为了调试，把 raw audio / raw trace commit 到 GitHub。
+- 为了快答，绕过 Fast Foreground Gate 直接展示模型 candidate。
 - 为了自然表达，让 Composer 改写 SemanticCommitment 事实。
 - 为了跑通工具，让旧 plan_version 的 ToolResult 推进当前任务。
 - 为了赶进度，跳过 replay/eval scenario。
@@ -35,14 +36,14 @@ accepted
    - 小型 bugfix / demo UI 微调可以不新增 ADR，但不得违反已有 ADR。
 
 3. **No direct external model calls outside adapters**
-   - ASR、Thinker、Thinker-as-Composer、Slow LLM、TTS、Duplex model、Embedding/RAG 都必须通过 adapter。
+   - ASR、Thinker、Fast Interaction、Thinker-as-Composer、Slow LLM、TTS、Duplex model、Embedding/RAG 都必须通过 adapter。
    - 不允许业务模块直接调用 provider endpoint。
    - adapter 必须声明 capability matrix。
 
 4. **Event journal is mandatory for critical state transitions**
    - 关键状态迁移必须进入 per-session event journal。
    - 未被 event journal 记录的行为，不算通过 MVP slice 验证。
-   - interrupt、truncate、UserPatch、ToolCall、ToolResult、SemanticCommitment、SpokenPlan、UI state patch 必须可 replay。
+   - interrupt、truncate、UserPatch、ToolCall、ToolResult、SemanticCommitment、SpokenPlan、Fast foreground candidate/gate/output、UI state patch 必须可 replay。
    - MVP 事件命名以 ADR-002 canonical registry 为准；新增 MVP-relevant event 前必须更新 ADR。
 
 5. **No stale plan_version result advancing current task**
@@ -110,6 +111,7 @@ Reject or flag any change that:
 - calls external model services directly instead of using adapters
 - creates state transitions without event journal entries
 - introduces MVP event names not registered in ADR-002
+- bypasses ADR-017 Fast Foreground Gate for fast reply candidate display
 - accepts stale ToolResult into current plan without explicit adopt/rebase
 - bypasses ADR-016 confirmation / cancel / tool authorization gate
 - lets Composer rewrite SemanticCommitment facts
