@@ -62,7 +62,8 @@ Interaction / Turn Controller 是 deterministic state reducer / policy applier�
 - `INTERRUPT_CANDIDATE`
 - `TTS_TRUNCATE_REQUESTED`
 - `WAITING_USER`
-- `WAITING_CONFIRMATION`
+
+`WAITING_CONFIRMATION` 不属于 Interaction Controller 输出事件；confirmation 等待由 SlowTask 的 canonical `WAITING_FOR_USER_CONFIRMATION` / `CONFIRMATION_REQUIRED` 表达。Router / foreground UI 可以使用 `foreground_mode=WAITING_CONFIRMATION` 作为 metadata，但不得把它写成 event journal name。
 
 Task cancel / pause candidates are not Interaction Controller events in MVP. They are post-commit `task_focus=CANCEL_OR_PAUSE_CANDIDATE` metadata owned by Router and interpreted by SlowTask per ADR-006 / ADR-016.
 
@@ -158,11 +159,12 @@ Text input rules:
 
 ### 3. Post-Commit Semantic Routing
 
-ASRFrame / SemanticFrame 只参与 post-commit 阶段：
+ASRFrame / SemanticFrame / Fast Interaction output 只参与 post-commit 阶段：
 
 - Router 决定 FAST_ONLY / SPAWN_SLOW_TASK / PATCH_ACTIVE_SLOW_TASK / IGNORE
 - TaskFocusState 更新
 - ASR / Thinker 字段级冲突处理
+- Fast Interaction Adapter 产出非权威 route evidence / foreground act / reply candidate，最终展示仍由 ADR-017 Fast Foreground Gate 决定
 - UserPatch evidence pack 构造
 - SlowTask plan_version 更新
 - SemanticCommitment 生成
@@ -171,7 +173,7 @@ ASRFrame / SemanticFrame 只参与 post-commit 阶段：
 
 - Duplex 决定“这段实时输入是否像是对系统说的、是否结束、是否打断”。
 - Interaction / Turn Controller 决定“在当前状态下，系统是否接受这段输入、是否打开/提交 turn、是否中断输出”。
-- Thinker / ASR / Router / SlowTask 决定“这段已提交输入是什么意思、应该快答还是慢任务、是否 patch active task”。
+- Thinker / ASR / Fast Interaction / Router / SlowTask 决定“这段已提交输入是什么意思、应该快答还是慢任务、是否 patch active task、是否允许低风险前台候选输出”。
 
 ## Commit Boundary Definition
 
