@@ -148,6 +148,12 @@ Text input ingress policy for event journal:
 | Model adapter events | `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED` | Thinker Adapter | `adapter_id`, `adapter_type=thinker`, `adapter_request_id`, `turn_id`, `utterance_id`, `input_modality`, `semantic_frame_schema`, `normalization_status=normalized`, `semantic_frame_ref`, `semantic_summary_ref`, `semantic_close_status`, `assistant_directedness_status`, `emotion_status`, `audio_caption_status`, `output_mode=real|fallback|degraded` | caused by `TURN_INGRESS_COMMITTED`; missing semantic close, assistant-directedness, emotion, or audio caption must be paired with `ADAPTER_OUTPUT_DEGRADED` and must not be silently defaulted | false |
 | Model adapter events | `SLOW_LLM_STRUCTURED_OUTPUT_EMITTED` | Slow LLM Adapter | `adapter_id`, `adapter_type=slow_llm`, `adapter_request_id`, `task_id`, `plan_version`, `task_event_seq`, `schema_name=voice_agent.slowtask.structured_output.v1`, `normalization_status=normalized`, `slow_llm_output_ref`, `structured_output_ref`, `validation_result_ref`, `output_mode=real|fallback|degraded` | caused by the current SlowTask event that requested structured model output; SlowTask may consume only validated normalized refs/metadata, never provider-specific schema or raw payload | false |
 | Model adapter events | `TTS_SYNTHESIS_OUTPUT_EMITTED` | TTS Adapter | `adapter_id`, `adapter_type=tts`, `adapter_request_id`, `spoken_plan_id`, `approved_check_event_id`, `normalization_status=normalized`, `audio_ref` or `tts_stream_ref`, `audio_format_ref`, `synthesis_result_ref`, `truncate_status=supported|unsupported_blocked`, `output_mode=real|fallback|degraded` | caused by the passed SpokenPlan check that approved playback; MVP-3 playback must link to a prior TTS output by `tts_output_event_id` or unique safe ref match; playback may consume only safe audio refs/metadata, never raw audio bytes or provider payload; unsupported truncate must be paired with `ADAPTER_OUTPUT_DEGRADED` and must block barge-in truncate target validation | false |
+| Fast foreground events | `FAST_INTERACTION_OUTPUT_EMITTED` | Fast Interaction Adapter | `adapter_id`, `adapter_type=fast_interaction`, `adapter_request_id`, `turn_id`, `utterance_id`, `route_hint_ref`, `route_prelude_ref`, `foreground_act`, `final_fast_evidence_ref`, `schema_name`, `normalization_status=normalized`, `output_mode=real|mock|fallback|degraded` | caused by `TURN_INGRESS_COMMITTED` and available ASR / Thinker evidence; replay uses recorded refs and must not rerun provider | false |
+| Fast foreground events | `FOREGROUND_REPLY_CANDIDATE_EMITTED` | Fast Interaction Adapter / Foreground Buffer | `candidate_id`, `fast_interaction_output_event_id`, `turn_id`, `utterance_id`, `candidate_ref` or `reply_delta_stream_ref`, `candidate_status=complete|buffered_delta`, `risk_tags`, `confidence`, `trace_redaction_level` | caused by `FAST_INTERACTION_OUTPUT_EMITTED`; records candidate or buffered delta separately from final user-facing output | false |
+| Fast foreground events | `FOREGROUND_ACT_GATE_PASSED` | Fast Foreground Gate | `gate_decision_id`, `candidate_event_id`, `router_decision_event_id`, `foreground_act=ANSWER`, `risk_class=LOW`, `confidence`, `policy_version`, `pass_reason` | caused by `ROUTER_DECISION_EMITTED` plus fast interaction output; only permits low-risk `FAST_ONLY + ANSWER` candidate output | false |
+| Fast foreground events | `FOREGROUND_ACT_GATE_FAILED` | Fast Foreground Gate | `gate_decision_id`, `candidate_event_id` optional, `router_decision_event_id`, `foreground_act`, `risk_class`, `confidence`, `policy_version`, `failure_reason`, `downgrade_policy` optional | caused by `ROUTER_DECISION_EMITTED` plus fast interaction output; blocks candidate answer and may trigger template fallback, clarification, or silence | false |
+| Fast foreground events | `FOREGROUND_OUTPUT_COMMITTED` | Fast Foreground Gate / Foreground Output Runtime | `foreground_output_id`, `turn_id`, `utterance_id`, `output_ref`, `output_basis=reply_candidate|template_ack|template_clarify|silence_policy`, `gate_event_id` optional, `router_decision_event_id`, `user_visible_channel=text|audio_pending|ui` | caused by gate pass or gate-failed fallback policy; commits only the foreground output selected for user-facing display or later Talker playback | false |
+| Fast foreground events | `FOREGROUND_OUTPUT_DISCARDED` | Fast Foreground Gate / Foreground Buffer | `discard_id`, `candidate_event_id`, `fast_interaction_output_event_id`, `router_decision_event_id`, `discard_reason`, `replacement_output_event_id` optional | caused by gate failure, non-FAST route, non-ANSWER act, stale buffer, ignore, or ambiguity; explains why generated candidate was not shown | false |
 | Model adapter events | `MOCK_ASR_FRAME_EMITTED` | ASR Adapter | `turn_id`, `utterance_id`, `input_modality`, `asr_frame_ref`, `output_mode=mock` | caused by `TURN_INGRESS_COMMITTED` when ASR mock is used | true |
 | Model adapter events | `MOCK_THINKER_FRAME_EMITTED` | Thinker Adapter | `turn_id`, `utterance_id`, `semantic_frame_ref`, `output_mode=mock` | caused by `TURN_INGRESS_COMMITTED` when Thinker mock is used | true |
 | SlowTask events | `SLOWTASK_CREATED` | SlowTask Runtime | `task_id`, `plan_version`, `task_event_seq`, `initial_goal_ref` | caused by `ROUTER_DECISION_EMITTED` with spawn decision | false |
@@ -214,6 +220,7 @@ Replay foundation：
 - SlowTask 状态由 task events replay 重建。
 - Talker playback state 由 playback events replay 重建。
 - ASRFrame / SemanticFrame / ToolResult 在 replay 中默认使用记录值，不重新生成。
+- Fast foreground candidate、gate pass/fail、committed output、discarded output 在 replay 中默认使用记录值，不重新调用 Fast Interaction Adapter。
 - stale ToolResult policy 必须基于 `task_id + plan_version + task_event_seq + caused_by_event_id` 判断。
 
 MVP-0 至少需要记录以上 registry 中 `required_in_MVP_0=true` 或场景条件命中的事件。`required_in_MVP_0=false` 的 Duplex candidate 不是 happy-path hard requirement；只有当 hold / reject / directedness / semantic-close 场景被实现或测试时才必须记录。按族概括为：
@@ -258,6 +265,14 @@ MVP-3 canonical addendum:
 - Thinker adapter contract event: `THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED` for normalized SemanticFrame-compatible refs and metadata. Replay uses recorded refs and metadata only; it does not rerun the Thinker provider, and missing semantic close, assistant-directedness, emotion, or audio caption must be explicit degraded metadata rather than default values.
 - Slow LLM adapter contract event: `SLOW_LLM_STRUCTURED_OUTPUT_EMITTED` for validated normalized SlowTask-compatible refs and metadata. Replay uses recorded refs only; it does not rerun the Slow LLM provider, and invalid structured output must remain `ADAPTER_OUTPUT_VALIDATION_FAILED` evidence rather than downstream SlowTask input.
 - TTS adapter contract event: `TTS_SYNTHESIS_OUTPUT_EMITTED` for normalized playback-compatible audio refs and metadata. Replay uses recorded refs only; it does not rerun the TTS provider, does not require raw audio, and missing truncate capability must be explicit degraded/blocking metadata rather than a silent barge-in target validation pass. MVP-3 approved playback must bind to exactly one prior TTS output by explicit event id or unique safe ref match.
+
+Fast foreground canonical addendum (ADR-017):
+
+- Fast Interaction Adapter contract event: `FAST_INTERACTION_OUTPUT_EMITTED` for normalized route hint, route prelude, foreground act, and final fast evidence refs. Replay uses recorded refs only; it does not rerun the provider.
+- Foreground candidate event: `FOREGROUND_REPLY_CANDIDATE_EMITTED` records a candidate answer or buffered reply deltas before gate. Candidate text is not user-facing until a later gate pass and output commit.
+- Foreground gate events: `FOREGROUND_ACT_GATE_PASSED` and `FOREGROUND_ACT_GATE_FAILED` record deterministic runtime gate decisions. Only `FAST_ONLY + ANSWER + low risk + sufficient confidence` may pass.
+- Foreground output events: `FOREGROUND_OUTPUT_COMMITTED` records the selected user-facing foreground output; `FOREGROUND_OUTPUT_DISCARDED` records candidate discard / buffer discard / template downgrade reasons.
+- Shareable replay / GitHub fixture exports must not include raw audio, raw prompt, provider body, secrets, unredacted real user input, or large raw webSearch content from fast foreground events.
 
 后续 ADR 若新增 MVP-relevant event，必须同时更新本 registry 或明确声明该名称只是 payload enum / state value，而不是 journal event name。
 
@@ -340,6 +355,14 @@ MVP-2 必须验证：
 3. `TOOL_UI_STATE_PATCHED` replay 后能重建 demo frontend state。
 4. `PROGRESS_TRUTHFULNESS_CHECK_PASSED` / `FAILED` 和 `COMMITMENT_COVERAGE_CHECK_PASSED` / `FAILED` 在 replay 中可区分，并能解释 Talker playback 为什么被允许或阻止。
 5. trace safety events 不包含被 redacted / blocked 的原始 secret 值。
+
+Fast foreground path 必须验证：
+
+1. `FAST_INTERACTION_OUTPUT_EMITTED`、`FOREGROUND_REPLY_CANDIDATE_EMITTED`、gate event、最终 commit / discard event 能通过 `caused_by_event_id` 或 explicit event id 串成单一因果链。
+2. `FAST_ONLY + ANSWER + low risk + sufficient confidence` 可产生 `FOREGROUND_ACT_GATE_PASSED` 和 `FOREGROUND_OUTPUT_COMMITTED`。
+3. `SPAWN_SLOW_TASK`、`PATCH_ACTIVE_SLOW_TASK`、`IGNORE`、`AMBIGUOUS` 或 non-`ANSWER` act 必须产生 gate failed / discarded path，不能展示 candidate answer。
+4. streaming `reply_delta` 在 final gate pass 前不得出现 user-facing output；gate failed 或非 FAST route 必须记录 `FOREGROUND_OUTPUT_DISCARDED`。
+5. replay 不重新调用 Fast Interaction Adapter，且 shareable trace 不包含 raw audio、raw prompt、provider body、secret 或 unredacted real user input。
 
 ## Open Questions
 

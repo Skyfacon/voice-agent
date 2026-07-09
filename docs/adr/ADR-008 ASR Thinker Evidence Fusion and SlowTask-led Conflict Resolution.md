@@ -64,6 +64,7 @@ ASR、Thinker、Router、UserPatch pipeline 的职责是保留和传递证据，
 - `user_text`
 - `duplex`
 - `router`
+- `fast_interaction`
 - `slow_agent`
 - `tool_result`
 - `frontend_context`
@@ -77,6 +78,13 @@ Router 的职责：
 - 可以保守标注 `evidence_uncertainty`、`low_confidence_input`、`needs_slowtask_review_candidate`。
 - 对复杂任务或 active SlowTask patch，将 evidence pack 交给 SlowTask。
 - 对轻量 FAST_ONLY 场景，避免承诺不确定关键字段。
+
+ADR-017 引入的 Fast Interaction Adapter 仍遵守本 ADR 的 evidence fusion 边界：
+
+- `route_hint`、`route_prelude`、`final_fast_evidence` 是 Router / SlowTask 可参考的非权威证据。
+- `reply_candidate` 不参与复杂任务事实仲裁，也不得作为 SlowTask resolved arguments、confirmation state 或 SemanticCommitment facts。
+- 当 Router 产生 `SPAWN_SLOW_TASK` 或 `PATCH_ACTIVE_SLOW_TASK` 时，Fast Interaction Adapter 的 candidate answer 必须由 Fast Foreground Gate 丢弃或降级为模板承接；复杂任务事实仍由 SlowTask 审阅 evidence 后决定。
+- 当 ASR、Thinker、Fast Interaction output 彼此不一致时，Router 不选择字段 winner；复杂任务冲突仍交给 SlowTask-led review。
 
 SlowTask 的职责：
 
@@ -207,6 +215,6 @@ MVP-1 / MVP-2 必须验证：
 ## Open Questions
 
 - MVP-1 中 SlowTask ambiguity resolution 是 mock rule-based，还是由 Slow LLM structured output 实现？
-- FAST_ONLY 轻问答中是否需要一个简化版 uncertainty guardrail？
+- FAST_ONLY 轻问答的 uncertainty guardrail 由 ADR-017 Fast Foreground Gate 定义；本 ADR 仍约束复杂任务 evidence fusion。
 - provenance 是否需要字段级 normalized value，例如日期统一成 ISO format？
 - SlowTask 漏判歧义时，eval 如何标注 wrong resolution？
