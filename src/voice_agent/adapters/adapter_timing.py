@@ -69,7 +69,9 @@ class AdapterTimingRecorder:
         self._provider_request_started_ms = self._read_now_ms()
 
     def mark_provider_first_chunk(self) -> None:
-        self._provider_first_chunk_ms = self._read_now_ms()
+        first_chunk_ms = self._read_now_ms()
+        if self._provider_first_chunk_ms is None:
+            self._provider_first_chunk_ms = first_chunk_ms
 
     def mark_provider_full_response(self) -> None:
         self._provider_full_response_ms = self._read_now_ms()
@@ -82,11 +84,12 @@ class AdapterTimingRecorder:
         full_response_ms = self._provider_full_response_ms
 
         provider_ttft_ms = None
-        provider_generation_ms = None
         if request_started_ms is not None and first_chunk_ms is not None:
             provider_ttft_ms = first_chunk_ms - request_started_ms
-            if full_response_ms is not None:
-                provider_generation_ms = full_response_ms - first_chunk_ms
+
+        provider_generation_ms = None
+        if first_chunk_ms is not None and full_response_ms is not None:
+            provider_generation_ms = full_response_ms - first_chunk_ms
 
         provider_full_response_ms = None
         if request_started_ms is not None and full_response_ms is not None:

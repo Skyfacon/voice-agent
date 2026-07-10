@@ -69,6 +69,59 @@ def test_timing_metadata_is_scalar_and_prefixed() -> None:
     assert all(not isinstance(value, (dict, list, tuple, bytes, bytearray)) for value in metadata.values())
 
 
+def test_repeated_first_chunk_preserves_ttft_from_first_chunk() -> None:
+    now_values = iter([1000, 1010, 1030, 1050, 1090, 1100])
+    recorder = AdapterTimingRecorder(
+        turn_ingress_monotonic_ms=900,
+        now_ms=lambda: next(now_values),
+    )
+
+    recorder.mark_adapter_started()
+    recorder.mark_provider_request_started()
+    recorder.mark_provider_first_chunk()
+    recorder.mark_provider_first_chunk()
+    recorder.mark_provider_full_response()
+    snapshot = recorder.finish(parse_validate_emit_ms=10)
+
+    assert snapshot.provider_first_chunk_offset_ms == 130
+    assert snapshot.provider_ttft_ms == 20
+    assert snapshot.provider_generation_ms == 60
+
+
+def test_generation_is_available_without_request_start_when_first_and_full_exist() -> None:
+    now_values = iter([1000, 1040, 1120, 1130])
+    recorder = AdapterTimingRecorder(
+        turn_ingress_monotonic_ms=900,
+        now_ms=lambda: next(now_values),
+    )
+
+    recorder.mark_adapter_started()
+    recorder.mark_provider_first_chunk()
+    recorder.mark_provider_full_response()
+    snapshot = recorder.finish(parse_validate_emit_ms=10)
+
+    assert snapshot.provider_request_start_offset_ms is None
+    assert snapshot.provider_first_chunk_offset_ms == 140
+    assert snapshot.provider_full_response_offset_ms == 220
+    assert snapshot.provider_ttft_ms is None
+    assert snapshot.provider_full_response_ms is None
+    assert snapshot.provider_generation_ms == 80
+    assert snapshot.ttft_available is False
+    assert snapshot.ttft_source == "not_available"
+
+
+def test_fast_interaction_metadata_prefix_is_supported() -> None:
+    now_values = iter([10, 15, 30])
+    recorder = AdapterTimingRecorder(turn_ingress_monotonic_ms=0, now_ms=lambda: next(now_values))
+    recorder.mark_adapter_started()
+    recorder.mark_provider_full_response()
+
+    metadata = recorder.finish(parse_validate_emit_ms=3).to_prefixed_metadata("fast_interaction")
+
+    assert metadata["fast_interaction_provider_full_response_offset_ms"] == 15
+    assert metadata["fast_interaction_adapter_event_emit_offset_ms"] == 30
+
+
 def test_timing_metadata_rejects_unknown_prefix() -> None:
     now_values = iter([10, 20])
     recorder = AdapterTimingRecorder(turn_ingress_monotonic_ms=0, now_ms=lambda: next(now_values))
