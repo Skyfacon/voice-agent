@@ -9,6 +9,8 @@ import pytest
 
 from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
 from voice_agent.adapters.asr_live_transport import AsrLiveProviderCallMetadata
+from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
+from voice_agent.adapters.fast_interaction_live_transport import FastInteractionProviderCompletion
 from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_MODEL_ALIAS
 import voice_agent.runtime.mvp5_live_voice_evidence as live_voice_evidence_module
 from voice_agent.runtime.mvp5_real_voice_e2e_smoke import (
@@ -66,6 +68,53 @@ def test_single_wav_smoke_outputs_metadata_only_actual_router_outcome(
     assert str(wav_path) not in rendered
     assert wav_path.name not in rendered
     assert "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK" not in rendered
+    assert base64.b64encode(wav_bytes).decode("ascii") not in rendered
+
+
+def test_single_fast_interaction_primary_uses_one_audio_native_provider_call(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "private-fast-interaction-input.wav"
+    wav_bytes = _write_wav_file(wav_path)
+    fast_transport = _FakeFastInteractionTransport()
+
+    metadata = run_mvp5_real_voice_e2e_single(
+        local_wav=wav_path,
+        live_provider=True,
+        allow_local_wav=True,
+        approval_packet=_fast_approval_packet(max_provider_calls=1),
+        expected_route="FAST_ONLY",
+        run_id="mvp63-goal4-single-fast-interaction",
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_ExplodingAsrTransport(),
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport,
+        fast_interaction_enabled=True,
+        audio_native_thinker_enabled=False,
+    )
+
+    rendered = json.dumps(metadata, sort_keys=True)
+    latency_debug = metadata["latency_debug"]
+    assert metadata["status"] == "routed"
+    assert metadata["actual_route"] == "FAST_ONLY"
+    assert metadata["route_result_kind"] == "direct_answer"
+    assert metadata["asr_output_mode"] is None
+    assert metadata["thinker_output_mode"] is None
+    assert metadata["fast_interaction_output_mode"] == "real"
+    assert metadata["foreground_gate_decision"] == "passed"
+    assert metadata["foreground_output_basis"] == "reply_candidate"
+    assert metadata["evidence_ref_policy"] == "preserve_fast_ref"
+    assert metadata["provider_call_used"] is False
+    assert metadata["fake_transport_used"] is True
+    assert latency_debug["fast_interaction_input_mode"] == "audio_native"
+    assert latency_debug["fast_interaction_provider_ttft_ms"] == 20
+    assert latency_debug["fast_interaction_total_ms"] >= 0
+    assert fast_transport.call_count == 1
+    assert fast_transport.input_mode_seen == "audio_native"
+    assert str(wav_path) not in rendered
+    assert wav_path.name not in rendered
+    assert "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK" not in rendered
+    assert "A tiny safe spooky story." not in rendered
     assert base64.b64encode(wav_bytes).decode("ascii") not in rendered
 
 
@@ -486,6 +535,74 @@ def _fake_asr_transport(route_slug: str) -> FakeAsrTransport:
     )
 
 
+class _FakeFastInteractionTransport:
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.input_mode_seen: str | None = None
+
+    def complete_audio_with_timing(
+        self,
+        *,
+        request_payload: dict[str, object],
+        audio_bytes: bytes,
+        audio_format: str,
+        credential_handle: object,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+        turn_ingress_monotonic_ms: int,
+    ) -> FastInteractionProviderCompletion:
+        self.call_count += 1
+        self.input_mode_seen = str(request_payload["input_mode"])
+        assert self.input_mode_seen == "audio_native"
+        assert audio_bytes
+        assert audio_format == "wav"
+        assert credential_value.startswith("DUMMY_TEST_CREDENTIAL")
+        assert adapter_request_id.startswith("adapter-request-mvp63-fast-interaction-")
+        assert timeout_ms == 1_500
+        assert model_alias == "qwen3.5-fast-interaction"
+        assert turn_ingress_monotonic_ms > 0
+        assert "secret_materialized=False" in repr(credential_handle)
+        return FastInteractionProviderCompletion(
+            provider_text=json.dumps(
+                {
+                    "schema_name": "voice_agent.fast_interaction.output.v1",
+                    "route_hint": {"router_decision_candidate": "FAST_ONLY"},
+                    "route_prelude": {"summary": "single smoke fast interaction"},
+                    "foreground_act": "ANSWER",
+                    "reply_candidate": "A tiny safe spooky story.",
+                    "final_fast_evidence": {"label": "single_smoke"},
+                    "risk_tags": ["low_risk", "no_side_effects"],
+                    "risk_class": "LOW",
+                    "confidence": 0.91,
+                    "output_mode": "real",
+                    "boundary_assertions": {
+                        "candidate_is_not_semantic_commitment": True,
+                        "may_authorize_tools": False,
+                        "may_execute_tools": False,
+                        "may_accept_confirmation": False,
+                        "may_mutate_slowtask_facts": False,
+                        "runtime_gate_owns_display": True,
+                    },
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            timing=_fast_timing_snapshot(),
+        )
+
+
+class _ExplodingAsrTransport:
+    def transcribe(self, **_kwargs: object) -> object:
+        raise AssertionError("ASR must not run in MVP6.3 audio-native fast primary path")
+
+
+class _ExplodingThinkerTransport:
+    def complete_audio(self, **_kwargs: object) -> str:
+        raise AssertionError("audio-native Thinker must not run in MVP6.3 fast primary path")
+
+
 class _FakeThinkerAudioTransport:
     def __init__(self, *, fake_route: str) -> None:
         self.fake_route = fake_route
@@ -559,6 +676,40 @@ def _approval_packet(*, max_provider_calls: int = 2) -> dict[str, object]:
         "timeout_ms": 30_000,
         "safe_output_ref": "summary://mvp5/goal4/real-voice-e2e-test",
     }
+
+
+def _fast_approval_packet(*, max_provider_calls: int = 1) -> dict[str, object]:
+    return {
+        "approval_id": "mvp63-live-smoke-fast-interaction-test",
+        "live_provider_opt_in": True,
+        "local_wav_opt_in": True,
+        "metadata_only_output": True,
+        "replay_reruns_provider": False,
+        "provider_adapter_ids": ["mvp63_fast_interaction_runtime"],
+        "credential_env_var_name": "MVP63_TEST_PROVIDER_KEY",
+        "max_provider_calls": max_provider_calls,
+        "timeout_ms": 1_500,
+        "safe_output_ref": "summary://mvp63/goal4/fast-interaction-e2e-test",
+    }
+
+
+def _fast_timing_snapshot() -> AdapterTimingSnapshot:
+    return AdapterTimingSnapshot(
+        adapter_start_offset_ms=0,
+        provider_request_start_offset_ms=5,
+        provider_first_chunk_offset_ms=25,
+        provider_full_response_offset_ms=65,
+        adapter_event_emit_offset_ms=70,
+        provider_ttft_ms=20,
+        provider_full_response_ms=60,
+        provider_generation_ms=40,
+        stream_decode_ms=0,
+        parse_validate_emit_ms=0,
+        total_ms=70,
+        timing_mode="streaming",
+        ttft_available=True,
+        ttft_source="provider_stream_chunk",
+    )
 
 
 class _ConstructedRealAsrTransport:

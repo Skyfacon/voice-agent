@@ -100,3 +100,15 @@ def test_adapter_callback_boundary_owns_callback_sequence_metadata() -> None:
             output_mode="real",
             adapter_callback_seq=99,
         )
+
+
+def test_adapter_callback_boundary_preflights_duplicate_event_ids() -> None:
+    boundary = AdapterCallbackAppendBoundary(make_started_journal())
+
+    boundary.require_event_ids_available(
+        "evt_mvp3_callback_boundary_available_for_preflight",
+    )
+    with pytest.raises(AdapterCallbackBoundaryError, match="Duplicate event_id"):
+        boundary.require_event_ids_available(
+            "evt_mvp3_callback_boundary_session_started",
+        )

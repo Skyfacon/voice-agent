@@ -173,10 +173,7 @@ def test_emit_output_with_reply_candidate_appends_output_then_candidate() -> Non
     assert emitted[1]["candidate_status"] == "complete"
     assert emitted[1]["input_mode"] == "asr_text_fallback"
     assert emitted[1]["fast_interaction_input_mode"] == "asr_text_fallback"
-    assert emitted[1]["source_event_ids"] == (
-        turn["event_id"],
-        asr_output["event_id"],
-    )
+    assert emitted[1]["source_event_ids"] == (emitted[0]["event_id"],)
     assert emitted[1]["risk_tags"] == ("low_risk", "no_side_effects")
     assert emitted[1]["confidence"] == 0.91
     assert emitted[1]["trace_redaction_level"] == "metadata_only"
@@ -241,7 +238,9 @@ def test_emit_audio_native_output_uses_turn_source_and_sanitized_timing_metadata
     assert emission.candidate_event is not None
     assert emission.candidate_event["input_mode"] == "audio_native"
     assert emission.candidate_event["fast_interaction_input_mode"] == "audio_native"
-    assert emission.candidate_event["source_event_ids"] == (turn["event_id"],)
+    assert emission.candidate_event["source_event_ids"] == (
+        emission.output_event["event_id"],
+    )
 
 
 @pytest.mark.parametrize(

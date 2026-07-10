@@ -1,6 +1,24 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import wave
+
+from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
+from voice_agent.adapters.fast_interaction_live_transport import (
+    FastInteractionLiveTransportError,
+    FastInteractionProviderCompletion,
+)
+from voice_agent.replay.runner import run_replay_fixture
+from voice_agent.runtime.mvp5_live_router_runner import (
+    MVP5ActiveSlowTaskContext,
+    MVP5LiveRouterConfig,
+    run_mvp5_live_router_runner,
+)
+from voice_agent.runtime.mvp5_live_voice_evidence import (
+    MVP5LiveVoiceEvidenceConfig,
+    run_mvp5_live_voice_evidence,
+)
 
 
 SCENARIOS = (
@@ -12,6 +30,14 @@ SCENARIOS = (
     "MVP6-QA-HISTORY-001",
     "MVP6-SAFETY-REDACTION-001",
     "MVP6-NO-ARCHITECTURE-EXPANSION-001",
+)
+MVP63_SCENARIOS = (
+    "MVP6.3-LIVE-FAST-ANSWER-PASS-001",
+    "MVP6.3-LIVE-FAST-TIMEOUT-FALLBACK-001",
+    "MVP6.3-LIVE-SLOW-DISCARD-TEMPLATE-001",
+    "MVP6.3-LIVE-PATCH-DISCARD-TEMPLATE-001",
+    "MVP6.3-REPLAY-NO-PROVIDER-RERUN-001",
+    "MVP6.3-SAFETY-EXPORT-001",
 )
 
 
@@ -75,3 +101,341 @@ def test_mvp6_operating_doc_includes_command_and_approval_template() -> None:
     )
     for phrase in required_phrases:
         assert phrase in doc
+
+
+def test_mvp63_manual_doc_lists_all_acceptance_scenarios() -> None:
+    doc = Path("docs/implementation/mvp6.3-live-fast-interaction-manual-debug.md").read_text(
+        encoding="utf-8"
+    )
+    for scenario in MVP63_SCENARIOS:
+        assert scenario in doc
+
+
+def test_mvp63_live_fast_answer_pass_acceptance(tmp_path: Path) -> None:
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-LIVE-FAST-ANSWER-PASS-001",
+        route_decision_candidate="FAST_ONLY",
+        foreground_act="ANSWER",
+    )
+    result = run_mvp5_live_router_runner(
+        evidence,
+        config=MVP5LiveRouterConfig(
+            run_id="mvp63-acceptance-fast-answer-pass",
+            expected_route="FAST_ONLY",
+        ),
+    )
+    metadata = result.to_metadata()
+
+    assert metadata["router_decision"] == "FAST_ONLY"
+    assert metadata["foreground_gate_decision"] == "passed"
+    assert metadata["foreground_output_basis"] == "reply_candidate"
+    assert "SLOWTASK_CREATED" not in metadata["event_names"]
+    assert "USER_PATCH_RECEIVED" not in metadata["event_names"]
+    _assert_acceptance_safe(metadata)
+
+
+def test_mvp63_live_fast_timeout_fallback_acceptance(tmp_path: Path) -> None:
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-LIVE-FAST-TIMEOUT-FALLBACK-001",
+        route_decision_candidate="FAST_ONLY",
+        foreground_act="ANSWER",
+        fast_transport=_FailingFastInteractionTransport(
+            FastInteractionLiveTransportError(
+                "provider response DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK",
+                category="provider_timeout",
+                failure_reasons=("provider_timeout",),
+            )
+        ),
+    )
+    metadata = evidence.to_metadata()
+    event_names = metadata["event_names"]
+
+    assert metadata["status"] == "evidence_failed"
+    assert metadata["latency_debug"]["fast_interaction_timed_out"] is True
+    assert "ADAPTER_REQUEST_FAILED" in event_names
+    assert "FAST_INTERACTION_OUTPUT_EMITTED" not in event_names
+    assert "FOREGROUND_OUTPUT_COMMITTED" not in event_names
+    _assert_acceptance_safe(metadata)
+
+
+def test_mvp63_live_slow_discard_template_acceptance(tmp_path: Path) -> None:
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-LIVE-SLOW-DISCARD-TEMPLATE-001",
+        route_decision_candidate="SPAWN_SLOW_TASK",
+        foreground_act="ACK_SLOW",
+    )
+    result = run_mvp5_live_router_runner(
+        evidence,
+        config=MVP5LiveRouterConfig(
+            run_id="mvp63-acceptance-slow-discard-template",
+            expected_route="SPAWN_SLOW_TASK",
+        ),
+    )
+    metadata = result.to_metadata()
+
+    assert metadata["router_decision"] == "SPAWN_SLOW_TASK"
+    assert metadata["foreground_gate_decision"] == "failed"
+    assert metadata["foreground_output_basis"] == "template_ack"
+    assert "FOREGROUND_OUTPUT_DISCARDED" in metadata["event_names"]
+    assert "SLOWTASK_CREATED" in metadata["event_names"]
+    _assert_acceptance_safe(metadata)
+
+
+def test_mvp63_live_patch_discard_template_acceptance(tmp_path: Path) -> None:
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-LIVE-PATCH-DISCARD-TEMPLATE-001",
+        route_decision_candidate="PATCH_ACTIVE_SLOW_TASK",
+        foreground_act="ACK_PATCH",
+    )
+    result = run_mvp5_live_router_runner(
+        evidence,
+        config=MVP5LiveRouterConfig(
+            run_id="mvp63-acceptance-patch-discard-template",
+            expected_route="PATCH_ACTIVE_SLOW_TASK",
+            active_task_context=MVP5ActiveSlowTaskContext(
+                task_id="task_mvp63_acceptance_active",
+                current_plan_version=1,
+                current_task_event_seq=1,
+            ),
+        ),
+    )
+    metadata = result.to_metadata()
+
+    assert metadata["router_decision"] == "PATCH_ACTIVE_SLOW_TASK"
+    assert metadata["foreground_gate_decision"] == "failed"
+    assert metadata["foreground_output_basis"] == "template_ack"
+    assert metadata["status"] == "blocked_missing_thinker_patch_evidence"
+    assert "FOREGROUND_OUTPUT_DISCARDED" in metadata["event_names"]
+    assert "USER_PATCH_RECEIVED" not in metadata["event_names"]
+    _assert_acceptance_safe(metadata)
+
+
+def test_mvp63_replay_no_provider_rerun_acceptance(tmp_path: Path) -> None:
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-REPLAY-NO-PROVIDER-RERUN-001",
+        route_decision_candidate="FAST_ONLY",
+        foreground_act="ANSWER",
+    )
+    result = run_mvp5_live_router_runner(
+        evidence,
+        config=MVP5LiveRouterConfig(
+            run_id="mvp63-acceptance-replay-no-provider-rerun",
+            expected_route="FAST_ONLY",
+        ),
+    )
+    fixture = _fixture_from_events(result.events)
+    replay = run_replay_fixture(fixture)
+
+    assert replay.result_status == "passed"
+    assert result.to_metadata()["replay_reruns_provider"] is False
+    _assert_acceptance_safe(fixture)
+
+
+def test_mvp63_safety_export_acceptance(tmp_path: Path) -> None:
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-SAFETY-EXPORT-001",
+        route_decision_candidate="FAST_ONLY",
+        foreground_act="ANSWER",
+    )
+    result = run_mvp5_live_router_runner(
+        evidence,
+        config=MVP5LiveRouterConfig(
+            run_id="mvp63-acceptance-safety-export",
+            expected_route="FAST_ONLY",
+        ),
+    )
+
+    _assert_acceptance_safe(evidence.to_metadata())
+    _assert_acceptance_safe(result.to_metadata())
+
+
+def _fast_evidence(
+    tmp_path: Path,
+    *,
+    scenario_id: str,
+    route_decision_candidate: str,
+    foreground_act: str,
+    fast_transport: object | None = None,
+):
+    slug = _slug(scenario_id)
+    wav_path = tmp_path / f"{slug}.wav"
+    _write_wav_file(wav_path)
+    return run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id=f"mvp63-acceptance-{slug}",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_fast_approval_packet(),
+            credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+            requested_provider_calls=1,
+            max_provider_calls=1,
+            timeout_ms=1500,
+            fast_interaction_enabled=True,
+            audio_native_thinker_enabled=False,
+            fast_interaction_timeout_ms=1500,
+        ),
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_ExplodingAsrTransport(),
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport
+        or _FakeFastInteractionTransport(
+            route_decision_candidate=route_decision_candidate,
+            foreground_act=foreground_act,
+        ),
+    )
+
+
+class _FakeFastInteractionTransport:
+    def __init__(self, *, route_decision_candidate: str, foreground_act: str) -> None:
+        self.route_decision_candidate = route_decision_candidate
+        self.foreground_act = foreground_act
+
+    def complete_audio_with_timing(self, **kwargs: object) -> FastInteractionProviderCompletion:
+        assert str(kwargs["credential_value"]).startswith("DUMMY_TEST_CREDENTIAL")
+        assert kwargs["timeout_ms"] == 1500
+        return FastInteractionProviderCompletion(
+            provider_text=json.dumps(
+                {
+                    "schema_name": "voice_agent.fast_interaction.output.v1",
+                    "route_hint": {"router_decision_candidate": self.route_decision_candidate},
+                    "route_prelude": {"summary": "acceptance route"},
+                    "foreground_act": self.foreground_act,
+                    "reply_candidate": "A tiny safe spooky story.",
+                    "final_fast_evidence": {"label": "acceptance"},
+                    "risk_tags": ["low_risk", "no_side_effects"],
+                    "risk_class": "LOW",
+                    "confidence": 0.91,
+                    "output_mode": "real",
+                    "boundary_assertions": {
+                        "candidate_is_not_semantic_commitment": True,
+                        "may_authorize_tools": False,
+                        "may_execute_tools": False,
+                        "may_accept_confirmation": False,
+                        "may_mutate_slowtask_facts": False,
+                        "runtime_gate_owns_display": True,
+                    },
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            timing=_fast_timing_snapshot(),
+        )
+
+
+class _FailingFastInteractionTransport:
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def complete_audio_with_timing(self, **_kwargs: object) -> FastInteractionProviderCompletion:
+        raise self._exc
+
+
+class _ExplodingAsrTransport:
+    def transcribe(self, **_kwargs: object) -> object:
+        raise AssertionError("ASR must not run in MVP6.3 audio-native fast primary path")
+
+
+class _ExplodingThinkerTransport:
+    def complete_audio(self, **_kwargs: object) -> str:
+        raise AssertionError("audio-native thinker must not run in MVP6.3 acceptance fast path")
+
+
+def _fixture_from_events(events: tuple[dict[str, object], ...]) -> dict[str, object]:
+    return {
+        "replay_manifest": {
+            "manifest_schema_version": "1.0",
+            "replay_id": "mvp63_acceptance_fast_replay",
+            "source_trace_ref": "fixture://mvp63/acceptance/fast-replay",
+            "replay_mode": "deterministic",
+            "event_schema_version_range": ["1.0"],
+            "fixture_domain": "GITHUB_ALLOWED",
+            "generated_from": "synthetic",
+            "contains_raw_audio": False,
+            "contains_raw_trace": False,
+            "contains_real_user_input": False,
+            "contains_secrets": False,
+            "contains_unredacted_tool_result": False,
+            "contains_large_raw_web_content": False,
+            "allowed_re_eval_components": [],
+        },
+        "events": [dict(event) for event in events],
+    }
+
+
+def _fast_approval_packet() -> dict[str, object]:
+    return {
+        "approval_id": "mvp63-acceptance-fast-interaction",
+        "live_provider_opt_in": True,
+        "local_wav_opt_in": True,
+        "metadata_only_output": True,
+        "replay_reruns_provider": False,
+        "provider_adapter_ids": ["mvp63_fast_interaction_runtime"],
+        "credential_env_var_name": "MVP63_TEST_PROVIDER_KEY",
+        "max_provider_calls": 1,
+        "timeout_ms": 1500,
+        "safe_output_ref": "summary://mvp63/acceptance/fast-interaction",
+    }
+
+
+def _fast_timing_snapshot() -> AdapterTimingSnapshot:
+    return AdapterTimingSnapshot(
+        adapter_start_offset_ms=0,
+        provider_request_start_offset_ms=5,
+        provider_first_chunk_offset_ms=25,
+        provider_full_response_offset_ms=65,
+        adapter_event_emit_offset_ms=70,
+        provider_ttft_ms=20,
+        provider_full_response_ms=60,
+        provider_generation_ms=40,
+        stream_decode_ms=0,
+        parse_validate_emit_ms=0,
+        total_ms=70,
+        timing_mode="streaming",
+        ttft_available=True,
+        ttft_source="provider_stream_chunk",
+    )
+
+
+def _assert_acceptance_safe(value: object) -> None:
+    rendered = json.dumps(value, sort_keys=True)
+    for unsafe in (
+        '"raw_audio":',
+        "raw_audio_bytes",
+        '"provider_body":',
+        '"provider_request":',
+        '"provider_response":',
+        '"prompt_dump":',
+        "provider body",
+        "provider request",
+        "provider response",
+        "prompt dump",
+        "DUMMY_TEST_CREDENTIAL",
+        "diagnostics/",
+        "traces/",
+        "replays/local/",
+        "/Users/",
+        "/private/",
+        "A tiny safe spooky story.",
+    ):
+        assert unsafe not in rendered
+
+
+def _write_wav_file(path: Path) -> bytes:
+    frames = b"\x00\x00" * 160
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(frames)
+    return path.read_bytes()
+
+
+def _slug(value: str) -> str:
+    return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-") or "unknown"

@@ -545,6 +545,12 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
     asr_events: dict[tuple[str, str], str] = {}
     thinker_events: dict[tuple[str, str], str] = {}
     fast_interaction_events: dict[tuple[str, str], str] = {}
+    fast_interaction_events_by_id: dict[str, Mapping[str, Any]] = {}
+    foreground_candidates_by_id: dict[str, Mapping[str, Any]] = {}
+    router_events_by_id: dict[str, Mapping[str, Any]] = {}
+    foreground_gate_events_by_id: dict[str, Mapping[str, Any]] = {}
+    committed_foreground_event_ids: set[str] = set()
+    pending_replacement_output_event_ids: list[str] = []
 
     for event in ordered_events:
         event_name = str(event["event_name"])
@@ -567,6 +573,7 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 raise ReplayValidationError(f"{event_name} must be caused by TURN_INGRESS_COMMITTED")
             thinker_events[key] = str(event["event_id"])
         elif event_name == "FAST_INTERACTION_OUTPUT_EMITTED":
+            _validate_fast_foreground_replay_payload(event)
             key = _turn_key(event)
             input_mode = _fast_interaction_input_mode(event)
             committed_event_id = committed_turn_events.get(key)
@@ -589,7 +596,17 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                     raise ReplayValidationError(
                         "ASR-text fallback FAST_INTERACTION_OUTPUT_EMITTED must be caused by prior ASR evidence"
                     )
-            fast_interaction_events[key] = str(event["event_id"])
+            event_id = str(event["event_id"])
+            fast_interaction_events[key] = event_id
+            fast_interaction_events_by_id[event_id] = event
+        elif event_name == "FOREGROUND_REPLY_CANDIDATE_EMITTED":
+            _validate_fast_foreground_replay_payload(event)
+            _validate_foreground_candidate_replay_chain(
+                event=event,
+                committed_turn_events=committed_turn_events,
+                fast_interaction_events_by_id=fast_interaction_events_by_id,
+            )
+            foreground_candidates_by_id[str(event["event_id"])] = event
         elif event_name == "ROUTER_DECISION_EMITTED":
             key = _turn_key(event)
             if key not in committed_turn_events:
@@ -625,6 +642,340 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED fast_interaction_output_event_id must reference prior Fast Interaction evidence"
                 )
+            router_events_by_id[str(event["event_id"])] = event
+        elif event_name in {"FOREGROUND_ACT_GATE_PASSED", "FOREGROUND_ACT_GATE_FAILED"}:
+            _validate_foreground_gate_replay_chain(
+                event=event,
+                foreground_candidates_by_id=foreground_candidates_by_id,
+                router_events_by_id=router_events_by_id,
+                fast_interaction_events_by_id=fast_interaction_events_by_id,
+            )
+            foreground_gate_events_by_id[str(event["event_id"])] = event
+        elif event_name == "FOREGROUND_OUTPUT_DISCARDED":
+            replacement_output_event_id = _validate_foreground_discard_replay_chain(
+                event=event,
+                foreground_candidates_by_id=foreground_candidates_by_id,
+                router_events_by_id=router_events_by_id,
+                fast_interaction_events_by_id=fast_interaction_events_by_id,
+                foreground_gate_events_by_id=foreground_gate_events_by_id,
+            )
+            if replacement_output_event_id is not None:
+                pending_replacement_output_event_ids.append(replacement_output_event_id)
+        elif event_name == "FOREGROUND_OUTPUT_COMMITTED":
+            _validate_foreground_commit_replay_chain(
+                event=event,
+                router_events_by_id=router_events_by_id,
+                foreground_candidates_by_id=foreground_candidates_by_id,
+                foreground_gate_events_by_id=foreground_gate_events_by_id,
+            )
+            committed_foreground_event_ids.add(str(event["event_id"]))
+
+    for replacement_output_event_id in pending_replacement_output_event_ids:
+        if replacement_output_event_id not in committed_foreground_event_ids:
+            raise ReplayValidationError(
+                "FOREGROUND_OUTPUT_DISCARDED replacement_output_event_id must reference "
+                "a FOREGROUND_OUTPUT_COMMITTED event"
+            )
+
+
+def _validate_foreground_candidate_replay_chain(
+    *,
+    event: Mapping[str, Any],
+    committed_turn_events: Mapping[tuple[str, str], str],
+    fast_interaction_events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    key = _turn_key(event)
+    if key not in committed_turn_events:
+        raise ReplayValidationError(
+            "FOREGROUND_REPLY_CANDIDATE_EMITTED requires prior TURN_INGRESS_COMMITTED"
+        )
+    fast_event_id = _required_event_ref(
+        event,
+        "fast_interaction_output_event_id",
+        "FOREGROUND_REPLY_CANDIDATE_EMITTED",
+    )
+    fast_event = fast_interaction_events_by_id.get(fast_event_id)
+    if fast_event is None:
+        raise ReplayValidationError(
+            "FOREGROUND_REPLY_CANDIDATE_EMITTED fast_interaction_output_event_id must "
+            "reference prior FAST_INTERACTION_OUTPUT_EMITTED"
+        )
+    if event.get("caused_by_event_id") != fast_event_id:
+        raise ReplayValidationError(
+            "FOREGROUND_REPLY_CANDIDATE_EMITTED must be caused by FAST_INTERACTION_OUTPUT_EMITTED"
+        )
+    _require_same_turn(
+        event,
+        fast_event,
+        "FOREGROUND_REPLY_CANDIDATE_EMITTED",
+        "FAST_INTERACTION_OUTPUT_EMITTED",
+    )
+    input_mode = _fast_interaction_input_mode(event)
+    fast_input_mode = _fast_interaction_input_mode(fast_event)
+    if input_mode != fast_input_mode:
+        raise ReplayValidationError(
+            "FOREGROUND_REPLY_CANDIDATE_EMITTED input_mode must match FAST_INTERACTION_OUTPUT_EMITTED"
+        )
+    source_event_ids = _string_set_for_refs(
+        event.get("source_event_ids"),
+        error_prefix="FOREGROUND_REPLY_CANDIDATE_EMITTED source_event_ids",
+    )
+    if fast_event_id not in source_event_ids:
+        raise ReplayValidationError(
+            "FOREGROUND_REPLY_CANDIDATE_EMITTED source_event_ids must include "
+            "FAST_INTERACTION_OUTPUT_EMITTED"
+        )
+
+
+def _validate_foreground_gate_replay_chain(
+    *,
+    event: Mapping[str, Any],
+    foreground_candidates_by_id: Mapping[str, Mapping[str, Any]],
+    router_events_by_id: Mapping[str, Mapping[str, Any]],
+    fast_interaction_events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    candidate_event_id = _required_event_ref(event, "candidate_event_id", str(event["event_name"]))
+    router_event_id = _required_event_ref(
+        event,
+        "router_decision_event_id",
+        str(event["event_name"]),
+    )
+    candidate_event = foreground_candidates_by_id.get(candidate_event_id)
+    if candidate_event is None:
+        raise ReplayValidationError(f"{event['event_name']} candidate_event_id must reference prior candidate")
+    router_event = router_events_by_id.get(router_event_id)
+    if router_event is None:
+        raise ReplayValidationError(
+            f"{event['event_name']} router_decision_event_id must reference prior Router decision"
+        )
+    if event.get("caused_by_event_id") != router_event_id:
+        raise ReplayValidationError(f"{event['event_name']} must be caused by ROUTER_DECISION_EMITTED")
+    fast_event_id = _required_event_ref(
+        candidate_event,
+        "fast_interaction_output_event_id",
+        "FOREGROUND_REPLY_CANDIDATE_EMITTED",
+    )
+    fast_event = fast_interaction_events_by_id.get(fast_event_id)
+    if fast_event is None:
+        raise ReplayValidationError(f"{event['event_name']} candidate must reference prior Fast Interaction output")
+    if router_event.get("fast_interaction_output_event_id") != fast_event_id:
+        raise ReplayValidationError(f"{event['event_name']} Router decision must reference candidate Fast Interaction output")
+    _require_same_turn(
+        candidate_event,
+        fast_event,
+        str(event["event_name"]),
+        "FAST_INTERACTION_OUTPUT_EMITTED",
+    )
+    _require_same_turn(
+        router_event,
+        fast_event,
+        str(event["event_name"]),
+        "FAST_INTERACTION_OUTPUT_EMITTED",
+    )
+    if event["event_name"] == "FOREGROUND_ACT_GATE_PASSED":
+        if router_event.get("router_decision") != "FAST_ONLY":
+            raise ReplayValidationError("FOREGROUND_ACT_GATE_PASSED requires FAST_ONLY Router decision")
+        if router_event.get("task_focus") == "AMBIGUOUS":
+            raise ReplayValidationError("FOREGROUND_ACT_GATE_PASSED rejects AMBIGUOUS task_focus")
+        if event.get("foreground_act") != "ANSWER":
+            raise ReplayValidationError("FOREGROUND_ACT_GATE_PASSED requires foreground_act=ANSWER")
+        if event.get("risk_class") != "LOW":
+            raise ReplayValidationError("FOREGROUND_ACT_GATE_PASSED requires risk_class=LOW")
+
+
+def _validate_foreground_discard_replay_chain(
+    *,
+    event: Mapping[str, Any],
+    foreground_candidates_by_id: Mapping[str, Mapping[str, Any]],
+    router_events_by_id: Mapping[str, Mapping[str, Any]],
+    fast_interaction_events_by_id: Mapping[str, Mapping[str, Any]],
+    foreground_gate_events_by_id: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    candidate_event_id = _required_event_ref(
+        event,
+        "candidate_event_id",
+        "FOREGROUND_OUTPUT_DISCARDED",
+    )
+    fast_event_id = _required_event_ref(
+        event,
+        "fast_interaction_output_event_id",
+        "FOREGROUND_OUTPUT_DISCARDED",
+    )
+    router_event_id = _required_event_ref(
+        event,
+        "router_decision_event_id",
+        "FOREGROUND_OUTPUT_DISCARDED",
+    )
+    gate_event_id = _required_event_ref(
+        event,
+        "caused_by_event_id",
+        "FOREGROUND_OUTPUT_DISCARDED",
+    )
+    candidate_event = foreground_candidates_by_id.get(candidate_event_id)
+    fast_event = fast_interaction_events_by_id.get(fast_event_id)
+    router_event = router_events_by_id.get(router_event_id)
+    gate_event = foreground_gate_events_by_id.get(gate_event_id)
+    if candidate_event is None:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_DISCARDED candidate_event_id must reference prior candidate")
+    if fast_event is None:
+        raise ReplayValidationError(
+            "FOREGROUND_OUTPUT_DISCARDED fast_interaction_output_event_id must reference prior Fast Interaction output"
+        )
+    if router_event is None:
+        raise ReplayValidationError(
+            "FOREGROUND_OUTPUT_DISCARDED router_decision_event_id must reference prior Router decision"
+        )
+    if gate_event is None or gate_event.get("event_name") != "FOREGROUND_ACT_GATE_FAILED":
+        raise ReplayValidationError("FOREGROUND_OUTPUT_DISCARDED must be caused by FOREGROUND_ACT_GATE_FAILED")
+    if candidate_event.get("fast_interaction_output_event_id") != fast_event_id:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_DISCARDED candidate must match discarded Fast Interaction output")
+    if router_event.get("fast_interaction_output_event_id") != fast_event_id:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_DISCARDED Router decision must match discarded Fast Interaction output")
+    if gate_event.get("candidate_event_id") != candidate_event_id:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_DISCARDED gate must reference discarded candidate")
+    if gate_event.get("router_decision_event_id") != router_event_id:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_DISCARDED gate must reference discarded Router decision")
+    replacement_output_event_id = event.get("replacement_output_event_id")
+    if replacement_output_event_id in (None, ""):
+        return None
+    return str(replacement_output_event_id)
+
+
+def _validate_foreground_commit_replay_chain(
+    *,
+    event: Mapping[str, Any],
+    router_events_by_id: Mapping[str, Mapping[str, Any]],
+    foreground_candidates_by_id: Mapping[str, Mapping[str, Any]],
+    foreground_gate_events_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    router_event_id = _required_event_ref(
+        event,
+        "router_decision_event_id",
+        "FOREGROUND_OUTPUT_COMMITTED",
+    )
+    router_event = router_events_by_id.get(router_event_id)
+    if router_event is None:
+        raise ReplayValidationError(
+            "FOREGROUND_OUTPUT_COMMITTED router_decision_event_id must reference prior Router decision"
+        )
+    _require_same_turn(
+        event,
+        router_event,
+        "FOREGROUND_OUTPUT_COMMITTED",
+        "ROUTER_DECISION_EMITTED",
+    )
+    gate_event_id = event.get("gate_event_id")
+    fallback_policy_ref = event.get("fallback_policy_ref")
+    fallback_reason = event.get("fallback_reason")
+    if gate_event_id in (None, "") and (fallback_policy_ref in (None, "") or fallback_reason in (None, "")):
+        raise ReplayValidationError(
+            "FOREGROUND_OUTPUT_COMMITTED requires gate_event_id or fallback policy and reason"
+        )
+    caused_by_event_id = _required_event_ref(
+        event,
+        "caused_by_event_id",
+        "FOREGROUND_OUTPUT_COMMITTED",
+    )
+    if gate_event_id not in (None, "") and caused_by_event_id != str(gate_event_id):
+        raise ReplayValidationError("FOREGROUND_OUTPUT_COMMITTED caused_by_event_id must match gate_event_id")
+    gate_event = foreground_gate_events_by_id.get(caused_by_event_id)
+    if gate_event is None:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_COMMITTED must be caused by a prior foreground gate event")
+    if gate_event.get("router_decision_event_id") != router_event_id:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_COMMITTED gate must reference committed Router decision")
+    output_basis = event.get("output_basis")
+    if output_basis == "reply_candidate":
+        if gate_event.get("event_name") != "FOREGROUND_ACT_GATE_PASSED":
+            raise ReplayValidationError("reply_candidate FOREGROUND_OUTPUT_COMMITTED requires gate pass")
+        candidate_event_id = _required_event_ref(
+            gate_event,
+            "candidate_event_id",
+            "FOREGROUND_ACT_GATE_PASSED",
+        )
+        candidate_event = foreground_candidates_by_id.get(candidate_event_id)
+        if candidate_event is None:
+            raise ReplayValidationError(
+                "reply_candidate FOREGROUND_OUTPUT_COMMITTED gate must reference prior candidate"
+            )
+        if event.get("output_ref") != candidate_event.get("candidate_ref"):
+            raise ReplayValidationError(
+                "reply_candidate FOREGROUND_OUTPUT_COMMITTED output_ref must match gated candidate_ref"
+            )
+    elif output_basis in {"template_ack", "template_clarify", "silence_policy"}:
+        if gate_event.get("event_name") != "FOREGROUND_ACT_GATE_FAILED":
+            raise ReplayValidationError("template FOREGROUND_OUTPUT_COMMITTED requires gate failure")
+        if fallback_policy_ref in (None, "") or fallback_reason in (None, ""):
+            raise ReplayValidationError("template FOREGROUND_OUTPUT_COMMITTED requires fallback policy and reason")
+    else:
+        raise ReplayValidationError("FOREGROUND_OUTPUT_COMMITTED has unsupported output_basis")
+
+
+def _required_event_ref(event: Mapping[str, Any], field: str, event_name: str) -> str:
+    value = event.get(field)
+    if value in (None, ""):
+        raise ReplayValidationError(f"{event_name} requires {field}")
+    return str(value)
+
+
+def _require_same_turn(
+    event: Mapping[str, Any],
+    reference_event: Mapping[str, Any],
+    event_name: str,
+    reference_event_name: str,
+) -> None:
+    if _turn_key(event) != _turn_key(reference_event):
+        raise ReplayValidationError(f"{event_name} must match {reference_event_name} turn_id and utterance_id")
+
+
+FAST_FOREGROUND_FORBIDDEN_PAYLOAD_FIELDS = frozenset(
+    {
+        "raw_audio",
+        "audio_bytes",
+        "audio_payload",
+        "raw_trace",
+        "trace",
+        "diagnostics",
+        "raw_prompt",
+        "prompt",
+        "system_message",
+        "developer_message",
+        "raw_text",
+        "text",
+        "transcript_text",
+        "reply_candidate",
+        "candidate_text",
+        "provider_request",
+        "provider_response",
+        "provider_body",
+        "provider_payload",
+        "provider_text",
+        "provider_schema",
+        "provider_specific_schema",
+        "request_body",
+        "response_body",
+        "body",
+        "payload",
+        "authorization_header",
+        "authorization",
+        "cookie",
+        "credential",
+        "secret",
+        "token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "local_path",
+        "local_wav_path",
+    }
+)
+
+
+def _validate_fast_foreground_replay_payload(event: Mapping[str, Any]) -> None:
+    if _contains_forbidden_payload_field(
+        event,
+        forbidden_fields=FAST_FOREGROUND_FORBIDDEN_PAYLOAD_FIELDS,
+    ):
+        raise ReplayValidationError(f"{event['event_name']} contains raw Fast Interaction payload")
 
 
 def _fast_interaction_input_mode(event: Mapping[str, Any]) -> str:

@@ -60,6 +60,16 @@ def validate_event_envelope(event: Mapping[str, Any]) -> dict[str, Any]:
         if not any(_has_value(normalized, field) for field in alternatives):
             raise EventValidationError(f"One of {' or '.join(alternatives)} is required")
 
+    for alternative_field_set in definition.any_of_field_sets:
+        if all(_has_value(normalized, field) for field in alternative_field_set):
+            break
+    else:
+        if definition.any_of_field_sets:
+            alternatives = [
+                " and ".join(alternative_field_set) for alternative_field_set in definition.any_of_field_sets
+            ]
+            raise EventValidationError(f"One of {' or '.join(alternatives)} is required")
+
     return normalized
 
 

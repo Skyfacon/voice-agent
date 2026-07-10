@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from voice_agent.events.journal import InMemoryEventJournal
+from voice_agent.runtime.fast_foreground_gate import (
+    FastForegroundGateResult,
+    run_fast_foreground_gate,
+)
 from voice_agent.runtime.mvp5_live_approval import is_safe_mvp5_live_ref
 from voice_agent.router.router import (
     MVP1_ROUTER_DECISIONS,
@@ -52,10 +56,19 @@ class MVP5LiveRouteResult:
     audio_span_id: str | None = None
     asr_event_id: str | None = None
     thinker_event_id: str | None = None
+    fast_interaction_event_id: str | None = None
+    foreground_candidate_event_id: str | None = None
     router_event_id: str | None = None
     task_focus_state_event_id: str | None = None
+    foreground_gate_event_id: str | None = None
+    foreground_output_event_id: str | None = None
+    foreground_discard_event_id: str | None = None
+    foreground_output_basis: str | None = None
+    foreground_gate_decision: str | None = None
+    foreground_gate_failure_reason: str | None = None
     response_text_ref: str | None = None
     result_summary_ref: str | None = None
+    evidence_ref_policy: str = "preserve_both_refs"
     task_id: str | None = None
     patch_id: str | None = None
     slowtask_event_ids_by_name: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -91,7 +104,7 @@ class MVP5LiveRouteResult:
             "replay_reruns_provider": False,
             "real_tts_used": False,
             "voice_output": "none",
-            "evidence_ref_policy": "preserve_both_refs",
+            "evidence_ref_policy": self.evidence_ref_policy,
         }
         optional_fields = {
             "turn_id": self.turn_id,
@@ -99,8 +112,16 @@ class MVP5LiveRouteResult:
             "audio_span_id": self.audio_span_id,
             "asr_event_id": self.asr_event_id,
             "thinker_event_id": self.thinker_event_id,
+            "fast_interaction_event_id": self.fast_interaction_event_id,
+            "foreground_candidate_event_id": self.foreground_candidate_event_id,
             "router_event_id": self.router_event_id,
             "task_focus_state_event_id": self.task_focus_state_event_id,
+            "foreground_gate_event_id": self.foreground_gate_event_id,
+            "foreground_output_event_id": self.foreground_output_event_id,
+            "foreground_discard_event_id": self.foreground_discard_event_id,
+            "foreground_output_basis": self.foreground_output_basis,
+            "foreground_gate_decision": self.foreground_gate_decision,
+            "foreground_gate_failure_reason": self.foreground_gate_failure_reason,
             "response_text_ref": self.response_text_ref,
             "result_summary_ref": self.result_summary_ref,
             "task_id": self.task_id,
@@ -134,16 +155,32 @@ def run_mvp5_live_router_runner(
         )
 
     turn_event = _single_event(evidence_events, "TURN_INGRESS_COMMITTED")
-    asr_event = _event_by_id_or_name(
+    asr_event = _optional_event_by_id_or_name(
         evidence_events,
         event_id=getattr(evidence_result, "asr_event_id", None),
         event_names=("ASR_TRANSCRIPT_OUTPUT_EMITTED", "MOCK_ASR_FRAME_EMITTED"),
     )
-    thinker_event = _event_by_id_or_name(
+    fast_interaction_event = _optional_event_by_id_or_name(
+        evidence_events,
+        event_id=getattr(evidence_result, "fast_interaction_event_id", None),
+        event_names=("FAST_INTERACTION_OUTPUT_EMITTED",),
+    )
+    foreground_candidate_event = _optional_event_by_id_or_name(
+        evidence_events,
+        event_id=getattr(evidence_result, "foreground_candidate_event_id", None),
+        event_names=("FOREGROUND_REPLY_CANDIDATE_EMITTED",),
+    )
+    thinker_event = _optional_event_by_id_or_name(
         evidence_events,
         event_id=getattr(evidence_result, "thinker_event_id", None),
         event_names=("THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED", "MOCK_THINKER_FRAME_EMITTED"),
     )
+    if thinker_event is None and fast_interaction_event is None:
+        raise MVP5LiveRouterRunnerError(
+            "expected Thinker or Fast Interaction evidence before Router can run"
+        )
+    if thinker_event is not None and asr_event is None:
+        raise MVP5LiveRouterRunnerError("expected ASR evidence with Thinker evidence")
 
     journal = _journal_from_recorded_events(evidence_events)
     router_context = _router_context(config.active_task_context)
@@ -154,6 +191,7 @@ def run_mvp5_live_router_runner(
             turn_committed_event=turn_event,
             asr_frame_event=asr_event,
             thinker_frame_event=thinker_event,
+            fast_interaction_output_event=fast_interaction_event,
             router_context=router_context,
             event_id=f"evt_mvp5_live_route_{slug}_router_decision",
             task_focus_state_event_id=f"evt_mvp5_live_route_{slug}_task_focus_state",
@@ -174,8 +212,18 @@ def run_mvp5_live_router_runner(
             turn_id=str(turn_event["turn_id"]),
             utterance_id=str(turn_event["utterance_id"]),
             audio_span_id=str(turn_event.get("audio_span_id")) if turn_event.get("audio_span_id") else None,
-            asr_event_id=str(asr_event["event_id"]),
-            thinker_event_id=str(thinker_event["event_id"]),
+            asr_event_id=str(asr_event["event_id"]) if asr_event is not None else None,
+            thinker_event_id=str(thinker_event["event_id"]) if thinker_event is not None else None,
+            fast_interaction_event_id=(
+                str(fast_interaction_event["event_id"])
+                if fast_interaction_event is not None
+                else None
+            ),
+            foreground_candidate_event_id=(
+                str(foreground_candidate_event["event_id"])
+                if foreground_candidate_event is not None
+                else None
+            ),
             provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
             fake_transport_used=bool(getattr(evidence_result, "fake_transport_used", False)),
             warnings=("PATCH_ACTIVE_SLOW_TASK requires active_task_context",),
@@ -194,6 +242,8 @@ def run_mvp5_live_router_runner(
             turn_event=turn_event,
             asr_event=asr_event,
             thinker_event=thinker_event,
+            fast_interaction_event=fast_interaction_event,
+            foreground_candidate_event=foreground_candidate_event,
             router_event=router_event,
             task_focus_state_event=router_result.task_focus_state_event,
             provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
@@ -201,7 +251,20 @@ def run_mvp5_live_router_runner(
             warnings=(f"expected_route_mismatch:{expected_route}!={route}",),
         )
 
+    foreground_gate_result = _run_fast_foreground_gate_if_available(
+        journal=journal,
+        fast_interaction_event=fast_interaction_event,
+        foreground_candidate_event=foreground_candidate_event,
+        router_event=router_event,
+        event_id_prefix=f"evt_mvp63_live_route_{_safe_segment(run_id)}_foreground_gate",
+        created_monotonic_ms=base_monotonic_ms + 2,
+        created_wall_clock_ms=base_wall_clock_ms + 2,
+    )
+
     if route == "FAST_ONLY":
+        response_text_ref = f"response://synthetic/mvp5/{slug}/direct-answer"
+        if foreground_gate_result is not None and foreground_gate_result.committed_event is not None:
+            response_text_ref = str(foreground_gate_result.committed_event["output_ref"])
         return _result_from_journal(
             run_id=run_id,
             status="routed",
@@ -213,15 +276,22 @@ def run_mvp5_live_router_runner(
             turn_event=turn_event,
             asr_event=asr_event,
             thinker_event=thinker_event,
+            fast_interaction_event=fast_interaction_event,
+            foreground_candidate_event=foreground_candidate_event,
             router_event=router_event,
             task_focus_state_event=router_result.task_focus_state_event,
-            response_text_ref=f"response://synthetic/mvp5/{slug}/direct-answer",
+            foreground_gate_result=foreground_gate_result,
+            response_text_ref=response_text_ref,
             provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
             fake_transport_used=bool(getattr(evidence_result, "fake_transport_used", False)),
         )
 
     if route == "SPAWN_SLOW_TASK":
-        source_refs = _live_evidence_refs(asr_event=asr_event, thinker_event=thinker_event)
+        source_refs = _live_evidence_refs(
+            asr_event=asr_event,
+            thinker_event=thinker_event,
+            fast_interaction_event=fast_interaction_event,
+        )
         task_id = f"task_mvp5_goal3_{slug}"
         MockSlowTaskRuntime(journal).run_spawn_planning_completed(
             router_decision_event=router_event,
@@ -246,8 +316,11 @@ def run_mvp5_live_router_runner(
             turn_event=turn_event,
             asr_event=asr_event,
             thinker_event=thinker_event,
+            fast_interaction_event=fast_interaction_event,
+            foreground_candidate_event=foreground_candidate_event,
             router_event=router_event,
             task_focus_state_event=router_result.task_focus_state_event,
+            foreground_gate_result=foreground_gate_result,
             result_summary_ref=f"summary://synthetic/mvp5/{slug}/slowtask-spawn",
             task_id=task_id,
             provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
@@ -267,11 +340,35 @@ def run_mvp5_live_router_runner(
                 turn_event=turn_event,
                 asr_event=asr_event,
                 thinker_event=thinker_event,
+                fast_interaction_event=fast_interaction_event,
+                foreground_candidate_event=foreground_candidate_event,
                 router_event=router_event,
                 task_focus_state_event=router_result.task_focus_state_event,
+                foreground_gate_result=foreground_gate_result,
                 provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
                 fake_transport_used=bool(getattr(evidence_result, "fake_transport_used", False)),
                 warnings=("PATCH_ACTIVE_SLOW_TASK requires active_task_context",),
+            )
+        if thinker_event is None:
+            return _result_from_journal(
+                run_id=run_id,
+                status="blocked_missing_thinker_patch_evidence",
+                route_result_kind="degraded",
+                router_decision=route,
+                expected_route=expected_route,
+                expected_route_matched=_expected_route_matched(expected_route, route),
+                journal=journal,
+                turn_event=turn_event,
+                asr_event=asr_event,
+                thinker_event=thinker_event,
+                fast_interaction_event=fast_interaction_event,
+                foreground_candidate_event=foreground_candidate_event,
+                router_event=router_event,
+                task_focus_state_event=router_result.task_focus_state_event,
+                foreground_gate_result=foreground_gate_result,
+                provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
+                fake_transport_used=bool(getattr(evidence_result, "fake_transport_used", False)),
+                warnings=("PATCH_ACTIVE_SLOW_TASK requires Thinker evidence for UserPatch",),
             )
         patch_id = f"patch_{slug.replace('-', '_')}"
         patch_result = UserPatchEvidencePackRuntime(journal).receive_patch_from_router_decision(
@@ -304,8 +401,11 @@ def run_mvp5_live_router_runner(
             turn_event=turn_event,
             asr_event=asr_event,
             thinker_event=thinker_event,
+            fast_interaction_event=fast_interaction_event,
+            foreground_candidate_event=foreground_candidate_event,
             router_event=router_event,
             task_focus_state_event=router_result.task_focus_state_event,
+            foreground_gate_result=foreground_gate_result,
             result_summary_ref=f"summary://synthetic/mvp5/{slug}/user-patch",
             task_id=config.active_task_context.task_id,
             patch_id=str(patch_result.user_patch_event["patch_id"]),
@@ -324,8 +424,11 @@ def run_mvp5_live_router_runner(
         turn_event=turn_event,
         asr_event=asr_event,
         thinker_event=thinker_event,
+        fast_interaction_event=fast_interaction_event,
+        foreground_candidate_event=foreground_candidate_event,
         router_event=router_event,
         task_focus_state_event=router_result.task_focus_state_event,
+        foreground_gate_result=foreground_gate_result,
         result_summary_ref=f"summary://synthetic/mvp5/{slug}/ignore",
         provider_call_used=bool(getattr(evidence_result, "provider_call_used", False)),
         fake_transport_used=bool(getattr(evidence_result, "fake_transport_used", False)),
@@ -361,12 +464,15 @@ def _result_from_journal(
     expected_route_matched: bool | None,
     journal: InMemoryEventJournal,
     turn_event: Mapping[str, Any],
-    asr_event: Mapping[str, Any],
-    thinker_event: Mapping[str, Any],
+    asr_event: Mapping[str, Any] | None,
+    thinker_event: Mapping[str, Any] | None,
     router_event: Mapping[str, Any],
     task_focus_state_event: Mapping[str, Any],
     provider_call_used: bool,
     fake_transport_used: bool,
+    fast_interaction_event: Mapping[str, Any] | None = None,
+    foreground_candidate_event: Mapping[str, Any] | None = None,
+    foreground_gate_result: FastForegroundGateResult | None = None,
     response_text_ref: str | None = None,
     result_summary_ref: str | None = None,
     task_id: str | None = None,
@@ -374,6 +480,13 @@ def _result_from_journal(
     warnings: tuple[str, ...] = (),
 ) -> MVP5LiveRouteResult:
     events = tuple(journal.events())
+    gate_event = foreground_gate_result.gate_event if foreground_gate_result is not None else None
+    committed_event = (
+        foreground_gate_result.committed_event if foreground_gate_result is not None else None
+    )
+    discarded_event = (
+        foreground_gate_result.discarded_event if foreground_gate_result is not None else None
+    )
     return MVP5LiveRouteResult(
         run_id=run_id,
         status=status,
@@ -385,12 +498,45 @@ def _result_from_journal(
         turn_id=str(turn_event["turn_id"]),
         utterance_id=str(turn_event["utterance_id"]),
         audio_span_id=str(turn_event.get("audio_span_id")) if turn_event.get("audio_span_id") else None,
-        asr_event_id=str(asr_event["event_id"]),
-        thinker_event_id=str(thinker_event["event_id"]),
+        asr_event_id=str(asr_event["event_id"]) if asr_event is not None else None,
+        thinker_event_id=str(thinker_event["event_id"]) if thinker_event is not None else None,
+        fast_interaction_event_id=(
+            str(fast_interaction_event["event_id"])
+            if fast_interaction_event is not None
+            else None
+        ),
+        foreground_candidate_event_id=(
+            str(foreground_candidate_event["event_id"])
+            if foreground_candidate_event is not None
+            else None
+        ),
         router_event_id=str(router_event["event_id"]),
         task_focus_state_event_id=str(task_focus_state_event["event_id"]),
+        foreground_gate_event_id=str(gate_event["event_id"]) if gate_event is not None else None,
+        foreground_output_event_id=(
+            str(committed_event["event_id"]) if committed_event is not None else None
+        ),
+        foreground_discard_event_id=(
+            str(discarded_event["event_id"]) if discarded_event is not None else None
+        ),
+        foreground_output_basis=(
+            str(committed_event["output_basis"]) if committed_event is not None else None
+        ),
+        foreground_gate_decision=(
+            _foreground_gate_decision(gate_event) if gate_event is not None else None
+        ),
+        foreground_gate_failure_reason=(
+            str(gate_event["failure_reason"])
+            if gate_event is not None and gate_event.get("event_name") == "FOREGROUND_ACT_GATE_FAILED"
+            else None
+        ),
         response_text_ref=response_text_ref,
         result_summary_ref=result_summary_ref,
+        evidence_ref_policy=_route_evidence_ref_policy(
+            asr_event=asr_event,
+            thinker_event=thinker_event,
+            fast_interaction_event=fast_interaction_event,
+        ),
         task_id=task_id,
         patch_id=patch_id,
         slowtask_event_ids_by_name=_slowtask_event_ids_by_name(events),
@@ -470,20 +616,87 @@ def _event_by_id_or_name(
     return matches[0]
 
 
+def _optional_event_by_id_or_name(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    event_id: object,
+    event_names: tuple[str, ...],
+) -> dict[str, Any] | None:
+    if event_id not in (None, ""):
+        return _event_by_id_or_name(events, event_id=event_id, event_names=event_names)
+    matches = [dict(event) for event in events if event["event_name"] in event_names]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise MVP5LiveRouterRunnerError(f"expected at most one of {event_names}")
+    return matches[0]
+
+
+def _run_fast_foreground_gate_if_available(
+    *,
+    journal: InMemoryEventJournal,
+    fast_interaction_event: Mapping[str, Any] | None,
+    foreground_candidate_event: Mapping[str, Any] | None,
+    router_event: Mapping[str, Any],
+    event_id_prefix: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+) -> FastForegroundGateResult | None:
+    if fast_interaction_event is None or foreground_candidate_event is None:
+        return None
+    return run_fast_foreground_gate(
+        journal,
+        candidate_event=foreground_candidate_event,
+        fast_interaction_output_event=fast_interaction_event,
+        router_decision_event=router_event,
+        event_id_prefix=event_id_prefix,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+    )
+
+
 def _live_evidence_refs(
     *,
-    asr_event: Mapping[str, Any],
-    thinker_event: Mapping[str, Any],
+    asr_event: Mapping[str, Any] | None,
+    thinker_event: Mapping[str, Any] | None,
+    fast_interaction_event: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
-    refs = (
-        f"event://mvp5/{asr_event['event_id']}",
-        str(asr_event["asr_frame_ref"]),
-        f"event://mvp5/{thinker_event['event_id']}",
-        str(thinker_event["semantic_frame_ref"]),
-    )
+    refs: tuple[str, ...] = ()
+    if asr_event is not None:
+        refs = (
+            f"event://mvp5/{asr_event['event_id']}",
+            str(asr_event["asr_frame_ref"]),
+        )
+    if thinker_event is not None:
+        refs = (
+            *refs,
+            f"event://mvp5/{thinker_event['event_id']}",
+            str(thinker_event["semantic_frame_ref"]),
+        )
+    if fast_interaction_event is not None:
+        refs = (
+            *refs,
+            f"event://mvp63/{fast_interaction_event['event_id']}",
+            str(fast_interaction_event["final_fast_evidence_ref"]),
+        )
     for ref in refs:
         _require_safe_ref(ref, "source_evidence_ref")
     return refs
+
+
+def _route_evidence_ref_policy(
+    *,
+    asr_event: Mapping[str, Any] | None,
+    thinker_event: Mapping[str, Any] | None,
+    fast_interaction_event: Mapping[str, Any] | None,
+) -> str:
+    if asr_event is not None and thinker_event is not None and fast_interaction_event is not None:
+        return "preserve_asr_thinker_and_fast_refs"
+    if asr_event is not None and fast_interaction_event is not None:
+        return "preserve_asr_and_fast_refs"
+    if fast_interaction_event is not None:
+        return "preserve_fast_ref"
+    return "preserve_both_refs"
 
 
 def _slowtask_event_ids_by_name(events: Sequence[Mapping[str, Any]]) -> dict[str, tuple[str, ...]]:
@@ -518,6 +731,15 @@ def _expected_route_matched(expected_route: str | None, actual_route: str) -> bo
     return expected_route == actual_route
 
 
+def _foreground_gate_decision(gate_event: Mapping[str, Any]) -> str:
+    event_name = gate_event.get("event_name")
+    if event_name == "FOREGROUND_ACT_GATE_PASSED":
+        return "passed"
+    if event_name == "FOREGROUND_ACT_GATE_FAILED":
+        return "failed"
+    raise MVP5LiveRouterRunnerError("unexpected foreground gate event")
+
+
 def _last_int(events: Sequence[Mapping[str, Any]], field: str) -> int:
     values = [int(event[field]) for event in events if event.get(field) not in (None, "")]
     if not values:
@@ -540,8 +762,13 @@ def _validate_summary_metadata(metadata: Mapping[str, Any]) -> None:
             raise MVP5LiveRouterRunnerError(f"{flag} must be false in MVP-5 route summary")
     if metadata.get("voice_output") != "none":
         raise MVP5LiveRouterRunnerError("voice_output must be none in MVP-5 route summary")
-    if metadata.get("evidence_ref_policy") != "preserve_both_refs":
-        raise MVP5LiveRouterRunnerError("evidence_ref_policy must preserve both ASR and Thinker refs")
+    if metadata.get("evidence_ref_policy") not in {
+        "preserve_both_refs",
+        "preserve_fast_ref",
+        "preserve_asr_and_fast_refs",
+        "preserve_asr_thinker_and_fast_refs",
+    }:
+        raise MVP5LiveRouterRunnerError("evidence_ref_policy must preserve recorded evidence refs")
     _reject_unsafe_summary_values(metadata)
 
 
@@ -613,3 +840,7 @@ def _require_safe_token(value: object, field: str) -> str:
 
 def _slug(value: str) -> str:
     return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-") or "unknown"
+
+
+def _safe_segment(value: str) -> str:
+    return "".join(char.lower() if char.isalnum() else "_" for char in value).strip("_") or "unknown"

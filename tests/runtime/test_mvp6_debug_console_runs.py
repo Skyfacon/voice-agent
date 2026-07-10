@@ -236,6 +236,97 @@ def test_live_provider_mode_delegates_after_approval_and_credential_without_netw
     assert captured_kwargs["live_provider"] is True
     assert captured_kwargs["asr_transport"] is None
     assert captured_kwargs["thinker_transport"] is None
+    assert captured_kwargs["fast_interaction_enabled"] is True
+    assert captured_kwargs["audio_native_thinker_enabled"] is False
+
+
+def test_debug_console_displays_gated_fast_interaction_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from voice_agent.runtime import mvp6_debug_console_api as api
+
+    wav_path = tmp_path / "fast-live.wav"
+    wav_bytes = _write_wav_file(wav_path)
+    config = MVP6DebugConsoleConfig(
+        output_root=tmp_path / "outputs" / "mvp6-debug-console",
+        approval_packet=_approval_packet(
+            provider_adapter_ids=[
+                "mvp63_fast_interaction_runtime",
+            ],
+            max_provider_calls=1,
+            timeout_ms=1500,
+        ),
+    )
+
+    def fake_runtime(**kwargs: object) -> dict[str, object]:
+        assert kwargs["fast_interaction_enabled"] is True
+        assert kwargs["audio_native_thinker_enabled"] is False
+        return {
+            "status": "routed",
+            "run_id": "mvp6_run_fast_live",
+            "actual_route": "FAST_ONLY",
+            "router_decision": "FAST_ONLY",
+            "route_result_kind": "direct_answer",
+            "expected_route": "auto",
+            "expected_route_matched": True,
+            "provider_call_used": True,
+            "fake_transport_used": False,
+            "asr_output_mode": None,
+            "thinker_output_mode": None,
+            "fast_interaction_output_mode": "real",
+            "foreground_gate_decision": "passed",
+            "foreground_output_basis": "reply_candidate",
+            "foreground_output_ref": "foreground-candidate://synthetic/mvp63/debug-console",
+            "event_ids": ["evt_mvp63_debug_fast"],
+            "safe_refs": ["foreground-candidate://synthetic/mvp63/debug-console"],
+            "latency_debug": {
+                "fast_interaction_provider_http_ms": 400,
+                "fast_interaction_parse_validate_emit_ms": 5,
+                "fast_interaction_total_ms": 405,
+                "fast_interaction_timeout_ms": 1500,
+                "fast_interaction_timed_out": False,
+            },
+        }
+
+    class FakeFastInteractionRuntimeModule:
+        @staticmethod
+        def resolve_fast_interaction_reply_candidate_ref(candidate_ref: str) -> str | None:
+            assert candidate_ref == "foreground-candidate://synthetic/mvp63/debug-console"
+            return "好，我讲一个短短的恐怖故事。"
+
+    monkeypatch.setattr(api, "run_mvp5_real_voice_e2e_single", fake_runtime)
+    monkeypatch.setattr(
+        api.importlib,
+        "import_module",
+        lambda name: FakeFastInteractionRuntimeModule,
+    )
+
+    response = run_mvp6_debug_console_audio(
+        config=config,
+        request=MVP6RunRequest(
+            audio_bytes=wav_bytes,
+            audio_mime_type="audio/wav",
+            provider_mode="dashscope_live",
+            expected_route="auto",
+            save_qa_history=True,
+        ),
+        env={"MVP6_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+    )
+
+    assert response["answer_display"] == "好，我讲一个短短的恐怖故事。"
+    assert response["question_text"] is None
+    assert response["fast_interaction_output_mode"] == "real"
+    assert response["foreground_gate_decision"] == "passed"
+    assert response["foreground_output_basis"] == "reply_candidate"
+    assert response["latency_debug"]["fast_interaction_total_ms"] == 405
+    saved_history = json.loads(config.history_path.read_text(encoding="utf-8").strip())
+    assert saved_history["question_text"] == ""
+    assert saved_history["question_source"] == "asr_transcript_ref"
+    assert saved_history["answer_display"] == "[foreground output committed]"
+    assert saved_history["foreground_gate_decision"] == "passed"
+    assert saved_history["foreground_output_basis"] == "reply_candidate"
+    assert saved_history["latency_debug"]["fast_interaction_total_ms"] == 405
 
 
 def test_live_provider_mode_can_return_local_only_model_io_debug(
@@ -336,10 +427,22 @@ def test_live_provider_mode_can_return_local_only_model_io_debug(
     model_io = response["model_io_debug"]
     rendered = json.dumps(response, sort_keys=True)
     assert model_io["saved_to_history"] is False
-    assert model_io["asr"]["provider_text"] == "Give me a short joke"
-    assert "lalm_thinker_semantic_frame_candidate.v1" in model_io["thinker"]["system_message"]
-    assert model_io["thinker"]["provider_text"] == "```json\n{}\n```"
-    assert "[redacted-audio-base64]" in rendered
+    assert model_io["asr"]["metadata_only"] is True
+    assert model_io["asr"]["content_redacted"] is True
+    assert model_io["asr"]["provider_output_available"] is True
+    assert model_io["asr"]["provider_output_char_count"] == len("Give me a short joke")
+    assert model_io["thinker"]["metadata_only"] is True
+    assert model_io["thinker"]["content_redacted"] is True
+    assert model_io["thinker"]["request_payload_available"] is True
+    assert model_io["thinker"]["system_instruction_available"] is True
+    assert model_io["thinker"]["provider_output_char_count"] == len("```json\n{}\n```")
+    assert "Give me a short joke" not in rendered
+    assert "Return only one" not in rendered
+    assert "```json" not in rendered
+    assert "[redacted-audio-base64]" not in rendered
+    assert "request_body" not in rendered
+    assert "system_message" not in rendered
+    assert '"provider_text"' not in rendered
     assert "DUMMY_TEST_CREDENTIAL" not in rendered
     assert "data:audio" not in rendered
     assert str(tmp_path) not in rendered
@@ -511,7 +614,7 @@ def test_live_provider_mode_reports_credential_missing_without_provider_call(tmp
     assert response["fake_transport_used"] is False
 
 
-def test_live_question_text_resolves_from_process_local_asr_ref(
+def test_live_question_text_is_not_resolved_into_regular_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -529,10 +632,7 @@ def test_live_question_text_resolves_from_process_local_asr_ref(
         "asr_output_mode": "degraded",
     }
 
-    assert (
-        api.resolve_mvp6_question_text(metadata, provider_mode="dashscope_live")
-        == "Plan a three day Tokyo trip"
-    )
+    assert api.resolve_mvp6_question_text(metadata, provider_mode="dashscope_live") is None
 
 
 def _write_wav_file(path: Path) -> bytes:
@@ -545,17 +645,23 @@ def _write_wav_file(path: Path) -> bytes:
     return path.read_bytes()
 
 
-def _approval_packet() -> dict[str, object]:
+def _approval_packet(
+    *,
+    provider_adapter_ids: list[str] | None = None,
+    max_provider_calls: int = 2,
+    timeout_ms: int = 30000,
+) -> dict[str, object]:
     return {
         "approval_id": "mvp6-local-debug-console-test",
         "live_provider_opt_in": True,
         "local_wav_opt_in": True,
         "metadata_only_output": True,
         "replay_reruns_provider": False,
-        "provider_adapter_ids": ["mvp5_asr_adapter", "mvp5_thinker_adapter"],
+        "provider_adapter_ids": provider_adapter_ids
+        or ["mvp5_asr_adapter", "mvp5_thinker_adapter"],
         "credential_env_var_name": "MVP6_TEST_PROVIDER_KEY",
-        "max_provider_calls": 2,
-        "timeout_ms": 30000,
+        "max_provider_calls": max_provider_calls,
+        "timeout_ms": timeout_ms,
         "safe_output_ref": "summary://mvp6/debug-console/test",
     }
 
@@ -569,7 +675,7 @@ def _latency_debug_is_safe(latency_debug: object) -> bool:
         "wav_bytes",
         "transcript",
         "provider_body",
-        "provider_request",
+        "raw_provider_request",
         "provider_response",
         "prompt",
         "secret",

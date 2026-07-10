@@ -13,8 +13,8 @@ def test_provider_free_routing_golden_eval_covers_required_cases_without_provide
     assert summary["profile_id"] == "lalm-thinker-routing-control"
     assert summary["profile_version"] == "mvp6.2.zh-CN.v1"
     assert str(summary["profile_hash"]).startswith("sha256:")
-    assert summary["case_count"] == 6
-    assert summary["passed_count"] == 6
+    assert summary["case_count"] == 7
+    assert summary["passed_count"] == 7
     assert summary["failed_count"] == 0
     assert summary["provider_call_used"] is False
     assert summary["network_used"] is False
@@ -27,6 +27,19 @@ def test_provider_free_routing_golden_eval_covers_required_cases_without_provide
     cases = {case["case_id"]: case for case in summary["cases"]}
     assert cases["zh_foreground_simple"]["actual_task_focus"] == "FOREGROUND_CHAT"
     assert cases["zh_foreground_simple"]["actual_router_decision"] == "FAST_ONLY"
+    assert cases["zh_foreground_story_fast_interaction"]["actual_task_focus"] == (
+        "FOREGROUND_CHAT"
+    )
+    assert cases["zh_foreground_story_fast_interaction"]["actual_router_decision"] == "FAST_ONLY"
+    assert cases["zh_foreground_story_fast_interaction"]["fast_interaction_output_mode"] == "real"
+    assert cases["zh_foreground_story_fast_interaction"]["actual_foreground_gate_decision"] == (
+        "passed"
+    )
+    assert cases["zh_foreground_story_fast_interaction"]["actual_output_basis"] == (
+        "reply_candidate"
+    )
+    assert "SLOWTASK_CREATED" not in cases["zh_foreground_story_fast_interaction"]["event_names"]
+    assert "USER_PATCH_RECEIVED" not in cases["zh_foreground_story_fast_interaction"]["event_names"]
     assert cases["zh_complex_new_task"]["actual_task_focus"] == "NEW_TASK_CANDIDATE"
     assert cases["zh_complex_new_task"]["actual_router_decision"] == "SPAWN_SLOW_TASK"
     assert cases["zh_active_task_patch"]["actual_task_focus"] == "ACTIVE_TASK_PATCH"

@@ -50,6 +50,14 @@ _UNSAFE_RESPONSE_KEYS = frozenset(
         "provider_payload",
         "provider_request",
         "provider_response",
+        "provider_text",
+        "raw_provider_request",
+        "raw_provider_response",
+        "request_body",
+        "response_body",
+        "raw_prompt",
+        "system_message",
+        "developer_message",
         "prompt_dump",
         "authorization_header",
         "authorization",
@@ -95,7 +103,30 @@ _LATENCY_DEBUG_MS_FIELDS = (
     "asr_provider_http_ms",
     "asr_normalize_emit_ms",
     "thinker_provider_http_ms",
+    "thinker_adapter_start_offset_ms",
+    "thinker_provider_request_start_offset_ms",
+    "thinker_provider_first_chunk_offset_ms",
+    "thinker_provider_full_response_offset_ms",
+    "thinker_adapter_event_emit_offset_ms",
+    "thinker_provider_ttft_ms",
+    "thinker_provider_full_response_ms",
+    "thinker_provider_generation_ms",
+    "thinker_stream_decode_ms",
     "thinker_parse_validate_emit_ms",
+    "fast_interaction_provider_http_ms",
+    "fast_interaction_adapter_start_offset_ms",
+    "fast_interaction_provider_request_start_offset_ms",
+    "fast_interaction_provider_first_chunk_offset_ms",
+    "fast_interaction_provider_full_response_offset_ms",
+    "fast_interaction_adapter_event_emit_offset_ms",
+    "fast_interaction_provider_ttft_ms",
+    "fast_interaction_provider_full_response_ms",
+    "fast_interaction_provider_generation_ms",
+    "fast_interaction_stream_decode_ms",
+    "fast_interaction_parse_validate_emit_ms",
+    "fast_interaction_total_ms",
+    "fast_interaction_timeout_ms",
+    "foreground_gate_ms",
     "router_ms",
     "qa_history_ms",
 )
@@ -103,8 +134,24 @@ _LATENCY_DEBUG_BOOL_FIELDS = (
     "provider_calls_parallel",
     "asr_started_before_thinker_finished",
     "thinker_started_before_asr_finished",
+    "thinker_ttft_available",
+    "fast_interaction_timed_out",
+    "fast_interaction_ttft_available",
 )
-_LATENCY_DEBUG_FIELDS = frozenset((*_LATENCY_DEBUG_MS_FIELDS, *_LATENCY_DEBUG_BOOL_FIELDS))
+_LATENCY_DEBUG_STRING_FIELDS = (
+    "thinker_ttft_source",
+    "fast_interaction_input_mode",
+    "fast_interaction_timing_mode",
+    "fast_interaction_ttft_source",
+    "fast_interaction_failure_category",
+)
+_LATENCY_DEBUG_FIELDS = frozenset(
+    (
+        *_LATENCY_DEBUG_MS_FIELDS,
+        *_LATENCY_DEBUG_BOOL_FIELDS,
+        *_LATENCY_DEBUG_STRING_FIELDS,
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -223,6 +270,8 @@ def run_mvp6_debug_console_audio(
         env=runtime_env,
         asr_transport=asr_transport,
         thinker_transport=thinker_transport,
+        fast_interaction_enabled=provider_mode == "dashscope_live",
+        audio_native_thinker_enabled=provider_mode != "dashscope_live",
         active_task_context=active_context,
     )
     latency_debug.update(_normalize_mvp6_latency_debug(metadata.get("latency_debug", {})))
@@ -256,13 +305,6 @@ def resolve_mvp6_question_text(
 ) -> str | None:
     if provider_mode == "fake":
         return _synthetic_question_text(str(metadata.get("actual_route") or "FAST_ONLY"))
-    for ref in metadata.get("safe_refs", ()):
-        if isinstance(ref, str) and ref.startswith("text://provider/dashscope/"):
-            module = importlib.import_module("voice_agent.adapters.asr_live_transport")
-            resolver = getattr(module, "resolve_asr_live_transcript_text_ref")
-            text = resolver(ref)
-            if isinstance(text, str) and text.strip():
-                return text
     return None
 
 
@@ -416,7 +458,7 @@ def _response_from_mvp5_metadata(
         "expected_route": _optional_string(metadata.get("expected_route")),
         "expected_route_matched": metadata.get("expected_route_matched"),
         "question_text": question_text,
-        "answer_display": _answer_display(actual_route, task_focus_hint),
+        "answer_display": _answer_display(actual_route, task_focus_hint, metadata),
         "provider_call_used": bool(metadata.get("provider_call_used")),
         "fake_transport_used": bool(metadata.get("fake_transport_used")),
         "thinker_transient_asr_text_used": bool(
@@ -424,6 +466,42 @@ def _response_from_mvp5_metadata(
         ),
         "asr_output_mode": _optional_string(metadata.get("asr_output_mode")),
         "thinker_output_mode": _optional_string(metadata.get("thinker_output_mode")),
+        "fast_interaction_output_mode": _optional_string(
+            metadata.get("fast_interaction_output_mode")
+        ),
+        "fast_interaction_adapter_request_id": _optional_string(
+            metadata.get("fast_interaction_adapter_request_id")
+        ),
+        "foreground_act": _optional_string(metadata.get("foreground_act")),
+        "foreground_risk_class": _optional_string(metadata.get("foreground_risk_class")),
+        "foreground_risk_tags": [
+            str(tag) for tag in metadata.get("foreground_risk_tags", ())
+        ],
+        "foreground_confidence": metadata.get("foreground_confidence"),
+        "foreground_gate_decision": _optional_string(
+            metadata.get("foreground_gate_decision")
+        ),
+        "foreground_gate_event_id": _optional_string(
+            metadata.get("foreground_gate_event_id")
+        ),
+        "foreground_gate_failure_reason": _optional_string(
+            metadata.get("foreground_gate_failure_reason")
+        ),
+        "foreground_output_event_id": _optional_string(
+            metadata.get("foreground_output_event_id")
+        ),
+        "foreground_output_ref": _optional_string(
+            metadata.get("foreground_output_ref") or metadata.get("response_text_ref")
+        ),
+        "foreground_output_basis": _optional_string(
+            metadata.get("foreground_output_basis")
+        ),
+        "foreground_discard_event_id": _optional_string(
+            metadata.get("foreground_discard_event_id")
+        ),
+        "foreground_fallback_reason": _optional_string(
+            metadata.get("foreground_fallback_reason")
+        ),
         "failure_reasons": [str(reason) for reason in metadata.get("failure_reasons", ())],
         "thinker_io_shape": _thinker_io_shape(
             transient_asr_text_used=bool(
@@ -489,8 +567,39 @@ def _resolve_mvp6_model_io_debug(metadata: Mapping[str, Any]) -> dict[str, Any]:
         "replay_included": False,
         "raw_audio_visible": False,
         "authorization_header_visible": False,
-        "asr": asr_debug,
-        "thinker": thinker_debug,
+        "asr": _metadata_only_model_io_debug(asr_debug),
+        "thinker": _metadata_only_model_io_debug(thinker_debug),
+    }
+
+
+def _metadata_only_model_io_debug(debug: object) -> dict[str, Any] | None:
+    if not isinstance(debug, Mapping):
+        return None
+    provider_response_shape = debug.get("provider_response_shape")
+    text_char_count = 0
+    provider_output_available = False
+    if isinstance(provider_response_shape, Mapping):
+        provider_output_available = bool(provider_response_shape.get("text_present", False))
+        text_char_count = _non_negative_int(
+            provider_response_shape.get("text_char_count", 0),
+            "provider_response_text_char_count",
+        )
+    elif isinstance(debug.get("provider_text"), str):
+        provider_output_available = bool(debug.get("provider_text"))
+        text_char_count = len(str(debug.get("provider_text")))
+
+    return {
+        "metadata_only": True,
+        "content_redacted": True,
+        "request_payload_available": isinstance(debug.get("request_body"), Mapping)
+        or isinstance(debug.get("request_shape"), Mapping),
+        "system_instruction_available": isinstance(debug.get("system_message"), str)
+        and bool(str(debug.get("system_message"))),
+        "provider_output_available": provider_output_available,
+        "provider_output_char_count": text_char_count,
+        "raw_audio_visible": False,
+        "authorization_header_visible": False,
+        "saved_to_history": False,
     }
 
 
@@ -521,23 +630,48 @@ def _pipeline_from_mvp5_metadata(
 ) -> list[dict[str, Any]]:
     asr_output_mode = metadata.get("asr_output_mode")
     thinker_output_mode = metadata.get("thinker_output_mode")
+    fast_interaction_output_mode = metadata.get("fast_interaction_output_mode")
+    foreground_gate_decision = metadata.get("foreground_gate_decision")
     routed = metadata.get("status") == "routed"
     asr_status = "completed" if asr_output_mode else "failed"
     thinker_status = "completed" if thinker_output_mode else (
         "failed" if asr_output_mode else "not_run"
     )
+    fast_status = "completed" if fast_interaction_output_mode else (
+        "failed" if asr_output_mode and not thinker_output_mode else "not_run"
+    )
     router_status = "completed" if routed else "not_run"
-    return [
+    pipeline = [
         {"stage": "local_audio_gate", "status": "passed"},
         {"stage": "asr", "status": asr_status, "output_mode": asr_output_mode},
-        {
-            "stage": "thinker",
-            "status": thinker_status,
-            "output_mode": thinker_output_mode,
-        },
-        {"stage": "router", "status": router_status, "actual_route": actual_route},
-        {"stage": "qa_history", "status": "completed" if history_written else "skipped"},
     ]
+    if fast_interaction_output_mode or foreground_gate_decision:
+        pipeline.append(
+            {
+                "stage": "fast_interaction",
+                "status": fast_status,
+                "output_mode": fast_interaction_output_mode,
+            }
+        )
+    else:
+        pipeline.append(
+            {
+                "stage": "thinker",
+                "status": thinker_status,
+                "output_mode": thinker_output_mode,
+            }
+        )
+    pipeline.append({"stage": "router", "status": router_status, "actual_route": actual_route})
+    if fast_interaction_output_mode or foreground_gate_decision:
+        pipeline.append(
+            {
+                "stage": "foreground_gate",
+                "status": "completed" if foreground_gate_decision else "not_run",
+                "decision": foreground_gate_decision,
+            }
+        )
+    pipeline.append({"stage": "qa_history", "status": "completed" if history_written else "skipped"})
+    return pipeline
 
 
 def _synthetic_question_text(actual_route: str) -> str:
@@ -548,10 +682,24 @@ def _synthetic_question_text(actual_route: str) -> str:
     return "Ask a short foreground question"
 
 
-def _answer_display(actual_route: object, task_focus_hint: object) -> str:
+def _answer_display(
+    actual_route: object,
+    task_focus_hint: object,
+    metadata: Mapping[str, Any],
+) -> str:
     if actual_route in (None, ""):
         return "Run did not reach router."
     if actual_route == "FAST_ONLY":
+        foreground_text = metadata.get("foreground_display_text")
+        if (
+            metadata.get("foreground_gate_decision") == "passed"
+            and isinstance(foreground_text, str)
+            and foreground_text.strip()
+        ):
+            return foreground_text
+        resolved_text = _resolve_foreground_display_text(metadata)
+        if resolved_text is not None:
+            return resolved_text
         return "FAST_ONLY selected; real fast answer is not implemented in MVP6.1 debug console."
     if actual_route == "SPAWN_SLOW_TASK":
         return "我帮你看一下，请稍等。"
@@ -571,24 +719,62 @@ def _answer_display(actual_route: object, task_focus_hint: object) -> str:
 
 
 def _history_entry_from_response(response: Mapping[str, Any]) -> MVP6QAHistoryEntry:
+    provider_mode = str(response["provider_mode"])
+    live_provider = provider_mode != "fake"
     return MVP6QAHistoryEntry(
         run_id=str(response["run_id"]),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        provider_mode=str(response["provider_mode"]),
-        question_source="asr_transcript",
-        question_text=str(response.get("question_text") or ""),
+        provider_mode=provider_mode,
+        question_source="asr_transcript_ref" if live_provider else "asr_transcript",
+        question_text="" if live_provider else str(response.get("question_text") or ""),
         answer_kind="debug_route_answer",
-        answer_display=str(response.get("answer_display") or ""),
+        answer_display=(
+            _live_history_answer_summary(response)
+            if live_provider
+            else str(response.get("answer_display") or "")
+        ),
         actual_route=_optional_string(response.get("actual_route")),
         router_decision=_optional_string(response.get("router_decision")),
         route_result_kind=_optional_string(response.get("route_result_kind")),
         asr_output_mode=_optional_string(response.get("asr_output_mode")),
         thinker_output_mode=_optional_string(response.get("thinker_output_mode")),
+        fast_interaction_output_mode=_optional_string(
+            response.get("fast_interaction_output_mode")
+        ),
+        foreground_gate_decision=_optional_string(response.get("foreground_gate_decision")),
+        foreground_output_basis=_optional_string(response.get("foreground_output_basis")),
+        foreground_gate_failure_reason=_optional_string(
+            response.get("foreground_gate_failure_reason")
+        ),
+        latency_debug=response.get("latency_debug", {}),
         provider_call_used=bool(response.get("provider_call_used")),
         fake_transport_used=bool(response.get("fake_transport_used")),
         event_ids=tuple(str(event_id) for event_id in response.get("event_ids", ())),
         safe_refs=tuple(str(ref) for ref in response.get("safe_refs", ())),
     )
+
+
+def _resolve_foreground_display_text(metadata: Mapping[str, Any]) -> str | None:
+    if metadata.get("foreground_gate_decision") != "passed":
+        return None
+    output_ref = metadata.get("foreground_output_ref") or metadata.get("response_text_ref")
+    if not isinstance(output_ref, str) or output_ref == "":
+        return None
+    module = importlib.import_module("voice_agent.adapters.fast_interaction_runtime_adapter")
+    resolver = getattr(module, "resolve_fast_interaction_reply_candidate_ref")
+    resolved = resolver(output_ref)
+    if not isinstance(resolved, str) or not resolved.strip():
+        return None
+    _validate_safe_string(resolved)
+    return resolved
+
+
+def _live_history_answer_summary(response: Mapping[str, Any]) -> str:
+    if response.get("foreground_gate_decision") == "passed":
+        return "[foreground output committed]"
+    if response.get("foreground_output_basis") in {"template_ack", "template_clarify"}:
+        return str(response.get("foreground_output_basis"))
+    return str(response.get("status") or "")
 
 
 def _blocked_missing_active_task_context(*, provider_mode: str) -> dict[str, Any]:
@@ -641,6 +827,14 @@ def _normalize_mvp6_latency_debug(value: object) -> dict[str, Any]:
         latency_debug[field] = _non_negative_int(source.get(field, 0), field)
     for field in _LATENCY_DEBUG_BOOL_FIELDS:
         latency_debug[field] = bool(source.get(field, False))
+    for field in _LATENCY_DEBUG_STRING_FIELDS:
+        raw_value = source.get(field, "")
+        if raw_value is None:
+            latency_debug[field] = ""
+        elif isinstance(raw_value, str):
+            latency_debug[field] = _require_safe_token(raw_value, field) if raw_value else ""
+        else:
+            raise MVP6DebugConsoleError(f"{field} must be metadata-only")
     validate_mvp6_safe_response(latency_debug)
     return latency_debug
 

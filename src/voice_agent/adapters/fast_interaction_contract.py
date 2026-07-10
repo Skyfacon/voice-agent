@@ -413,7 +413,7 @@ def emit_fast_interaction_events(
         candidate_status="complete",
         input_mode=binding.input_mode,
         fast_interaction_input_mode=binding.input_mode,
-        source_event_ids=binding.source_event_ids,
+        source_event_ids=(str(output_event["event_id"]),),
         risk_tags=output.risk_tags,
         confidence=output.confidence,
     )

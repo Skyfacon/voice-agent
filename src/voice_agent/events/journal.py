@@ -84,6 +84,9 @@ class InMemoryEventJournal:
     def events(self) -> list[dict[str, Any]]:
         return deepcopy(self._events)
 
+    def has_event_id(self, event_id: str) -> bool:
+        return event_id in self._event_ids
+
     def _validate_unique_playback_span_id(self, playback_span_id: object) -> None:
         for event in self._events:
             if (

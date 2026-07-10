@@ -25,8 +25,13 @@ class MVP6QAHistoryEntry:
     route_result_kind: str | None
     asr_output_mode: str | None
     thinker_output_mode: str | None
-    provider_call_used: bool
-    fake_transport_used: bool
+    fast_interaction_output_mode: str | None = None
+    foreground_gate_decision: str | None = None
+    foreground_output_basis: str | None = None
+    foreground_gate_failure_reason: str | None = None
+    latency_debug: Mapping[str, Any] = field(default_factory=dict)
+    provider_call_used: bool = False
+    fake_transport_used: bool = False
     event_ids: tuple[str, ...] = field(default_factory=tuple)
     safe_refs: tuple[str, ...] = field(default_factory=tuple)
 

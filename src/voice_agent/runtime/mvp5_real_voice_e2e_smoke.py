@@ -118,6 +118,10 @@ def run_mvp5_real_voice_e2e_single(
     env: Mapping[str, str] | None = None,
     asr_transport: object | None = None,
     thinker_transport: object | None = None,
+    fast_interaction_transport: object | None = None,
+    fast_interaction_enabled: bool = False,
+    audio_native_thinker_enabled: bool = True,
+    allow_fast_interaction_asr_text_fallback: bool = False,
     active_task_context: MVP5ActiveSlowTaskContext | None = None,
 ) -> dict[str, Any]:
     run_id = _require_safe_token(run_id, "run_id")
@@ -137,15 +141,23 @@ def run_mvp5_real_voice_e2e_single(
             allow_local_wav=allow_local_wav,
             approval_packet=approval_packet,
             credential_env_var_name=credential_env_var_name,
-            requested_provider_calls=_REQUESTS_PER_CASE,
+            requested_provider_calls=_single_run_provider_call_budget(
+                fast_interaction_enabled=fast_interaction_enabled,
+                allow_fast_interaction_asr_text_fallback=allow_fast_interaction_asr_text_fallback,
+            ),
             max_provider_calls=_positive_int(
                 approval_packet.get("max_provider_calls"),
                 "max_provider_calls",
             ),
+            timeout_ms=_positive_int(approval_packet.get("timeout_ms"), "timeout_ms"),
+            fast_interaction_enabled=fast_interaction_enabled,
+            audio_native_thinker_enabled=audio_native_thinker_enabled,
+            allow_fast_interaction_asr_text_fallback=allow_fast_interaction_asr_text_fallback,
         ),
         env={} if env is None else env,
         asr_transport=asr_transport,
         thinker_transport=thinker_transport,
+        fast_interaction_transport=fast_interaction_transport,
     )
     evidence_latency_debug = _normalize_latency_debug(
         getattr(evidence, "latency_debug", {}),
@@ -183,6 +195,11 @@ def run_mvp5_real_voice_e2e_single(
             "input_source": "local_wav_opt_in",
             "asr_output_mode": evidence.asr_output_mode,
             "thinker_output_mode": evidence.thinker_output_mode,
+            "fast_interaction_output_mode": getattr(
+                evidence,
+                "fast_interaction_output_mode",
+                None,
+            ),
             "local_wav_opt_in_used": evidence.local_wav_opt_in_used,
             "live_provider_approval_used": evidence.live_provider_approval_used,
             "provider_headers_included": False,
@@ -217,6 +234,11 @@ def _incomplete_evidence_metadata(
             "expected_route_matched": False,
             "asr_output_mode": evidence.asr_output_mode,
             "thinker_output_mode": evidence.thinker_output_mode,
+            "fast_interaction_output_mode": getattr(
+                evidence,
+                "fast_interaction_output_mode",
+                None,
+            ),
             "local_wav_opt_in_used": evidence.local_wav_opt_in_used,
             "live_provider_approval_used": evidence.live_provider_approval_used,
             "provider_headers_included": False,
@@ -675,6 +697,16 @@ def _validate_pack_budget(
         raise MVP5RealVoiceE2ESmokeError("pack request budget exceeds approval packet")
 
 
+def _single_run_provider_call_budget(
+    *,
+    fast_interaction_enabled: bool,
+    allow_fast_interaction_asr_text_fallback: bool,
+) -> int:
+    if fast_interaction_enabled and not allow_fast_interaction_asr_text_fallback:
+        return 1
+    return _REQUESTS_PER_CASE
+
+
 def _pack_case_summary(*, case_id: str, metadata: Mapping[str, Any]) -> dict[str, Any]:
     keys = (
         "run_id",
@@ -740,7 +772,29 @@ def _normalize_latency_debug(value: object) -> dict[str, Any]:
         "asr_provider_http_ms",
         "asr_normalize_emit_ms",
         "thinker_provider_http_ms",
+        "thinker_adapter_start_offset_ms",
+        "thinker_provider_request_start_offset_ms",
+        "thinker_provider_first_chunk_offset_ms",
+        "thinker_provider_full_response_offset_ms",
+        "thinker_adapter_event_emit_offset_ms",
+        "thinker_provider_ttft_ms",
+        "thinker_provider_full_response_ms",
+        "thinker_provider_generation_ms",
+        "thinker_stream_decode_ms",
         "thinker_parse_validate_emit_ms",
+        "fast_interaction_provider_http_ms",
+        "fast_interaction_adapter_start_offset_ms",
+        "fast_interaction_provider_request_start_offset_ms",
+        "fast_interaction_provider_first_chunk_offset_ms",
+        "fast_interaction_provider_full_response_offset_ms",
+        "fast_interaction_adapter_event_emit_offset_ms",
+        "fast_interaction_provider_ttft_ms",
+        "fast_interaction_provider_full_response_ms",
+        "fast_interaction_provider_generation_ms",
+        "fast_interaction_stream_decode_ms",
+        "fast_interaction_parse_validate_emit_ms",
+        "fast_interaction_total_ms",
+        "fast_interaction_timeout_ms",
         "router_ms",
         "qa_history_ms",
     )
@@ -748,6 +802,16 @@ def _normalize_latency_debug(value: object) -> dict[str, Any]:
         "provider_calls_parallel",
         "asr_started_before_thinker_finished",
         "thinker_started_before_asr_finished",
+        "thinker_ttft_available",
+        "fast_interaction_timed_out",
+        "fast_interaction_ttft_available",
+    )
+    string_fields = (
+        "thinker_ttft_source",
+        "fast_interaction_input_mode",
+        "fast_interaction_timing_mode",
+        "fast_interaction_ttft_source",
+        "fast_interaction_failure_category",
     )
     source = value if isinstance(value, Mapping) else {}
     latency_debug: dict[str, Any] = {}
@@ -755,6 +819,14 @@ def _normalize_latency_debug(value: object) -> dict[str, Any]:
         latency_debug[field] = _non_negative_int(source.get(field, 0), field)
     for field in bool_fields:
         latency_debug[field] = bool(source.get(field, False))
+    for field in string_fields:
+        raw_value = source.get(field, "")
+        if raw_value is None:
+            latency_debug[field] = ""
+        elif isinstance(raw_value, str):
+            latency_debug[field] = _require_safe_token(raw_value, field) if raw_value else ""
+        else:
+            raise MVP5RealVoiceE2ESmokeError(f"{field} must be a string")
     return latency_debug
 
 

@@ -21,6 +21,8 @@ ADAPTER_CALLBACK_EVENT_NAMES = frozenset(
         "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
         "SLOW_LLM_STRUCTURED_OUTPUT_EMITTED",
         "TTS_SYNTHESIS_OUTPUT_EMITTED",
+        "FAST_INTERACTION_OUTPUT_EMITTED",
+        "FOREGROUND_REPLY_CANDIDATE_EMITTED",
     }
 )
 
@@ -30,6 +32,16 @@ class AdapterCallbackAppendBoundary:
         self._journal = journal
         self._lock = Lock()
         self._next_callback_seq = 1
+
+    def require_event_ids_available(self, *event_ids: str) -> None:
+        seen: set[str] = set()
+        with self._lock:
+            for event_id in event_ids:
+                if event_id in seen or self._journal.has_event_id(event_id):
+                    raise AdapterCallbackBoundaryError(
+                        f"Duplicate event_id in session journal: {event_id}"
+                    )
+                seen.add(event_id)
 
     def append_adapter_event(self, **event_fields: Any) -> dict[str, Any]:
         event_name = event_fields.get("event_name")
