@@ -25,6 +25,8 @@ Source of truth: frozen ADR Baseline v0.4。本文件承载 P1-B-004，是从 AD
 | `timeout_policy` | yes | timeout policy/ref。 |
 | `retry_policy` | yes | retry policy/ref。 |
 | `output_mode` | yes | `real`, `mock`, `fallback`, `degraded`。 |
+| `role_contract` | Fast Interaction yes; others optional empty string | Adapter role contract identifier；Fast Interaction 必须独立于 Thinker / Composer。 |
+| `prompt_profile` | Fast Interaction yes; others optional empty string | Adapter prompt profile identifier；不得包含 raw prompt/provider body。 |
 
 ### Required capability fields
 
@@ -45,18 +47,82 @@ Source of truth: frozen ADR Baseline v0.4。本文件承载 P1-B-004，是从 AD
 | `supports_tts_pause_resume` | boolean | yes | pause/resume；MVP 非必需。 |
 | `supports_semantic_close` | boolean | yes | 是否能推断 semantic close。 |
 | `supports_assistant_directedness` | boolean | yes | 是否能推断 assistant-directedness。 |
+| `supports_fast_interaction_output` | boolean | yes | 是否能产出 ADR-017 Fast Interaction normalized output。 |
+| `supports_route_hint` | boolean | yes | 是否能产出非权威 route hint evidence。 |
+| `supports_route_prelude` | boolean | yes | 是否能产出给 Router / gate / replay 使用的短结构化摘要。 |
+| `supports_foreground_act` | boolean | yes | 是否能产出 foreground act suggestion。 |
+| `supports_reply_candidate` | boolean | yes | 是否能产出 gate 前候选前台回复。 |
+| `supports_reply_delta_streaming` | boolean | yes | 是否能产出 buffered reply delta stream；gate 通过前不得展示。 |
+| `supports_final_fast_evidence` | boolean | yes | 是否能产出 final fast evidence ref。 |
+| `supports_schema_validation` | boolean | yes | 是否在 adapter 侧执行输出 schema/contract validation。 |
+| `supports_risk_tags` | boolean | yes | 是否能产出 risk tags / risk metadata。 |
+| `supports_confidence` | boolean | yes | 是否能产出 confidence metadata。 |
+| `supports_asr_text_fallback` | boolean | yes | Fast Interaction 是否支持从 ASR text projection 降级输入；非 Fast Interaction adapter 必须为 `false`。 |
+| `supports_provider_stream_timing` | boolean | yes | 是否能记录 provider streaming timing metadata，且只以 sanitized metadata 写入事件。 |
+| `supports_ttft_observation` | boolean | yes | 是否能观察 provider time-to-first-token/chunk timing；不可用时必须显式为 `false`。 |
 | `latency_class` | enum/ref | yes | development latency bucket 或 measured bucket。 |
 | `max_audio_seconds` | integer/null | yes | 最大音频输入长度。 |
 | `max_context_tokens` | integer/null | yes | 最大上下文长度。 |
 | `max_output_tokens` | integer/null | yes | 最大输出长度。 |
 | `expected_first_token_latency_ms` | integer/null | yes | 预期 first-token latency。 |
 | `expected_first_audio_latency_ms` | integer/null | yes | 预期 first-audio latency。 |
+| `max_reply_candidate_tokens` | integer/null | yes | Fast Interaction reply candidate 最大 token budget。 |
+| `expected_first_candidate_latency_ms` | integer/null | yes | Fast Interaction first candidate 预期延迟。 |
+| `expected_final_gate_ready_latency_ms` | integer/null | yes | Fast Interaction final gate-ready evidence 预期延迟。 |
 
 Mock-specific fields:
 
 - 被 mock 行为模拟的能力必须标 `mocked=true`。
 - 使用 `mock_profile_ref` 指向 deterministic fixture behavior。
 - 当 mock 缺少目标架构真实接口证据时，例如 barge-in 没有 playback reference，必须 `target_architecture_validation=false`。
+
+### Fast Interaction live profile note
+
+MVP6.3 live Fast Interaction profile is capability/profile metadata only. It
+declares `adapter_type=fast_interaction`, `output_mode=real`, a safe provider URL
+ref such as `provider-url://dashscope/openai-compatible-chat-completions`, and a
+safe config ref such as `config://runtime/fast-interaction/dashscope`. It must
+not include credentials, provider request/response bodies, raw prompts, raw
+audio, diagnostics, traces, or local replay cache.
+
+The initial MVP6.3 profile is audio-native live Fast Interaction. It supports
+safe audio refs as primary input, ASR text only as explicit fallback, route hint,
+route prelude, foreground act, reply candidate, final fast evidence, structured
+JSON, schema validation, risk tags, confidence, provider stream timing metadata,
+and TTFT observation. It explicitly sets
+`supports_reply_delta_streaming=false`, so `supports_reply_delta_streaming` must
+appear in `unsupported_capabilities`.
+
+Example values:
+
+| Field | MVP6.3 live Fast Interaction value |
+| --- | --- |
+| `adapter_id` | `mvp63_fast_interaction_runtime` |
+| `adapter_type` | `fast_interaction` |
+| `provider` | `dashscope_bailian` |
+| `model_name` | `qwen3.5-fast-interaction` |
+| `deployment_mode` | `remote_api` |
+| `capability_version` | `mvp6.3.fast-interaction.runtime.v1` |
+| `latency_class` | `remote_api_http_audio_native_fast_interaction` |
+| `role_contract` | `live_fast_interaction_audio_native_v1` |
+| `prompt_profile` | `mvp6.3.fast_interaction.audio_native.v1` |
+| `supports_audio_input` | `true` |
+| `supports_fast_interaction_output` | `true` |
+| `supports_route_hint` | `true` |
+| `supports_route_prelude` | `true` |
+| `supports_foreground_act` | `true` |
+| `supports_reply_candidate` | `true` |
+| `supports_reply_delta_streaming` | `false` |
+| `supports_final_fast_evidence` | `true` |
+| `supports_schema_validation` | `true` |
+| `supports_risk_tags` | `true` |
+| `supports_confidence` | `true` |
+| `supports_asr_text_fallback` | `true` |
+| `supports_provider_stream_timing` | `true` |
+| `supports_ttft_observation` | `true` |
+| `max_reply_candidate_tokens` | `220` |
+| `expected_first_candidate_latency_ms` | `1200` |
+| `expected_final_gate_ready_latency_ms` | `1600` |
 
 ## 2. Startup Capability Snapshot
 

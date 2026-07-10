@@ -30,7 +30,12 @@ REQUIRED_IDENTITY_FIELDS = (
     "config_ref",
 )
 
-BOOLEAN_CAPABILITY_FIELDS = (
+PROFILE_DESCRIPTOR_FIELDS = (
+    "role_contract",
+    "prompt_profile",
+)
+
+BASE_BOOLEAN_CAPABILITY_FIELDS = (
     "supports_streaming_input",
     "supports_streaming_output",
     "supports_audio_input",
@@ -48,13 +53,65 @@ BOOLEAN_CAPABILITY_FIELDS = (
     "supports_assistant_directedness",
 )
 
-NUMERIC_CAPABILITY_FIELDS = (
+FAST_INTERACTION_BOOLEAN_CAPABILITY_FIELDS = (
+    "supports_fast_interaction_output",
+    "supports_route_hint",
+    "supports_route_prelude",
+    "supports_foreground_act",
+    "supports_reply_candidate",
+    "supports_reply_delta_streaming",
+    "supports_final_fast_evidence",
+    "supports_schema_validation",
+    "supports_risk_tags",
+    "supports_confidence",
+    "supports_asr_text_fallback",
+)
+
+TIMING_BOOLEAN_CAPABILITY_FIELDS = (
+    "supports_provider_stream_timing",
+    "supports_ttft_observation",
+)
+
+FAST_INTERACTION_OWNED_BOOLEAN_CAPABILITY_FIELDS = (
+    "supports_fast_interaction_output",
+    "supports_route_hint",
+    "supports_route_prelude",
+    "supports_foreground_act",
+    "supports_reply_candidate",
+    "supports_reply_delta_streaming",
+    "supports_final_fast_evidence",
+    "supports_risk_tags",
+    "supports_confidence",
+    "supports_asr_text_fallback",
+)
+
+BOOLEAN_CAPABILITY_FIELDS = (
+    *BASE_BOOLEAN_CAPABILITY_FIELDS,
+    *FAST_INTERACTION_BOOLEAN_CAPABILITY_FIELDS,
+    *TIMING_BOOLEAN_CAPABILITY_FIELDS,
+)
+# Stable aliases for callers/tests that need the full canonical field order.
+ALL_BOOLEAN_CAPABILITY_FIELDS = BOOLEAN_CAPABILITY_FIELDS
+
+BASE_NUMERIC_CAPABILITY_FIELDS = (
     "max_audio_seconds",
     "max_context_tokens",
     "max_output_tokens",
     "expected_first_token_latency_ms",
     "expected_first_audio_latency_ms",
 )
+
+FAST_INTERACTION_NUMERIC_CAPABILITY_FIELDS = (
+    "max_reply_candidate_tokens",
+    "expected_first_candidate_latency_ms",
+    "expected_final_gate_ready_latency_ms",
+)
+
+NUMERIC_CAPABILITY_FIELDS = (
+    *BASE_NUMERIC_CAPABILITY_FIELDS,
+    *FAST_INTERACTION_NUMERIC_CAPABILITY_FIELDS,
+)
+ALL_NUMERIC_CAPABILITY_FIELDS = NUMERIC_CAPABILITY_FIELDS
 
 REQUIRED_CAPABILITY_FIELDS = (
     *BOOLEAN_CAPABILITY_FIELDS,
@@ -70,6 +127,7 @@ MOCK_SPECIFIC_FIELDS = (
 ALLOWED_CAPABILITY_FIELDS = frozenset(
     (
         *REQUIRED_IDENTITY_FIELDS,
+        *PROFILE_DESCRIPTOR_FIELDS,
         *BOOLEAN_CAPABILITY_FIELDS,
         *NUMERIC_CAPABILITY_FIELDS,
         *MOCK_SPECIFIC_FIELDS,
@@ -98,6 +156,8 @@ class AdapterCapability:
     retry_policy: str
     output_mode: str
     config_ref: str
+    role_contract: str
+    prompt_profile: str
     supports_streaming_input: bool
     supports_streaming_output: bool
     supports_audio_input: bool
@@ -113,11 +173,27 @@ class AdapterCapability:
     supports_tts_pause_resume: bool
     supports_semantic_close: bool
     supports_assistant_directedness: bool
+    supports_fast_interaction_output: bool
+    supports_route_hint: bool
+    supports_route_prelude: bool
+    supports_foreground_act: bool
+    supports_reply_candidate: bool
+    supports_reply_delta_streaming: bool
+    supports_final_fast_evidence: bool
+    supports_schema_validation: bool
+    supports_risk_tags: bool
+    supports_confidence: bool
+    supports_asr_text_fallback: bool
+    supports_provider_stream_timing: bool
+    supports_ttft_observation: bool
     max_audio_seconds: int | None
     max_context_tokens: int | None
     max_output_tokens: int | None
     expected_first_token_latency_ms: int | None
     expected_first_audio_latency_ms: int | None
+    max_reply_candidate_tokens: int | None
+    expected_first_candidate_latency_ms: int | None
+    expected_final_gate_ready_latency_ms: int | None
     mocked: bool
     mock_profile_ref: str
     target_architecture_validation: bool
@@ -136,6 +212,7 @@ def validate_capability_matrix(matrix: Mapping[str, Any]) -> dict[str, Any]:
 
     for field in REQUIRED_IDENTITY_FIELDS:
         _require_non_empty_string(normalized, field)
+    _validate_profile_descriptors(normalized)
     for field in BOOLEAN_CAPABILITY_FIELDS:
         _require_bool(normalized, field)
     for field in NUMERIC_CAPABILITY_FIELDS:
@@ -146,7 +223,8 @@ def validate_capability_matrix(matrix: Mapping[str, Any]) -> dict[str, Any]:
 
     _validate_credential_safe_refs(normalized)
     _validate_mock_fields(normalized)
-    _validate_unsupported_capabilities(normalized)
+    _validate_fast_interaction_owned_fields(normalized)
+    normalized["unsupported_capabilities"] = _canonical_unsupported_capabilities(normalized)
 
     return normalized
 
@@ -185,7 +263,35 @@ def _validate_mock_fields(matrix: Mapping[str, Any]) -> None:
         raise CapabilityValidationError("target_architecture_validation must be explicit for mocks")
 
 
-def _validate_unsupported_capabilities(matrix: Mapping[str, Any]) -> None:
+def _validate_profile_descriptors(matrix: dict[str, Any]) -> None:
+    for field in PROFILE_DESCRIPTOR_FIELDS:
+        value = matrix.get(field, "")
+        if not isinstance(value, str):
+            raise CapabilityValidationError(f"{field} must be a string")
+        matrix[field] = value
+
+    if matrix.get("adapter_type") == "fast_interaction":
+        for field in PROFILE_DESCRIPTOR_FIELDS:
+            _require_non_empty_string(matrix, field)
+
+
+def _validate_fast_interaction_owned_fields(matrix: Mapping[str, Any]) -> None:
+    if matrix["adapter_type"] == "fast_interaction":
+        return
+
+    claimed = [
+        field
+        for field in FAST_INTERACTION_OWNED_BOOLEAN_CAPABILITY_FIELDS
+        if matrix[field] is True
+    ]
+    if claimed:
+        raise CapabilityValidationError(
+            "Only adapter_type='fast_interaction' may claim Fast Interaction capabilities: "
+            f"{claimed}"
+        )
+
+
+def _canonical_unsupported_capabilities(matrix: Mapping[str, Any]) -> tuple[str, ...]:
     unsupported = matrix.get("unsupported_capabilities")
     if not _is_string_sequence(unsupported):
         raise CapabilityValidationError("unsupported_capabilities must explicitly list unsupported fields")
@@ -204,6 +310,7 @@ def _validate_unsupported_capabilities(matrix: Mapping[str, Any]) -> None:
         raise CapabilityValidationError(
             f"Unsupported capabilities contradict declared support: {sorted(contradictions)}"
         )
+    return tuple(field for field in BOOLEAN_CAPABILITY_FIELDS if matrix[field] is False)
 
 
 def _is_string_sequence(value: Any) -> bool:

@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from voice_agent.adapters import lalm_thinker_runtime_adapter as runtime_adapter_module
+from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
 from tests.adapters.test_mvp3_adapter_profiles import mvp3_real_capability
 from voice_agent.adapters.lalm_thinker_profile import build_lalm_thinker_capability
 from voice_agent.adapters.lalm_thinker_real_runtime_smoke import (
@@ -143,6 +147,97 @@ def test_valid_provider_text_emits_normalized_thinker_contract_event() -> None:
     assert "Bearer " not in repr(startup.journal.events())
 
 
+def test_timing_capable_transport_adds_safe_thinker_latency_metadata() -> None:
+    startup = _start_session(session_id="sess_lalm_thinker_runtime_timing")
+    committed_turn = _append_committed_text_turn(startup.journal)
+    transport = _RuntimeTimingFakeTransport()
+    adapter = LALMThinkerRuntimeAdapter(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+    )
+
+    result = adapter.handle_turn_ingress_committed(
+        committed_turn,
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
+    )
+
+    metadata = result.to_metadata()
+    assert result.success is True
+    assert transport.call_count == 1
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert metadata["thinker_provider_full_response_ms"] == 80
+    assert metadata["thinker_provider_generation_ms"] == 55
+    assert metadata["thinker_ttft_available"] is True
+    assert metadata["thinker_ttft_source"] == "provider_stream_chunk"
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert "provider_text" not in repr(metadata)
+    assert "runtime-secret-value-for-test-only" not in repr(metadata)
+    assert "Bearer " not in repr(metadata)
+
+
+def test_malicious_timing_metadata_cannot_override_runtime_privacy_flags() -> None:
+    startup = _start_session(session_id="sess_lalm_thinker_runtime_malicious_timing")
+    committed_turn = _append_committed_text_turn(startup.journal)
+    transport = _RuntimeTimingFakeTransport(mode="malicious_timing")
+    adapter = LALMThinkerRuntimeAdapter(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+    )
+
+    result = adapter.handle_turn_ingress_committed(
+        committed_turn,
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
+    )
+
+    metadata = result.to_metadata()
+    rendered = repr(metadata)
+    assert result.success is True
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert metadata["raw_provider_response_included"] is False
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["secret_included"] is False
+    assert "token=synthetic-leak" not in rendered
+    assert "raw_provider_body" not in rendered
+
+
+def test_timing_metadata_uses_runtime_parse_validate_emit_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    startup = _start_session(session_id="sess_lalm_thinker_runtime_timing_parse_emit")
+    committed_turn = _append_committed_text_turn(startup.journal)
+    transport = _RuntimeTimingFakeTransport()
+    clock = _SequenceClock((1210, 1227))
+    monkeypatch.setattr(runtime_adapter_module, "_monotonic_ms", clock)
+    adapter = LALMThinkerRuntimeAdapter(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+    )
+
+    result = adapter.handle_turn_ingress_committed(
+        committed_turn,
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
+    )
+
+    metadata = result.to_metadata()
+    assert result.success is True
+    assert metadata["thinker_parse_validate_emit_ms"] == 17
+    assert metadata["thinker_adapter_event_emit_offset_ms"] == 1017
+    assert metadata["thinker_total_ms"] == 1017
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert "provider_text" not in repr(metadata)
+    assert "runtime-secret-value-for-test-only" not in repr(metadata)
+
+
 def test_invalid_provider_text_emits_validation_failure_without_thinker_event() -> None:
     startup = _start_session(session_id="sess_lalm_thinker_runtime_invalid")
     committed_turn = _append_committed_text_turn(startup.journal)
@@ -167,6 +262,72 @@ def test_invalid_provider_text_emits_validation_failure_without_thinker_event() 
     assert result.validation_failed_event["failure_reasons"] == ["fenced_markdown"]
     assert "```json" not in repr(result.validation_failed_event)
     assert "runtime-secret-value-for-test-only" not in repr(startup.journal.events())
+
+
+def test_invalid_timing_provider_text_preserves_safe_thinker_latency_metadata() -> None:
+    startup = _start_session(session_id="sess_lalm_thinker_runtime_timing_invalid")
+    committed_turn = _append_committed_text_turn(startup.journal)
+    transport = _RuntimeTimingFakeTransport(mode="invalid")
+    adapter = LALMThinkerRuntimeAdapter(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+    )
+
+    result = adapter.handle_turn_ingress_committed(
+        committed_turn,
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
+    )
+
+    metadata = result.to_metadata()
+    assert result.success is False
+    assert result.validation_failed_event is not None
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert metadata["thinker_provider_full_response_ms"] == 80
+    assert metadata["thinker_provider_generation_ms"] == 55
+    assert metadata["thinker_ttft_available"] is True
+    assert metadata["thinker_ttft_source"] == "provider_stream_chunk"
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert "provider_text" not in repr(metadata)
+    assert "```json" not in repr(metadata)
+    assert "runtime-secret-value-for-test-only" not in repr(metadata)
+    assert "Bearer " not in repr(metadata)
+
+
+def test_missing_timing_provider_text_preserves_safe_thinker_latency_metadata() -> None:
+    startup = _start_session(session_id="sess_lalm_thinker_runtime_timing_missing_text")
+    committed_turn = _append_committed_text_turn(startup.journal)
+    transport = _RuntimeTimingFakeTransport(mode="missing_text")
+    adapter = LALMThinkerRuntimeAdapter(
+        boundary=AdapterCallbackAppendBoundary(startup.journal),
+        env={"DASHSCOPE_API_KEY": "runtime-secret-value-for-test-only"},
+        transport=transport,
+    )
+
+    result = adapter.handle_turn_ingress_committed(
+        committed_turn,
+        created_monotonic_ms=210,
+        created_wall_clock_ms=1700000000210,
+        transient_input_text="turn on the desk lamp",
+    )
+
+    metadata = result.to_metadata()
+    assert result.success is False
+    assert result.request_failed_event is not None
+    assert result.failure_category == "provider_response_text_missing"
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert metadata["thinker_provider_full_response_ms"] == 80
+    assert metadata["thinker_provider_generation_ms"] == 55
+    assert metadata["thinker_ttft_available"] is True
+    assert metadata["thinker_ttft_source"] == "provider_stream_chunk"
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert "provider_text" not in repr(metadata)
+    assert "runtime-secret-value-for-test-only" not in repr(metadata)
+    assert "Bearer " not in repr(metadata)
 
 
 def test_transport_failure_emits_safe_request_failed_metadata() -> None:
@@ -296,6 +457,90 @@ class _RuntimeFakeTransport:
             "audio_caption": {"status": "available", "label": "caption_available"},
         }
         return json.dumps(skeleton, separators=(",", ":"), sort_keys=True)
+
+
+class _RuntimeTimingFakeTransport:
+    def __init__(self, *, mode: str = "valid") -> None:
+        self.mode = mode
+        self.call_count = 0
+
+    def complete_with_timing(
+        self,
+        *,
+        request_payload: object,
+        credential_handle: object,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+        turn_ingress_monotonic_ms: int,
+    ) -> object:
+        assert turn_ingress_monotonic_ms == 210
+        self.call_count += 1
+        if self.mode == "missing_text":
+            provider_text = None
+        else:
+            provider_text = _RuntimeFakeTransport(mode=self.mode).complete(
+                request_payload=request_payload,
+                credential_handle=credential_handle,
+                credential_value=credential_value,
+                adapter_request_id=adapter_request_id,
+                timeout_ms=timeout_ms,
+                model_alias=model_alias,
+            )
+        timing: object = _MaliciousTiming() if self.mode == "malicious_timing" else _timing_snapshot()
+        return _RuntimeCompletion(provider_text=provider_text, timing=timing)
+
+
+class _RuntimeCompletion:
+    def __init__(self, *, provider_text: object, timing: AdapterTimingSnapshot) -> None:
+        self.provider_text = provider_text
+        self.timing = timing
+
+
+class _SequenceClock:
+    def __init__(self, values: tuple[int, ...]) -> None:
+        self._values = list(values)
+
+    def __call__(self) -> int:
+        assert self._values
+        return self._values.pop(0)
+
+
+class _MaliciousTiming:
+    def to_prefixed_metadata(self, prefix: str) -> dict[str, object]:
+        assert prefix == "thinker"
+        return {
+            "thinker_provider_ttft_ms": 25,
+            "thinker_provider_full_response_ms": 80,
+            "thinker_provider_generation_ms": 55,
+            "thinker_ttft_available": True,
+            "thinker_ttft_source": "provider_stream_chunk",
+            "thinker_timing_mode": "streaming",
+            "raw_provider_response_included": True,
+            "secret_included": True,
+            "raw_provider_body": "token=synthetic-leak",
+            "thinker_total_ms": "token=synthetic-leak",
+        }
+
+
+def _timing_snapshot() -> AdapterTimingSnapshot:
+    return AdapterTimingSnapshot(
+        adapter_start_offset_ms=0,
+        provider_request_start_offset_ms=0,
+        provider_first_chunk_offset_ms=25,
+        provider_full_response_offset_ms=80,
+        adapter_event_emit_offset_ms=85,
+        provider_ttft_ms=25,
+        provider_full_response_ms=80,
+        provider_generation_ms=55,
+        stream_decode_ms=0,
+        parse_validate_emit_ms=0,
+        total_ms=85,
+        timing_mode="streaming",
+        ttft_available=True,
+        ttft_source="provider_stream_chunk",
+    )
 
 
 def _start_session(*, session_id: str = "sess_lalm_thinker_runtime") -> object:

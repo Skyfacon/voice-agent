@@ -12,7 +12,10 @@ class EventDefinition:
     event_name: str
     required_fields: tuple[str, ...]
     one_of_fields: tuple[tuple[str, ...], ...] = ()
+    any_of_field_sets: tuple[tuple[str, ...], ...] = ()
     literal_fields: dict[str, object] = field(default_factory=dict)
+    domain: str | None = None
+    category: str | None = None
     is_root: bool = False
     caused_by_event_required: bool = True
 
@@ -22,7 +25,10 @@ def _definition(
     *,
     required_fields: tuple[str, ...] = (),
     one_of_fields: tuple[tuple[str, ...], ...] = (),
+    any_of_field_sets: tuple[tuple[str, ...], ...] = (),
     literal_fields: dict[str, object] | None = None,
+    domain: str | None = None,
+    category: str | None = None,
     is_root: bool = False,
     caused_by_event_required: bool = True,
 ) -> EventDefinition:
@@ -30,7 +36,10 @@ def _definition(
         event_name=event_name,
         required_fields=required_fields,
         one_of_fields=one_of_fields,
+        any_of_field_sets=any_of_field_sets,
         literal_fields=literal_fields or {},
+        domain=domain,
+        category=category,
         is_root=is_root,
         caused_by_event_required=caused_by_event_required,
     )
@@ -807,10 +816,119 @@ MVP2_EVENT_NAMES = frozenset(MVP2_EVENT_DEFINITIONS) | {
     "TOOL_CALL_STARTED",
     "TOOL_RESULT_RECEIVED",
 }
+FAST_FOREGROUND_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
+    "FAST_INTERACTION_OUTPUT_EMITTED": _definition(
+        "FAST_INTERACTION_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "turn_id",
+            "utterance_id",
+            "route_hint_ref",
+            "route_prelude_ref",
+            "foreground_act",
+            "final_fast_evidence_ref",
+            "schema_name",
+            "normalization_status",
+            "output_mode",
+            "input_mode",
+            "fast_interaction_input_mode",
+            "source_event_ids",
+        ),
+        literal_fields={
+            "adapter_type": "fast_interaction",
+            "normalization_status": "normalized",
+        },
+        domain="fast_foreground",
+        category="adapter_output",
+    ),
+    "FOREGROUND_REPLY_CANDIDATE_EMITTED": _definition(
+        "FOREGROUND_REPLY_CANDIDATE_EMITTED",
+        required_fields=(
+            "candidate_id",
+            "fast_interaction_output_event_id",
+            "turn_id",
+            "utterance_id",
+            "candidate_status",
+            "input_mode",
+            "fast_interaction_input_mode",
+            "source_event_ids",
+            "risk_tags",
+            "confidence",
+            "trace_redaction_level",
+        ),
+        one_of_fields=(("candidate_ref", "reply_delta_stream_ref"),),
+        domain="fast_foreground",
+        category="reply_candidate",
+    ),
+    "FOREGROUND_ACT_GATE_PASSED": _definition(
+        "FOREGROUND_ACT_GATE_PASSED",
+        required_fields=(
+            "gate_decision_id",
+            "candidate_event_id",
+            "router_decision_event_id",
+            "foreground_act",
+            "risk_class",
+            "confidence",
+            "policy_version",
+            "pass_reason",
+        ),
+        literal_fields={
+            "foreground_act": "ANSWER",
+            "risk_class": "LOW",
+        },
+        domain="fast_foreground",
+        category="gate_decision",
+    ),
+    "FOREGROUND_ACT_GATE_FAILED": _definition(
+        "FOREGROUND_ACT_GATE_FAILED",
+        required_fields=(
+            "gate_decision_id",
+            "router_decision_event_id",
+            "foreground_act",
+            "risk_class",
+            "confidence",
+            "policy_version",
+            "failure_reason",
+        ),
+        domain="fast_foreground",
+        category="gate_decision",
+    ),
+    "FOREGROUND_OUTPUT_COMMITTED": _definition(
+        "FOREGROUND_OUTPUT_COMMITTED",
+        required_fields=(
+            "foreground_output_id",
+            "turn_id",
+            "utterance_id",
+            "output_ref",
+            "output_basis",
+            "router_decision_event_id",
+            "user_visible_channel",
+        ),
+        any_of_field_sets=(("gate_event_id",), ("fallback_policy_ref", "fallback_reason")),
+        domain="fast_foreground",
+        category="foreground_output",
+    ),
+    "FOREGROUND_OUTPUT_DISCARDED": _definition(
+        "FOREGROUND_OUTPUT_DISCARDED",
+        required_fields=(
+            "discard_id",
+            "candidate_event_id",
+            "fast_interaction_output_event_id",
+            "router_decision_event_id",
+            "discard_reason",
+        ),
+        domain="fast_foreground",
+        category="foreground_output",
+    ),
+}
+FAST_FOREGROUND_EVENT_NAMES = frozenset(FAST_FOREGROUND_EVENT_DEFINITIONS)
 EVENT_DEFINITIONS: dict[str, EventDefinition] = {
     **MVP0_EVENT_DEFINITIONS,
     **MVP1_EVENT_DEFINITIONS,
     **MVP2_EVENT_DEFINITIONS,
+    **FAST_FOREGROUND_EVENT_DEFINITIONS,
 }
 
 

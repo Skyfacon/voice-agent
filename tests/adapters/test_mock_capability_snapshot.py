@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from voice_agent.adapters.capabilities import (
-    BOOLEAN_CAPABILITY_FIELDS,
+    ALL_BOOLEAN_CAPABILITY_FIELDS,
     REQUIRED_CAPABILITY_FIELDS,
     REQUIRED_IDENTITY_FIELDS,
     CapabilityValidationError,
@@ -45,7 +45,7 @@ def test_unsupported_mock_capabilities_are_explicit_not_assumed() -> None:
         matrix = capability.to_dict()
         unsupported = set(matrix["unsupported_capabilities"])
         false_capabilities = {
-            field for field in BOOLEAN_CAPABILITY_FIELDS if matrix[field] is False
+            field for field in ALL_BOOLEAN_CAPABILITY_FIELDS if matrix[field] is False
         }
 
         assert false_capabilities

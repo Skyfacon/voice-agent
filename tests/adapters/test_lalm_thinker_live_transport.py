@@ -294,6 +294,70 @@ def test_direct_http_transport_audio_uses_input_audio_without_retaining_raw_audi
     assert "Bearer " not in rendered_metadata
 
 
+def test_complete_audio_with_timing_records_provider_ttft_from_first_content_chunk() -> None:
+    first_chunk = {"choices": [{"delta": {"content": '{"ok":'}}]}
+    second_chunk = {"choices": [{"delta": {"content": "true}"}}]}
+    clock = _SequenceClock((1000, 1000, 1025, 1080, 1080))
+    opener = _CapturingOpener(
+        response_lines=(
+            *_streaming_response_lines_without_done(first_chunk, second_chunk),
+            b"data: [DONE]\n\n",
+        )
+    )
+    transport = LALMThinkerLiveDirectHTTPTransport(opener=opener)
+
+    result = transport.complete_audio_with_timing(
+        request_payload={"request_metadata": {"safe_ref": "turn://synthetic/ttft"}},
+        audio_bytes=b"RIFF0000WAVE",
+        audio_format="wav",
+        credential_handle=LALMThinkerCredentialHandle("secret-ref://runtime/dashscope"),
+        credential_value="synthetic-key",
+        adapter_request_id="adapter_request_thinker_ttft",
+        timeout_ms=30000,
+        model_alias="qwen-audio-fast",
+        turn_ingress_monotonic_ms=1000,
+        now_ms=clock,
+    )
+
+    assert result.provider_text == '{"ok":true}'
+    assert result.timing.provider_ttft_ms == 25
+    assert result.timing.provider_full_response_ms == 80
+    assert result.timing.provider_generation_ms == 55
+    assert result.timing.ttft_source == "provider_stream_chunk"
+    assert result.timing.ttft_available is True
+
+
+def test_complete_with_timing_marks_ttft_unavailable_without_content_chunk() -> None:
+    empty_chunk = {"choices": [{"delta": {"content": ""}}]}
+    message_chunk = {"choices": [{"message": {"content": '{"ok":true}'}}]}
+    clock = _SequenceClock((1000, 1000, 1080, 1080))
+    opener = _CapturingOpener(
+        response_lines=(
+            *_streaming_response_lines_without_done(empty_chunk, message_chunk),
+            b"data: [DONE]\n\n",
+        )
+    )
+    transport = LALMThinkerLiveDirectHTTPTransport(opener=opener)
+
+    result = transport.complete_with_timing(
+        request_payload={"request_metadata": {"safe_ref": "turn://synthetic/full-only"}},
+        credential_handle=LALMThinkerCredentialHandle("secret-ref://runtime/dashscope"),
+        credential_value="synthetic-key",
+        adapter_request_id="adapter_request_thinker_full_only",
+        timeout_ms=30000,
+        model_alias="qwen-audio-fast",
+        turn_ingress_monotonic_ms=1000,
+        now_ms=clock,
+    )
+
+    assert result.provider_text == '{"ok":true}'
+    assert result.timing.ttft_available is False
+    assert result.timing.provider_ttft_ms is None
+    assert result.timing.provider_generation_ms is None
+    assert result.timing.provider_full_response_ms == 80
+    assert result.timing.ttft_source == "not_available"
+
+
 def test_direct_http_transport_maps_http_errors_to_safe_categories() -> None:
     opener = _RaisingOpener(
         urllib.error.HTTPError(
@@ -426,6 +490,22 @@ def _streaming_response_lines(response_payload: object) -> tuple[bytes, ...]:
         f"data: {json.dumps(response_payload, separators=(',', ':'))}\n\n".encode("utf-8"),
         b"data: [DONE]\n\n",
     )
+
+
+def _streaming_response_lines_without_done(*response_payloads: object) -> tuple[bytes, ...]:
+    return tuple(
+        f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode("utf-8")
+        for payload in response_payloads
+    )
+
+
+class _SequenceClock:
+    def __init__(self, values: tuple[int, ...]) -> None:
+        self._values = list(values)
+
+    def __call__(self) -> int:
+        assert self._values
+        return self._values.pop(0)
 
 
 def _binding() -> object:

@@ -544,6 +544,7 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
     committed_turn_events: dict[tuple[str, str], str] = {}
     asr_events: dict[tuple[str, str], str] = {}
     thinker_events: dict[tuple[str, str], str] = {}
+    fast_interaction_events: dict[tuple[str, str], str] = {}
 
     for event in ordered_events:
         event_name = str(event["event_name"])
@@ -565,17 +566,42 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
             if event.get("caused_by_event_id") != committed_event_id:
                 raise ReplayValidationError(f"{event_name} must be caused by TURN_INGRESS_COMMITTED")
             thinker_events[key] = str(event["event_id"])
+        elif event_name == "FAST_INTERACTION_OUTPUT_EMITTED":
+            key = _turn_key(event)
+            input_mode = _fast_interaction_input_mode(event)
+            committed_event_id = committed_turn_events.get(key)
+            if committed_event_id is None:
+                raise ReplayValidationError(
+                    "FAST_INTERACTION_OUTPUT_EMITTED requires prior TURN_INGRESS_COMMITTED"
+                )
+            if input_mode == "audio_native":
+                if event.get("caused_by_event_id") != committed_event_id:
+                    raise ReplayValidationError(
+                        "audio-native FAST_INTERACTION_OUTPUT_EMITTED must be caused by TURN_INGRESS_COMMITTED"
+                    )
+            elif input_mode == "asr_text_fallback":
+                asr_event_id = asr_events.get(key)
+                if asr_event_id is None:
+                    raise ReplayValidationError(
+                        "ASR-text fallback FAST_INTERACTION_OUTPUT_EMITTED requires prior ASR evidence"
+                    )
+                if event.get("caused_by_event_id") != asr_event_id:
+                    raise ReplayValidationError(
+                        "ASR-text fallback FAST_INTERACTION_OUTPUT_EMITTED must be caused by prior ASR evidence"
+                    )
+            fast_interaction_events[key] = str(event["event_id"])
         elif event_name == "ROUTER_DECISION_EMITTED":
             key = _turn_key(event)
             if key not in committed_turn_events:
                 raise ReplayValidationError("ROUTER_DECISION_EMITTED requires prior TURN_INGRESS_COMMITTED")
             asr_event_id = asr_events.get(key)
             thinker_event_id = thinker_events.get(key)
-            if asr_event_id is None and thinker_event_id is None:
+            fast_interaction_event_id = fast_interaction_events.get(key)
+            if asr_event_id is None and thinker_event_id is None and fast_interaction_event_id is None:
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED requires prior MOCK_ASR_FRAME_EMITTED or "
                     "MOCK_THINKER_FRAME_EMITTED, ASR_TRANSCRIPT_OUTPUT_EMITTED, or "
-                    "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"
+                    "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED, or FAST_INTERACTION_OUTPUT_EMITTED"
                 )
             if event.get("asr_frame_event_id") is not None and asr_event_id is None:
                 raise ReplayValidationError(
@@ -591,6 +617,33 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 raise ReplayValidationError(
                     "ROUTER_DECISION_EMITTED thinker_frame_event_id must reference prior Thinker evidence"
                 )
+            if event.get("fast_interaction_output_event_id") is not None and fast_interaction_event_id is None:
+                raise ReplayValidationError(
+                    "ROUTER_DECISION_EMITTED fast_interaction_output_event_id requires prior Fast Interaction evidence"
+                )
+            if event.get("fast_interaction_output_event_id") not in (None, fast_interaction_event_id):
+                raise ReplayValidationError(
+                    "ROUTER_DECISION_EMITTED fast_interaction_output_event_id must reference prior Fast Interaction evidence"
+                )
+
+
+def _fast_interaction_input_mode(event: Mapping[str, Any]) -> str:
+    fast_interaction_input_mode = event.get("fast_interaction_input_mode")
+    input_mode = event.get("input_mode")
+    if fast_interaction_input_mode in (None, "") and input_mode in (None, ""):
+        raise ReplayValidationError("FAST_INTERACTION_OUTPUT_EMITTED requires input_mode")
+    if (
+        fast_interaction_input_mode not in (None, "")
+        and input_mode not in (None, "")
+        and fast_interaction_input_mode != input_mode
+    ):
+        raise ReplayValidationError(
+            "FAST_INTERACTION_OUTPUT_EMITTED input_mode must match fast_interaction_input_mode"
+        )
+    resolved = str(fast_interaction_input_mode or input_mode)
+    if resolved not in {"audio_native", "asr_text_fallback"}:
+        raise ReplayValidationError("FAST_INTERACTION_OUTPUT_EMITTED has unsupported input_mode")
+    return resolved
 
 
 ASR_FORBIDDEN_PAYLOAD_FIELDS = frozenset(
