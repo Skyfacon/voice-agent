@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import time
 from typing import Any
 
 from voice_agent.events.journal import InMemoryEventJournal
@@ -36,6 +37,8 @@ class FastForegroundGateResult:
     gate_event: dict[str, Any]
     committed_event: dict[str, Any] | None
     discarded_event: dict[str, Any] | None
+    gate_decision_ms: int
+    output_finalize_ms: int
 
 
 def run_fast_foreground_gate(
@@ -49,6 +52,7 @@ def run_fast_foreground_gate(
     created_monotonic_ms: int,
     created_wall_clock_ms: int,
 ) -> FastForegroundGateResult:
+    gate_started = time.monotonic()
     config = config or FastForegroundGateConfig()
     _require_event(candidate_event, "FOREGROUND_REPLY_CANDIDATE_EMITTED")
     _require_event(fast_interaction_output_event, "FAST_INTERACTION_OUTPUT_EMITTED")
@@ -94,6 +98,8 @@ def run_fast_foreground_gate(
             policy_version=config.policy_version,
             pass_reason="fast_only_answer_low_risk_confident",
         )
+        gate_decision_ms = _elapsed_ms(gate_started)
+        output_started = time.monotonic()
         committed = _append_committed_output(
             journal,
             event_id=f"{event_id_prefix}_committed",
@@ -112,6 +118,8 @@ def run_fast_foreground_gate(
             gate_event=gate_event,
             committed_event=committed,
             discarded_event=None,
+            gate_decision_ms=gate_decision_ms,
+            output_finalize_ms=_elapsed_ms(output_started),
         )
 
     safe_segment = _safe_segment(event_id_prefix)
@@ -133,6 +141,8 @@ def run_fast_foreground_gate(
         failure_reason=failure_reason,
         downgrade_policy=_downgrade_policy(router_decision, task_focus=task_focus),
     )
+    gate_decision_ms = _elapsed_ms(gate_started)
+    output_started = time.monotonic()
     discarded = journal.append(
         event_name="FOREGROUND_OUTPUT_DISCARDED",
         event_id=f"{event_id_prefix}_discarded",
@@ -171,6 +181,8 @@ def run_fast_foreground_gate(
         gate_event=gate_event,
         committed_event=committed,
         discarded_event=discarded,
+        gate_decision_ms=gate_decision_ms,
+        output_finalize_ms=_elapsed_ms(output_started),
     )
 
 
@@ -278,6 +290,10 @@ def _validate_candidate_provenance(
         str(event_id) for event_id in source_event_ids
     }:
         raise FastForegroundGateError("candidate source_event_ids must include Fast Interaction output")
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
 
 
 def _downgrade_policy(router_decision: str, *, task_focus: str = "") -> str:

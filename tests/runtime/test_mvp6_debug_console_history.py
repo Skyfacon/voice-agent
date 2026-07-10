@@ -117,6 +117,38 @@ def test_history_rejects_raw_audio_paths_provider_body_and_secrets(tmp_path: Pat
 
 
 @pytest.mark.parametrize(
+    "question_text",
+    (
+        "sk-ABCDEFGHIJKLMNOPQRSTUVWX",
+        "eyJabcdefgh.ijklmnop.qrstuvwx",
+        "password=super-secret-value",
+    ),
+)
+def test_history_rejects_likely_credentials_in_display_text(
+    tmp_path: Path,
+    question_text: str,
+) -> None:
+    history_path = tmp_path / "outputs" / "mvp6-debug-console" / "qa-history.jsonl"
+    entry = MVP6QAHistoryEntry(
+        run_id="mvp6_run_likely_credential",
+        created_at="2026-06-17T00:00:00Z",
+        provider_mode="dashscope_live",
+        question_source="asr_transcript",
+        question_text=question_text,
+        answer_kind="debug_route_answer",
+        answer_display="Safe placeholder",
+        actual_route="FAST_ONLY",
+        router_decision="FAST_ONLY",
+        route_result_kind="direct_answer",
+        asr_output_mode="real",
+        thinker_output_mode=None,
+    )
+
+    with pytest.raises(MVP6QAHistoryError, match="likely credential"):
+        append_mvp6_qa_history(history_path, entry)
+
+
+@pytest.mark.parametrize(
     "record",
     [
         {

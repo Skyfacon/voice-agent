@@ -47,7 +47,7 @@ def test_direct_http_transport_builds_text_only_json_request_and_redacted_debug(
         credential_value="runtime-secret-value-for-test-only",
         adapter_request_id="adapter_request_fast_interaction_live_001",
         timeout_ms=1500,
-        model_alias="qwen3.5-fast-interaction",
+        model_alias="qwen3.5-omni-flash",
     )
 
     assert returned_text == provider_text
@@ -56,7 +56,7 @@ def test_direct_http_transport_builds_text_only_json_request_and_redacted_debug(
     assert opener.request.full_url == FAST_INTERACTION_DASHSCOPE_OPENAI_COMPATIBLE_CHAT_COMPLETIONS_URL
     assert opener.request.get_header("Authorization") == "Bearer runtime-secret-value-for-test-only"
     request_body = json.loads(opener.request.data.decode("utf-8"))
-    assert request_body["model"] == "qwen3.5-fast-interaction"
+    assert request_body["model"] == "qwen3.5-omni-flash"
     assert request_body["stream"] is True
     assert request_body["stream_options"] == {"include_usage": True}
     assert request_body["modalities"] == ["text"]
@@ -100,7 +100,7 @@ def test_direct_http_transport_builds_text_only_json_request_and_redacted_debug(
     assert debug["adapter"] == "fast_interaction"
     assert debug["provider_url_ref"] == FAST_INTERACTION_DASHSCOPE_PROVIDER_URL_REF
     assert debug["request_shape"] == {
-        "model": "qwen3.5-fast-interaction",
+        "model": "qwen3.5-omni-flash",
         "response_format": {"type": "json_object"},
         "modalities": ["text"],
         "stream": True,
@@ -336,7 +336,7 @@ def test_transport_timeout_maps_to_safe_category_and_repr_excludes_secret_or_bod
             credential_value="runtime-secret-value-for-test-only",
             adapter_request_id="adapter_request_fast_interaction_timeout",
             timeout_ms=10,
-            model_alias="qwen3.5-fast-interaction",
+            model_alias="qwen3.5-omni-flash",
         )
 
     exc = exc_info.value
@@ -381,7 +381,7 @@ def test_process_local_debug_does_not_expose_provider_text_with_secret_token_suf
         credential_value="runtime-secret-value-for-test-only",
         adapter_request_id="adapter_request_fast_interaction_redaction",
         timeout_ms=1500,
-        model_alias="qwen3.5-fast-interaction",
+        model_alias="qwen3.5-omni-flash",
     )
 
     debug = resolve_fast_interaction_model_io_debug("adapter_request_fast_interaction_redaction")
@@ -433,7 +433,7 @@ def test_process_local_debug_does_not_expose_colon_and_password_secret_shapes() 
         credential_value="runtime-secret-value-for-test-only",
         adapter_request_id="adapter_request_fast_interaction_redaction_shapes",
         timeout_ms=1500,
-        model_alias="qwen3.5-fast-interaction",
+        model_alias="qwen3.5-omni-flash",
     )
 
     debug = resolve_fast_interaction_model_io_debug(
@@ -503,7 +503,7 @@ def test_transport_rejects_normalized_provider_and_local_artifact_markers(
             credential_value="runtime-secret-value-for-test-only",
             adapter_request_id=f"adapter_request_fast_interaction_unsafe_{safe_suffix}",
             timeout_ms=1500,
-            model_alias="qwen3.5-fast-interaction",
+            model_alias="qwen3.5-omni-flash",
         )
 
     assert exc_info.value.category == expected_category
@@ -538,7 +538,7 @@ def test_transport_provider_failures_use_safe_categories_without_unsafe_causes()
                 credential_value="runtime-secret-value-for-test-only",
                 adapter_request_id=f"adapter_request_fast_interaction_error_{index}",
                 timeout_ms=10,
-                model_alias="qwen3.5-fast-interaction",
+                model_alias="qwen3.5-omni-flash",
             )
         assert exc_info.value.category == category
         assert exc_info.value.__cause__ is None
@@ -563,7 +563,7 @@ def test_transport_invalid_utf8_stream_bytes_use_safe_parse_category_without_cau
             credential_value="runtime-secret-value-for-test-only",
             adapter_request_id="adapter_request_fast_interaction_invalid_utf8",
             timeout_ms=10,
-            model_alias="qwen3.5-fast-interaction",
+            model_alias="qwen3.5-omni-flash",
         )
 
     exc = exc_info.value

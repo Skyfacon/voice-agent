@@ -5,6 +5,7 @@ from pathlib import Path
 import wave
 
 from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
+from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
 from voice_agent.adapters.fast_interaction_live_transport import (
     FastInteractionLiveTransportError,
     FastInteractionProviderCompletion,
@@ -33,6 +34,8 @@ SCENARIOS = (
 )
 MVP63_SCENARIOS = (
     "MVP6.3-LIVE-FAST-ANSWER-PASS-001",
+    "MVP6.3-LIVE-QA-PARALLEL-001",
+    "MVP6.3-LIVE-ASR-FAIL-ANSWER-PRESERVED-001",
     "MVP6.3-LIVE-FAST-TIMEOUT-FALLBACK-001",
     "MVP6.3-LIVE-SLOW-DISCARD-TEMPLATE-001",
     "MVP6.3-LIVE-PATCH-DISCARD-TEMPLATE-001",
@@ -93,10 +96,10 @@ def test_mvp6_operating_doc_includes_command_and_approval_template() -> None:
         '"local_wav_opt_in": true',
         '"metadata_only_output": true',
         '"replay_reruns_provider": false',
-        '"provider_adapter_ids": ["mvp5_asr_adapter", "mvp5_thinker_adapter"]',
+        '"provider_adapter_ids": ["mvp5_asr_adapter", "mvp63_fast_interaction_runtime"]',
         '"credential_env_var_name": "DASHSCOPE_API_KEY"',
         '"max_provider_calls": 2',
-        '"timeout_ms": 30000',
+        '"timeout_ms": 1500',
         '"safe_output_ref": "summary://mvp6/debug-console/local"',
     )
     for phrase in required_phrases:
@@ -133,6 +136,91 @@ def test_mvp63_live_fast_answer_pass_acceptance(tmp_path: Path) -> None:
     assert "SLOWTASK_CREATED" not in metadata["event_names"]
     assert "USER_PATCH_RECEIVED" not in metadata["event_names"]
     _assert_acceptance_safe(metadata)
+
+
+def test_mvp63_live_qa_parallel_acceptance(tmp_path: Path) -> None:
+    captured_route: list[object] = []
+
+    def on_fast_ready(partial_result: object, journal: object) -> object:
+        route_result = run_mvp5_live_router_runner(
+            partial_result,
+            config=MVP5LiveRouterConfig(
+                run_id="mvp63-acceptance-qa-parallel",
+                expected_route="FAST_ONLY",
+            ),
+            journal=journal,
+        )
+        captured_route.append(route_result)
+        return route_result
+
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-LIVE-QA-PARALLEL-001",
+        route_decision_candidate="FAST_ONLY",
+        foreground_act="ANSWER",
+        asr_observation=True,
+        asr_transport=FakeAsrTransport(
+            (
+                FakeAsrProviderResponse.success(
+                    asr_frame_ref="asr-frame://synthetic/mvp63/acceptance-qa",
+                    text_ref="text://synthetic/mvp63/acceptance-qa",
+                    audio_timestamps_ref=None,
+                    streaming_status="unsupported_final_only",
+                ),
+            )
+        ),
+        on_fast_evidence_ready=on_fast_ready,
+    )
+
+    committed = _event(evidence.events, "FOREGROUND_OUTPUT_COMMITTED")
+    asr_event = _event(evidence.events, "ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    router_event = _event(evidence.events, "ROUTER_DECISION_EMITTED")
+    assert committed["event_seq"] < asr_event["event_seq"]
+    assert "asr_frame_event_id" not in router_event
+    assert router_event["evidence_ref_policy"] == "preserve_fast_ref"
+    assert evidence.fast_path_result is captured_route[0]
+    assert evidence.asr_observation_status == "completed"
+    assert evidence.fast_interaction_input_mode == "audio_native"
+    replay = run_replay_fixture(_fixture_from_events(evidence.events))
+    assert replay.result_status == "passed"
+    assert replay.manifest.allowed_re_eval_components == ()
+    _assert_acceptance_safe(evidence.to_metadata())
+
+
+def test_mvp63_asr_failure_preserves_answer_acceptance(tmp_path: Path) -> None:
+    def on_fast_ready(partial_result: object, journal: object) -> object:
+        return run_mvp5_live_router_runner(
+            partial_result,
+            config=MVP5LiveRouterConfig(
+                run_id="mvp63-acceptance-asr-failure",
+                expected_route="FAST_ONLY",
+            ),
+            journal=journal,
+        )
+
+    evidence = _fast_evidence(
+        tmp_path,
+        scenario_id="MVP6.3-LIVE-ASR-FAIL-ANSWER-PRESERVED-001",
+        route_decision_candidate="FAST_ONLY",
+        foreground_act="ANSWER",
+        asr_observation=True,
+        asr_transport=FakeAsrTransport(
+            (FakeAsrProviderResponse.request_failure("provider_unavailable"),)
+        ),
+        on_fast_evidence_ready=on_fast_ready,
+    )
+
+    committed = _event(evidence.events, "FOREGROUND_OUTPUT_COMMITTED")
+    asr_failure = next(
+        event
+        for event in evidence.events
+        if event["event_name"] == "ADAPTER_REQUEST_FAILED"
+        and event["adapter_type"] == "asr"
+    )
+    assert committed["event_seq"] < asr_failure["event_seq"]
+    assert evidence.asr_observation_status == "failed"
+    assert evidence.fast_path_result is not None
+    _assert_acceptance_safe(evidence.to_metadata())
 
 
 def test_mvp63_live_fast_timeout_fallback_acceptance(tmp_path: Path) -> None:
@@ -262,6 +350,9 @@ def _fast_evidence(
     route_decision_candidate: str,
     foreground_act: str,
     fast_transport: object | None = None,
+    asr_observation: bool = False,
+    asr_transport: object | None = None,
+    on_fast_evidence_ready: object | None = None,
 ):
     slug = _slug(scenario_id)
     wav_path = tmp_path / f"{slug}.wav"
@@ -272,23 +363,25 @@ def _fast_evidence(
             run_id=f"mvp63-acceptance-{slug}",
             live_provider=True,
             allow_local_wav=True,
-            approval_packet=_fast_approval_packet(),
+            approval_packet=_fast_approval_packet(asr_observation=asr_observation),
             credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
-            requested_provider_calls=1,
-            max_provider_calls=1,
+            requested_provider_calls=2 if asr_observation else 1,
+            max_provider_calls=2 if asr_observation else 1,
             timeout_ms=1500,
             fast_interaction_enabled=True,
             audio_native_thinker_enabled=False,
+            asr_observation_enabled=asr_observation,
             fast_interaction_timeout_ms=1500,
         ),
         env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
-        asr_transport=_ExplodingAsrTransport(),
+        asr_transport=asr_transport or _ExplodingAsrTransport(),
         thinker_transport=_ExplodingThinkerTransport(),
         fast_interaction_transport=fast_transport
         or _FakeFastInteractionTransport(
             route_decision_candidate=route_decision_candidate,
             foreground_act=foreground_act,
         ),
+        on_fast_evidence_ready=on_fast_evidence_ready,
     )
 
 
@@ -369,16 +462,30 @@ def _fixture_from_events(events: tuple[dict[str, object], ...]) -> dict[str, obj
     }
 
 
-def _fast_approval_packet() -> dict[str, object]:
+def _event(
+    events: tuple[dict[str, object], ...],
+    event_name: str,
+) -> dict[str, object]:
+    matches = [event for event in events if event["event_name"] == event_name]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _fast_approval_packet(*, asr_observation: bool = False) -> dict[str, object]:
+    adapter_ids = ["mvp63_fast_interaction_runtime"]
+    max_provider_calls = 1
+    if asr_observation:
+        adapter_ids = ["mvp5_asr_adapter", "mvp63_fast_interaction_runtime"]
+        max_provider_calls = 2
     return {
         "approval_id": "mvp63-acceptance-fast-interaction",
         "live_provider_opt_in": True,
         "local_wav_opt_in": True,
         "metadata_only_output": True,
         "replay_reruns_provider": False,
-        "provider_adapter_ids": ["mvp63_fast_interaction_runtime"],
+        "provider_adapter_ids": adapter_ids,
         "credential_env_var_name": "MVP63_TEST_PROVIDER_KEY",
-        "max_provider_calls": 1,
+        "max_provider_calls": max_provider_calls,
         "timeout_ms": 1500,
         "safe_output_ref": "summary://mvp63/acceptance/fast-interaction",
     }

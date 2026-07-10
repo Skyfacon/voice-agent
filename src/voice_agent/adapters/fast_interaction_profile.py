@@ -3,7 +3,7 @@ from __future__ import annotations
 from voice_agent.adapters.capabilities import AdapterCapability, ALL_BOOLEAN_CAPABILITY_FIELDS
 
 FAST_INTERACTION_RUNTIME_ADAPTER_ID = "mvp63_fast_interaction_runtime"
-FAST_INTERACTION_RUNTIME_MODEL_ALIAS = "qwen3.5-fast-interaction"
+FAST_INTERACTION_RUNTIME_MODEL_ALIAS = "qwen3.5-omni-flash"
 
 
 def build_fast_interaction_capability(

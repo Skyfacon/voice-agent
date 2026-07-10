@@ -200,19 +200,41 @@ def _select_provider_adapter_ids(
     request: MVP5LiveProviderApprovalRequest,
     approval_packet: Mapping[str, Any],
 ) -> tuple[str, ...]:
-    packet_ids = approval_packet.get("provider_adapter_ids")
-    selected: Sequence[str]
-    if request.provider_adapter_ids:
-        selected = request.provider_adapter_ids
-    elif isinstance(packet_ids, Sequence) and not isinstance(packet_ids, (str, bytes, bytearray)):
-        selected = tuple(str(adapter_id) for adapter_id in packet_ids)
-    else:
-        selected = ()
-    if not selected:
-        raise LiveProviderApprovalError("provider adapter ids are required before provider calls")
-    if any(not adapter_id or not re.match(r"^[A-Za-z0-9_.:-]+$", adapter_id) for adapter_id in selected):
+    request_ids = _validate_provider_adapter_ids(
+        request.provider_adapter_ids,
+        source="request",
+    )
+    packet_ids = _validate_provider_adapter_ids(
+        approval_packet.get("provider_adapter_ids"),
+        source="approval packet",
+    )
+    if request_ids != packet_ids:
+        raise LiveProviderApprovalError(
+            "request provider adapter ids must exactly match approval packet"
+        )
+    return request_ids
+
+
+def _validate_provider_adapter_ids(value: Any, *, source: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise LiveProviderApprovalError(
+            f"{source} provider adapter ids are required before provider calls"
+        )
+    adapter_ids = tuple(value)
+    if not adapter_ids:
+        raise LiveProviderApprovalError(
+            f"{source} provider adapter ids are required before provider calls"
+        )
+    if any(
+        not isinstance(adapter_id, str)
+        or not adapter_id
+        or not re.fullmatch(r"[A-Za-z0-9_.:-]+", adapter_id)
+        for adapter_id in adapter_ids
+    ):
         raise LiveProviderApprovalError("provider adapter ids must be safe metadata")
-    return tuple(selected)
+    if len(set(adapter_ids)) != len(adapter_ids):
+        raise LiveProviderApprovalError("provider adapter ids must not contain duplicates")
+    return adapter_ids
 
 
 def _packet_ref_values(approval_packet: Mapping[str, Any]) -> tuple[str, ...]:

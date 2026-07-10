@@ -127,7 +127,12 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     .stage strong { font-size: 13px; }
     .stage span { color: var(--muted); overflow-wrap: anywhere; }
     .muted { color: var(--muted); font-size: 13px; }
-    .answer {
+    .qaField {
+      display: grid;
+      gap: 6px;
+    }
+    .qaField > strong { font-size: 13px; }
+    .qaText {
       min-height: 42px;
       padding: 10px;
       border: 1px solid var(--line-soft);
@@ -218,7 +223,15 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
 
     <section class="grid">
       <h2>Latest Result</h2>
-      <div id="answerDisplay" class="answer">No run yet</div>
+      <div class="qaField">
+        <strong>Question</strong>
+        <div id="questionDisplay" class="qaText">No run yet</div>
+      </div>
+      <div class="qaField">
+        <strong>Answer</strong>
+        <div id="answerDisplay" class="qaText">No run yet</div>
+      </div>
+      <div id="qaStatus" class="muted">QA: waiting</div>
       <div class="stage"><strong>local_audio_gate</strong><span id="stage-local_audio_gate">waiting</span></div>
       <div class="stage"><strong>asr</strong><span id="stage-asr">waiting</span></div>
       <div class="stage"><strong>fast_interaction</strong><span id="stage-fast_interaction">waiting</span></div>
@@ -235,6 +248,10 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
         <div class="modelIoSection">
           <h3>ASR Output Text</h3>
           <pre id="modelIoAsrText"></pre>
+        </div>
+        <div class="modelIoSection">
+          <h3>Fast Interaction</h3>
+          <pre id="modelIoFastInteraction"></pre>
         </div>
         <div class="modelIoSection">
           <h3>Thinker System Prompt</h3>
@@ -357,7 +374,9 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     }
 
     function renderResult(payload) {
+      document.getElementById('questionDisplay').textContent = payload.question_text || '(' + (payload.question_status || 'unavailable') + ')';
       document.getElementById('answerDisplay').textContent = payload.answer_display || payload.status;
+      document.getElementById('qaStatus').textContent = 'QA: ' + (payload.qa_status || 'unavailable');
       setStages(payload.status === 'completed' ? 'waiting' : 'not_run');
       for (const stage of payload.pipeline || []) {
         const element = document.getElementById('stage-' + stage.stage);
@@ -371,11 +390,12 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     function renderModelIoDebug(modelIo) {
       const panel = document.getElementById('modelIoPanel');
       const empty = document.getElementById('modelIoEmpty');
-      const hasModelIo = modelIo && typeof modelIo === 'object' && (modelIo.asr || modelIo.thinker);
+      const hasModelIo = modelIo && typeof modelIo === 'object' && (modelIo.asr || modelIo.fast_interaction || modelIo.thinker);
       panel.classList.toggle('hidden', !hasModelIo);
       empty.classList.toggle('hidden', hasModelIo);
       if (!hasModelIo) {
         setText('modelIoAsrText', '');
+        setText('modelIoFastInteraction', '');
         setText('modelIoThinkerSystem', '');
         setText('modelIoThinkerRequest', '');
         setText('modelIoThinkerOutput', '');
@@ -383,8 +403,10 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
         return;
       }
       modelIo.asr = modelIo.asr || {};
+      modelIo.fast_interaction = modelIo.fast_interaction || {};
       modelIo.thinker = modelIo.thinker || {};
       setText('modelIoAsrText', formatModelIoSummary(modelIo.asr));
+      setText('modelIoFastInteraction', formatModelIoSummary(modelIo.fast_interaction));
       setText('modelIoThinkerSystem', formatModelIoSummary(modelIo.thinker));
       setText('modelIoThinkerRequest', modelIo.thinker.request_payload_available ? 'metadata only; request payload redacted' : '(not available)');
       setText('modelIoThinkerOutput', modelIo.thinker.provider_output_available ? 'metadata only; provider output redacted' : '(not available)');
@@ -402,6 +424,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       return {
         saved_to_history: modelIo.saved_to_history === true,
         asr: modelIo.asr || {},
+        fast_interaction: modelIo.fast_interaction || {},
         thinker: modelIo.thinker || {}
       };
     }

@@ -99,9 +99,18 @@ class FastInteractionAdapterRequestResult:
     failure_category: str | None = None
     failure_ref: str | None = None
     fast_interaction_latency_metadata: dict[str, int | bool | str | None] | None = None
-    provider_http_ms: int = 0
-    parse_validate_emit_ms: int = 0
-    total_ms: int = 0
+    provider_http_ms: int | None = None
+    parse_validate_emit_ms: int | None = None
+    total_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class FastInteractionProviderCallOutcome:
+    completion: Any | None = None
+    failure_category: str | None = None
+    failure_ref: str | None = None
+    provider_http_ms: int | None = None
+    total_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -113,21 +122,19 @@ class _TransportCallSelection:
 @dataclass(frozen=True)
 class _TimingMetadataView:
     timing_snapshot: Any
-    parse_validate_emit_ms: int
+    parse_validate_emit_ms: int | None
+    total_ms: int | None
 
     def to_prefixed_metadata(self, prefix: str) -> dict[str, int | bool | str | None]:
         raw_metadata = _safe_raw_timing_metadata(self.timing_snapshot, prefix)
-        if raw_metadata is None:
-            return {
-                f"{prefix}_parse_validate_emit_ms": max(
-                    0,
-                    int(self.parse_validate_emit_ms),
-                )
-            }
-        return _filter_timing_metadata(
-            raw_metadata,
-            parse_validate_emit_ms=self.parse_validate_emit_ms,
+        metadata = (
+            {}
+            if raw_metadata is None
+            else _filter_timing_metadata(raw_metadata)
         )
+        metadata[f"{prefix}_parse_validate_emit_ms"] = self.parse_validate_emit_ms
+        metadata[f"{prefix}_total_ms"] = self.total_ms
+        return metadata
 
 
 @dataclass(frozen=True)
@@ -161,6 +168,51 @@ def run_fast_interaction_adapter_request(
     validation_failed_event_id: str | None = None,
     request_failed_event_id: str | None = None,
 ) -> FastInteractionAdapterRequestResult:
+    outcome = call_fast_interaction_provider(
+        transport=transport,
+        request_payload=request_payload,
+        audio_bytes=audio_bytes,
+        audio_format=audio_format,
+        turn_ingress_monotonic_ms=turn_ingress_monotonic_ms,
+        allow_asr_text_fallback=allow_asr_text_fallback,
+        credential_handle=credential_handle,
+        credential_value=credential_value,
+        binding=binding,
+        timeout_ms=timeout_ms,
+        model_alias=model_alias,
+    )
+    return emit_fast_interaction_provider_outcome(
+        outcome=outcome,
+        boundary=boundary,
+        binding=binding,
+        adapter_id=adapter_id,
+        ref_prefix=ref_prefix,
+        output_event_id=output_event_id,
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        timeout_ms=timeout_ms,
+        candidate_event_id=candidate_event_id,
+        validation_failed_event_id=validation_failed_event_id,
+        request_failed_event_id=request_failed_event_id,
+    )
+
+
+def call_fast_interaction_provider(
+    *,
+    transport: object,
+    request_payload: Mapping[str, Any],
+    audio_bytes: bytes | None,
+    audio_format: str | None,
+    turn_ingress_monotonic_ms: int,
+    allow_asr_text_fallback: bool,
+    credential_handle: object,
+    credential_value: str,
+    binding: FastInteractionBinding,
+    timeout_ms: int,
+    model_alias: str,
+) -> FastInteractionProviderCallOutcome:
+    """Run provider I/O without parsing, emitting events, or touching a journal."""
+
     started = time.monotonic()
     selection = _select_transport_call(
         transport=transport,
@@ -170,16 +222,11 @@ def run_fast_interaction_adapter_request(
         allow_asr_text_fallback=allow_asr_text_fallback,
     )
     if selection.failure_category is not None:
-        return _request_failed_result(
-            boundary=boundary,
-            binding=binding,
-            adapter_id=adapter_id,
-            event_id=request_failed_event_id or f"{output_event_id}_request_failed",
-            created_monotonic_ms=created_monotonic_ms,
-            created_wall_clock_ms=created_wall_clock_ms,
-            failure_category=selection.failure_category,
-            timeout_ms=timeout_ms,
-            started=started,
+        failure_category = _safe_transport_failure_category(selection.failure_category)
+        return FastInteractionProviderCallOutcome(
+            failure_category=failure_category,
+            failure_ref=_runtime_failure_ref(failure_category),
+            total_ms=_elapsed_ms(started),
         )
 
     provider_started = time.monotonic()
@@ -198,6 +245,42 @@ def run_fast_interaction_adapter_request(
     except FastInteractionLiveTransportError as exc:
         provider_http_ms = _elapsed_ms(provider_started)
         failure_category = _safe_transport_failure_category(exc.category)
+        return FastInteractionProviderCallOutcome(
+            failure_category=failure_category,
+            failure_ref=_runtime_failure_ref(failure_category),
+            provider_http_ms=provider_http_ms,
+            total_ms=_elapsed_ms(started),
+        )
+
+    provider_http_ms = _elapsed_ms(provider_started)
+    total_ms = _elapsed_ms(started)
+    return FastInteractionProviderCallOutcome(
+        completion=completion,
+        provider_http_ms=provider_http_ms,
+        total_ms=total_ms,
+    )
+
+
+def emit_fast_interaction_provider_outcome(
+    *,
+    outcome: FastInteractionProviderCallOutcome,
+    boundary: AdapterCallbackAppendBoundary,
+    binding: FastInteractionBinding,
+    adapter_id: str,
+    ref_prefix: str,
+    output_event_id: str,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+    timeout_ms: int,
+    candidate_event_id: str | None = None,
+    validation_failed_event_id: str | None = None,
+    request_failed_event_id: str | None = None,
+) -> FastInteractionAdapterRequestResult:
+    """Parse and emit one provider outcome on the coordinator/journal thread."""
+
+    if outcome.failure_category is not None:
+        coordinator_started = time.monotonic()
+        failure_category = _safe_transport_failure_category(outcome.failure_category)
         event = _emit_request_failed(
             boundary=boundary,
             binding=binding,
@@ -208,24 +291,30 @@ def run_fast_interaction_adapter_request(
             failure_reason=failure_category,
             timeout_ms=timeout_ms,
         )
+        parse_validate_emit_ms = _elapsed_ms(coordinator_started)
+        total_ms = _sum_known_ms(outcome.total_ms, parse_validate_emit_ms)
         latency_metadata = _latency_metadata(
             binding=binding,
             timing_snapshot=None,
             timed_out=failure_category == "provider_timeout",
             failure_category=failure_category,
-            total_ms=_elapsed_ms(started),
+            parse_validate_emit_ms=parse_validate_emit_ms,
+            total_ms=total_ms,
         )
         return FastInteractionAdapterRequestResult(
             success=False,
             request_failed_event=event,
             failure_category=failure_category,
-            failure_ref=_runtime_failure_ref(failure_category),
+            failure_ref=outcome.failure_ref or _runtime_failure_ref(failure_category),
             fast_interaction_latency_metadata=latency_metadata,
-            provider_http_ms=provider_http_ms,
-            total_ms=_elapsed_ms(started),
+            provider_http_ms=outcome.provider_http_ms,
+            parse_validate_emit_ms=parse_validate_emit_ms,
+            total_ms=total_ms,
         )
 
-    provider_http_ms = _elapsed_ms(provider_started)
+    completion = outcome.completion
+    if completion is None:
+        raise FastInteractionValidationError("provider outcome completion is required")
     parse_started = time.monotonic()
     provider_text = getattr(completion, "provider_text", "")
     timing_snapshot = getattr(completion, "timing", None)
@@ -234,9 +323,12 @@ def run_fast_interaction_adapter_request(
         adapter_id=adapter_id,
         ref_prefix=ref_prefix,
     )
-    parse_validate_emit_ms = _elapsed_ms(parse_started)
-    timing_view = (
-        _TimingMetadataView(timing_snapshot, parse_validate_emit_ms=parse_validate_emit_ms)
+    event_timing_view = (
+        _TimingMetadataView(
+            timing_snapshot,
+            parse_validate_emit_ms=None,
+            total_ms=None,
+        )
         if timing_snapshot is not None
         else None
     )
@@ -251,14 +343,26 @@ def run_fast_interaction_adapter_request(
         validation_failed_event_id=validation_failed_event_id,
         created_monotonic_ms=created_monotonic_ms,
         created_wall_clock_ms=created_wall_clock_ms,
-        timing_snapshot=timing_view,
+        timing_snapshot=event_timing_view,
+    )
+    parse_validate_emit_ms = _elapsed_ms(parse_started)
+    total_ms = _sum_known_ms(outcome.total_ms, parse_validate_emit_ms)
+    result_timing_view = (
+        _TimingMetadataView(
+            timing_snapshot,
+            parse_validate_emit_ms=parse_validate_emit_ms,
+            total_ms=total_ms,
+        )
+        if timing_snapshot is not None
+        else None
     )
     latency_metadata = _latency_metadata(
         binding=binding,
-        timing_snapshot=timing_view,
+        timing_snapshot=result_timing_view,
         timed_out=False,
         failure_category=None if result.success else "provider_output_validation_failed",
-        total_ms=_elapsed_ms(started),
+        parse_validate_emit_ms=parse_validate_emit_ms,
+        total_ms=total_ms,
     )
     return FastInteractionAdapterRequestResult(
         success=result.success,
@@ -267,9 +371,9 @@ def run_fast_interaction_adapter_request(
         failure_category=None if result.success else "provider_output_validation_failed",
         failure_ref=None if result.success else _runtime_failure_ref("provider_output_validation_failed"),
         fast_interaction_latency_metadata=latency_metadata,
-        provider_http_ms=provider_http_ms,
+        provider_http_ms=outcome.provider_http_ms,
         parse_validate_emit_ms=parse_validate_emit_ms,
-        total_ms=_elapsed_ms(started),
+        total_ms=total_ms,
     )
 
 
@@ -512,7 +616,8 @@ def _latency_metadata(
     timing_snapshot: Any | None,
     timed_out: bool,
     failure_category: str | None,
-    total_ms: int,
+    parse_validate_emit_ms: int | None = None,
+    total_ms: int | None,
 ) -> dict[str, int | bool | str | None]:
     metadata: dict[str, int | bool | str | None] = {
         "fast_interaction_input_mode": binding.input_mode,
@@ -525,8 +630,8 @@ def _latency_metadata(
         "fast_interaction_provider_ttft_ms": None,
         "fast_interaction_provider_full_response_ms": None,
         "fast_interaction_provider_generation_ms": None,
-        "fast_interaction_stream_decode_ms": 0,
-        "fast_interaction_parse_validate_emit_ms": 0,
+        "fast_interaction_stream_decode_ms": None,
+        "fast_interaction_parse_validate_emit_ms": parse_validate_emit_ms,
         "fast_interaction_total_ms": total_ms,
         "fast_interaction_timing_mode": "non_streaming",
         "fast_interaction_ttft_available": False,
@@ -541,6 +646,8 @@ def _latency_metadata(
             )
             if raw_timing_metadata is not None:
                 metadata.update(_filter_timing_metadata(raw_timing_metadata))
+    metadata["fast_interaction_parse_validate_emit_ms"] = parse_validate_emit_ms
+    metadata["fast_interaction_total_ms"] = total_ms
     metadata["fast_interaction_timed_out"] = timed_out
     metadata["fast_interaction_input_mode"] = binding.input_mode
     if failure_category is not None:
@@ -594,6 +701,12 @@ def _filter_timing_metadata(
             int(parse_validate_emit_ms),
         )
     return metadata
+
+
+def _sum_known_ms(*values: int | None) -> int | None:
+    if any(value is None for value in values):
+        return None
+    return sum(int(value) for value in values if value is not None)
 
 
 class _ProviderTextValidationError(ValueError):

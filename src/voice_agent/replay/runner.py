@@ -1069,7 +1069,10 @@ def _validate_asr_transcript_output_contract(ordered_events: Sequence[Mapping[st
             events_by_id[event_id] = event
             continue
 
-        if ASR_FORBIDDEN_PAYLOAD_FIELDS.intersection(event):
+        if _contains_forbidden_payload_field(
+            event,
+            forbidden_fields=ASR_FORBIDDEN_PAYLOAD_FIELDS,
+        ):
             raise ReplayValidationError(
                 "ASR_TRANSCRIPT_OUTPUT_EMITTED must not contain raw audio, transcript, or provider payload"
             )

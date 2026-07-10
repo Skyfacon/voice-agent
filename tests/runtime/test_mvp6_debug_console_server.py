@@ -19,6 +19,7 @@ def test_status_endpoint_returns_json(tmp_path: Path) -> None:
         response = connection.getresponse()
         body = json.loads(response.read().decode("utf-8"))
         assert response.status == 200
+        assert response.getheader("Cache-Control") == "no-store"
         assert body["default_provider_mode"] == "fake"
         assert body["metadata_only_output"] is True
         assert body["routing_prompt_profile"]["profile_id"] == "lalm-thinker-routing-control"
@@ -37,6 +38,7 @@ def test_root_serves_debug_console_html(tmp_path: Path) -> None:
         response = connection.getresponse()
         body = response.read().decode("utf-8")
         assert response.status == 200
+        assert response.getheader("Cache-Control") == "no-store"
         assert "MVP6 Local Debug Console" in body
         assert "Prompt Profile" in body
         assert "Record" in body

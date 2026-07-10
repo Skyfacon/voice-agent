@@ -446,7 +446,7 @@ def test_transport_error_emits_request_failed_event_without_fast_events() -> Non
         created_monotonic_ms=30,
         created_wall_clock_ms=1700000000030,
         timeout_ms=1500,
-        model_alias="qwen3.5-fast-interaction",
+        model_alias="qwen3.5-omni-flash",
     )
 
     assert result.success is False
@@ -655,8 +655,30 @@ def test_audio_native_output_event_uses_measured_parse_latency(monkeypatch: pyte
             ),
         )
     )
-    monotonic = _SequenceMonotonic((1.0, 1.0, 1.0, 2.0, 3.0, 3.0, 3.0))
+    monotonic = _MutableMonotonic(1.0)
+    original_complete = transport.complete_audio_with_timing
+    original_emit = runtime_adapter._emit_prepared_provider_text_emission
+
+    def complete_with_measured_provider_time(**kwargs: object) -> object:
+        monotonic.advance(0.25)
+        return original_complete(**kwargs)
+
+    def emit_with_measured_journal_append(**kwargs: object) -> object:
+        emission = original_emit(**kwargs)
+        monotonic.advance(0.125)
+        return emission
+
     monkeypatch.setattr(runtime_adapter.time, "monotonic", monotonic)
+    monkeypatch.setattr(
+        transport,
+        "complete_audio_with_timing",
+        complete_with_measured_provider_time,
+    )
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_emit_prepared_provider_text_emission",
+        emit_with_measured_journal_append,
+    )
 
     result = run_fast_interaction_adapter_request(
         transport=transport,
@@ -680,22 +702,53 @@ def test_audio_native_output_event_uses_measured_parse_latency(monkeypatch: pyte
 
     assert result.success is True
     assert result.fast_interaction_latency_metadata is not None
-    assert result.fast_interaction_latency_metadata["fast_interaction_parse_validate_emit_ms"] == 1000
+    assert result.provider_http_ms == 250
+    assert result.parse_validate_emit_ms == 125
+    assert result.total_ms == 375
+    assert result.fast_interaction_latency_metadata["fast_interaction_parse_validate_emit_ms"] == 125
+    assert result.fast_interaction_latency_metadata["fast_interaction_total_ms"] == 375
     assert result.emission is not None
-    assert result.emission.output_event["fast_interaction_parse_validate_emit_ms"] == 1000
-    assert (
-        result.emission.output_event["fast_interaction_parse_validate_emit_ms"]
-        == result.fast_interaction_latency_metadata["fast_interaction_parse_validate_emit_ms"]
-    )
+    assert result.emission.output_event["fast_interaction_parse_validate_emit_ms"] is None
+    assert result.emission.output_event["fast_interaction_total_ms"] is None
     stored_output_event = next(
         event
         for event in journal.events()
         if event["event_id"] == "evt_fast_interaction_runtime_measured_parse_output"
     )
-    assert stored_output_event["fast_interaction_parse_validate_emit_ms"] == 1000
-    assert stored_output_event["fast_interaction_parse_validate_emit_ms"] == (
-        result.fast_interaction_latency_metadata["fast_interaction_parse_validate_emit_ms"]
+    assert stored_output_event["fast_interaction_parse_validate_emit_ms"] is None
+    assert stored_output_event["fast_interaction_total_ms"] is None
+
+
+def test_unknown_provider_latency_remains_null_after_failure_event_emission() -> None:
+    journal, turn, _asr_output = _journal_with_asr_output("unknown_provider_latency")
+    binding = FastInteractionBinding.from_turn_audio(
+        turn,
+        adapter_request_id="adapter_request_fast_interaction_unknown_provider_latency",
+        audio_frame_ref="audio-frame://synthetic/fast-interaction/unknown-provider-latency",
     )
+
+    result = runtime_adapter.emit_fast_interaction_provider_outcome(
+        outcome=runtime_adapter.FastInteractionProviderCallOutcome(
+            failure_category="provider_transport_error",
+            failure_ref="failure://fast-interaction/provider-transport-error",
+        ),
+        boundary=AdapterCallbackAppendBoundary(journal),
+        binding=binding,
+        adapter_id="fast_interaction_runtime_test",
+        ref_prefix="runtime/unknown-provider-latency",
+        output_event_id="evt_fast_interaction_runtime_unknown_provider_latency_output",
+        created_monotonic_ms=30,
+        created_wall_clock_ms=1700000000030,
+        timeout_ms=8000,
+    )
+
+    assert result.success is False
+    assert result.provider_http_ms is None
+    assert result.parse_validate_emit_ms is not None
+    assert result.total_ms is None
+    assert result.fast_interaction_latency_metadata is not None
+    assert result.fast_interaction_latency_metadata["fast_interaction_stream_decode_ms"] is None
+    assert result.fast_interaction_latency_metadata["fast_interaction_total_ms"] is None
 
 
 def test_successful_output_event_waterfall_matches_result_metadata() -> None:
@@ -754,10 +807,17 @@ def test_successful_output_event_waterfall_matches_result_metadata() -> None:
         key: value
         for key, value in result.emission.output_event.items()
         if key in _ALLOWED_TIMING_FIELD_NAMES
+        and key
+        not in {
+            "fast_interaction_parse_validate_emit_ms",
+            "fast_interaction_total_ms",
+        }
     }
     assert event_timing_fields
     for key, value in event_timing_fields.items():
         assert result.fast_interaction_latency_metadata[key] == value
+    assert result.emission.output_event["fast_interaction_parse_validate_emit_ms"] is None
+    assert result.emission.output_event["fast_interaction_total_ms"] is None
 
 
 def test_asr_text_fallback_without_approval_fails_without_transport_call() -> None:
@@ -1006,7 +1066,7 @@ def test_duplicate_request_failed_event_id_is_preflighted_before_callback_seq_ad
             created_monotonic_ms=30,
             created_wall_clock_ms=1700000000030,
             timeout_ms=1500,
-            model_alias="qwen3.5-fast-interaction",
+            model_alias="qwen3.5-omni-flash",
         )
 
     assert len(journal.events()) == event_count_before
@@ -1026,7 +1086,7 @@ def test_duplicate_request_failed_event_id_is_preflighted_before_callback_seq_ad
         created_monotonic_ms=31,
         created_wall_clock_ms=1700000000031,
         timeout_ms=1500,
-        model_alias="qwen3.5-fast-interaction",
+        model_alias="qwen3.5-omni-flash",
     )
     assert valid_result.request_failed_event is not None
     assert valid_result.request_failed_event["adapter_callback_seq"] == 1
@@ -1074,6 +1134,17 @@ class _SequenceMonotonic:
         if self._values:
             self._last = self._values.pop(0)
         return self._last
+
+
+class _MutableMonotonic:
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def __call__(self) -> float:
+        return self._value
+
+    def advance(self, seconds: float) -> None:
+        self._value += seconds
 
 
 class _MaliciousTimingSnapshot:

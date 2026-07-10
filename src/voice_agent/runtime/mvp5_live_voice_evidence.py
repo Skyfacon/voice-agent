@@ -24,6 +24,9 @@ from voice_agent.adapters.fast_interaction_profile import (
     FAST_INTERACTION_RUNTIME_MODEL_ALIAS,
 )
 from voice_agent.adapters.fast_interaction_runtime_adapter import (
+    FastInteractionProviderCallOutcome,
+    call_fast_interaction_provider,
+    emit_fast_interaction_provider_outcome,
     run_fast_interaction_adapter_request,
 )
 from voice_agent.adapters.lalm_thinker_binding import bind_lalm_thinker_request
@@ -74,6 +77,7 @@ class MVP5LiveVoiceEvidenceConfig:
     thinker_adapter_id: str = "mvp5_thinker_adapter"
     fast_interaction_enabled: bool = False
     audio_native_thinker_enabled: bool = True
+    asr_observation_enabled: bool = False
     allow_fast_interaction_asr_text_fallback: bool = False
     fast_interaction_adapter_id: str = FAST_INTERACTION_RUNTIME_ADAPTER_ID
     fast_interaction_timeout_ms: int = 1_500
@@ -101,7 +105,10 @@ class MVP5LiveVoiceEvidenceResult:
     thinker_output_mode: str | None = None
     fast_interaction_output_mode: str | None = None
     fast_interaction_input_mode: str | None = None
+    asr_observation_enabled: bool = False
+    asr_observation_status: str = "not_run"
     asr_text_fallback_used: bool = False
+    fast_path_result: object | None = None
     safe_refs: tuple[str, ...] = ()
     provider_call_used: bool = False
     fake_transport_used: bool = False
@@ -131,6 +138,8 @@ class MVP5LiveVoiceEvidenceResult:
             "real_tts_used": False,
             "voice_output": "none",
             "thinker_transient_asr_text_used": self.thinker_transient_asr_text_used,
+            "asr_observation_enabled": self.asr_observation_enabled,
+            "asr_observation_status": self.asr_observation_status,
             "asr_text_fallback_used": self.asr_text_fallback_used,
             "latency_debug": _normalize_latency_debug(self.latency_debug),
         }
@@ -196,16 +205,21 @@ _LATENCY_MS_FIELDS = (
     "fast_interaction_parse_validate_emit_ms",
     "fast_interaction_total_ms",
     "fast_interaction_timeout_ms",
+    "fast_answer_ready_offset_ms",
+    "qa_pair_ready_offset_ms",
     "router_ms",
     "qa_history_ms",
 )
 _LATENCY_BOOL_FIELDS = (
     "provider_calls_parallel",
+    "provider_calls_overlapped",
     "asr_started_before_thinker_finished",
     "thinker_started_before_asr_finished",
     "thinker_ttft_available",
     "fast_interaction_timed_out",
     "fast_interaction_ttft_available",
+    "asr_started_before_fast_interaction_finished",
+    "fast_interaction_started_before_asr_finished",
 )
 _LATENCY_STRING_FIELDS = (
     "thinker_ttft_source",
@@ -224,9 +238,29 @@ def run_mvp5_live_voice_evidence(
     asr_transport: object | None = None,
     thinker_transport: object | None = None,
     fast_interaction_transport: object | None = None,
+    on_fast_evidence_ready: Callable[
+        [MVP5LiveVoiceEvidenceResult, InMemoryEventJournal],
+        object,
+    ]
+    | None = None,
 ) -> MVP5LiveVoiceEvidenceResult:
     config = config or MVP5LiveVoiceEvidenceConfig()
     run_id = _require_safe_token(config.run_id, "run_id")
+    if config.asr_observation_enabled and not config.fast_interaction_enabled:
+        raise MVP5LiveVoiceEvidenceError(
+            "asr_observation_enabled requires fast_interaction_enabled"
+        )
+    if (
+        config.asr_observation_enabled
+        and config.allow_fast_interaction_asr_text_fallback
+    ):
+        raise MVP5LiveVoiceEvidenceError(
+            "ASR observation and ASR-text fallback are distinct modes"
+        )
+    if config.asr_observation_enabled and on_fast_evidence_ready is None:
+        raise MVP5LiveVoiceEvidenceError(
+            "ASR observation requires the Fast Router/Gate coordinator callback"
+        )
 
     if not config.live_provider:
         return MVP5LiveVoiceEvidenceResult(
@@ -300,6 +334,7 @@ def run_mvp5_live_voice_evidence(
             safe_audio_ref=loaded_audio.safe_audio_ref,
             injected_transport_used=injected_transport_used,
             latency_debug=latency_debug,
+            on_fast_evidence_ready=on_fast_evidence_ready,
         )
 
     asr_binding = AsrRequestBinding.from_turn_committed_event(
@@ -343,7 +378,8 @@ def run_mvp5_live_voice_evidence(
         {
             "asr_provider_http_ms": asr_provider_result.elapsed_ms,
             "thinker_provider_http_ms": thinker_provider_result.elapsed_ms,
-            "provider_calls_parallel": (
+            "provider_calls_parallel": True,
+            "provider_calls_overlapped": (
                 asr_started_before_thinker_finished and thinker_started_before_asr_finished
             ),
             "asr_started_before_thinker_finished": asr_started_before_thinker_finished,
@@ -428,6 +464,11 @@ def _run_mvp63_fast_interaction_evidence(
     safe_audio_ref: str,
     injected_transport_used: bool,
     latency_debug: dict[str, Any],
+    on_fast_evidence_ready: Callable[
+        [MVP5LiveVoiceEvidenceResult, InMemoryEventJournal],
+        object,
+    ]
+    | None,
 ) -> MVP5LiveVoiceEvidenceResult:
     fast_timeout_ms = min(
         _positive_int(config.fast_interaction_timeout_ms, "fast_interaction_timeout_ms"),
@@ -438,6 +479,7 @@ def _run_mvp63_fast_interaction_evidence(
     asr_event: dict[str, Any] | None = None
     fast_event: dict[str, Any] | None = None
     foreground_candidate_event: dict[str, Any] | None = None
+    fast_path_result: object | None = None
     if config.allow_fast_interaction_asr_text_fallback:
         asr_started = time.monotonic()
         asr_event = _run_asr_adapter_transport(
@@ -486,38 +528,201 @@ def _run_mvp63_fast_interaction_evidence(
                 fast_event = fast_result.emission.output_event
                 foreground_candidate_event = fast_result.emission.candidate_event
     else:
+        asr_outcome: _TimedProviderCallResult | None = None
         fast_binding = FastInteractionBinding.from_turn_audio(
             turn_committed_event,
             adapter_request_id=f"adapter-request-mvp63-fast-interaction-{_slug(run_id)}",
             audio_payload_ref=safe_audio_ref,
         )
-        fast_result = _run_fast_interaction_request(
-            boundary=boundary,
-            config=config,
-            run_id=run_id,
-            turn_committed_event=turn_committed_event,
-            fast_interaction_transport=fast_interaction_transport,
-            grant=grant,
-            env=env,
-            binding=fast_binding,
-            request_payload=_fast_interaction_audio_request_payload(
+        fast_kwargs = {
+            "boundary": boundary,
+            "config": config,
+            "run_id": run_id,
+            "turn_committed_event": turn_committed_event,
+            "fast_interaction_transport": fast_interaction_transport,
+            "grant": grant,
+            "env": env,
+            "binding": fast_binding,
+            "request_payload": _fast_interaction_audio_request_payload(
                 turn_committed_event=turn_committed_event,
                 safe_audio_ref=safe_audio_ref,
             ),
-            audio_bytes=audio_bytes,
-            audio_format="wav",
-            allow_asr_text_fallback=False,
-            fast_timeout_ms=fast_timeout_ms,
-            created_monotonic_ms=300,
-            created_wall_clock_ms=1700000000300,
-        )
-        _merge_fast_interaction_latency_debug(latency_debug, fast_result)
-        if fast_result.emission is not None:
-            fast_event = fast_result.emission.output_event
-            foreground_candidate_event = fast_result.emission.candidate_event
+            "audio_bytes": audio_bytes,
+            "audio_format": "wav",
+            "allow_asr_text_fallback": False,
+            "fast_timeout_ms": fast_timeout_ms,
+            "created_monotonic_ms": 300,
+            "created_wall_clock_ms": 1700000000300,
+        }
+        if config.asr_observation_enabled:
+            asr_binding = AsrRequestBinding.from_turn_committed_event(
+                turn_committed_event,
+                adapter_request_id=f"adapter-request-mvp5-asr-{_slug(run_id)}",
+            )
+            asr_call = lambda: _call_asr_adapter_transport_provider(
+                config=config,
+                asr_transport=asr_transport,
+                grant=grant,
+                env=env,
+                binding=asr_binding,
+                audio_bytes=audio_bytes,
+                audio_mime_type=audio_mime_type,
+            )
+            fast_provider_call = lambda: _call_fast_interaction_provider_request(
+                config=config,
+                turn_committed_event=turn_committed_event,
+                fast_interaction_transport=fast_interaction_transport,
+                grant=grant,
+                env=env,
+                binding=fast_binding,
+                request_payload=fast_kwargs["request_payload"],
+                audio_bytes=audio_bytes,
+                audio_format="wav",
+                allow_asr_text_fallback=False,
+                fast_timeout_ms=fast_timeout_ms,
+            )
+            with ThreadPoolExecutor(
+                max_workers=2,
+                thread_name_prefix="mvp63-provider-call",
+            ) as executor:
+                asr_future = executor.submit(_timed_provider_call, asr_call)
+                fast_future = executor.submit(_timed_provider_call, fast_provider_call)
+                fast_provider_result = fast_future.result()
+                if fast_provider_result.error is not None:
+                    raise fast_provider_result.error
+                if not isinstance(
+                    fast_provider_result.value,
+                    FastInteractionProviderCallOutcome,
+                ):
+                    raise MVP5LiveVoiceEvidenceError(
+                        "Fast Interaction provider call returned an invalid outcome"
+                    )
+                fast_result = _emit_fast_interaction_provider_request_outcome(
+                    outcome=fast_provider_result.value,
+                    boundary=boundary,
+                    config=config,
+                    run_id=run_id,
+                    turn_committed_event=turn_committed_event,
+                    binding=fast_binding,
+                    fast_timeout_ms=fast_timeout_ms,
+                    created_monotonic_ms=300,
+                    created_wall_clock_ms=1700000000300,
+                )
+                _merge_fast_interaction_latency_debug(latency_debug, fast_result)
+                if fast_result.emission is not None:
+                    fast_event = fast_result.emission.output_event
+                    foreground_candidate_event = fast_result.emission.candidate_event
+                if fast_event is not None:
+                    assert on_fast_evidence_ready is not None
+                    partial_result = _build_fast_interaction_evidence_result(
+                        config=config,
+                        run_id=run_id,
+                        journal=journal,
+                        turn_committed_event=turn_committed_event,
+                        asr_event=None,
+                        fast_event=fast_event,
+                        foreground_candidate_event=foreground_candidate_event,
+                        safe_audio_ref=safe_audio_ref,
+                        grant=grant,
+                        injected_transport_used=injected_transport_used,
+                        latency_debug=latency_debug,
+                        asr_observation_status="running",
+                        fast_path_result=None,
+                    )
+                    fast_path_result = on_fast_evidence_ready(partial_result, journal)
+                    _validate_fast_path_completed_before_asr_observation(journal)
+                asr_outcome = asr_future.result()
 
+            asr_started_before_fast_finished = (
+                asr_outcome.started_monotonic_ms
+                <= fast_provider_result.finished_monotonic_ms
+            )
+            fast_started_before_asr_finished = (
+                fast_provider_result.started_monotonic_ms
+                <= asr_outcome.finished_monotonic_ms
+            )
+            latency_debug.update(
+                {
+                    "asr_provider_http_ms": asr_outcome.elapsed_ms,
+                    "provider_calls_parallel": True,
+                    "provider_calls_overlapped": (
+                        asr_started_before_fast_finished
+                        and fast_started_before_asr_finished
+                    ),
+                    "asr_started_before_fast_interaction_finished": (
+                        asr_started_before_fast_finished
+                    ),
+                    "fast_interaction_started_before_asr_finished": (
+                        fast_started_before_asr_finished
+                    ),
+                }
+            )
+        else:
+            fast_result = _run_fast_interaction_request(**fast_kwargs)
+        if not config.asr_observation_enabled:
+            _merge_fast_interaction_latency_debug(latency_debug, fast_result)
+            if fast_result.emission is not None:
+                fast_event = fast_result.emission.output_event
+                foreground_candidate_event = fast_result.emission.candidate_event
+        if asr_outcome is not None:
+            asr_emit_started = time.monotonic()
+            asr_event = _emit_asr_adapter_transport_outcome(
+                boundary=boundary,
+                config=config,
+                turn_committed_event=turn_committed_event,
+                outcome=asr_outcome,
+                binding=asr_binding,
+                event_base=f"evt_mvp5_live_evidence_{_slug(run_id)}_asr",
+                grant=grant,
+                created_monotonic_ms=350,
+                created_wall_clock_ms=1700000000350,
+            )
+            latency_debug["asr_normalize_emit_ms"] = _elapsed_ms(asr_emit_started)
+
+    return _build_fast_interaction_evidence_result(
+        config=config,
+        run_id=run_id,
+        journal=journal,
+        turn_committed_event=turn_committed_event,
+        asr_event=asr_event,
+        fast_event=fast_event,
+        foreground_candidate_event=foreground_candidate_event,
+        safe_audio_ref=safe_audio_ref,
+        grant=grant,
+        injected_transport_used=injected_transport_used,
+        latency_debug=latency_debug,
+        asr_observation_status=(
+            "completed"
+            if config.asr_observation_enabled and asr_event is not None
+            else "failed"
+            if config.asr_observation_enabled
+            else "not_run"
+        ),
+        fast_path_result=fast_path_result,
+    )
+
+
+def _build_fast_interaction_evidence_result(
+    *,
+    config: MVP5LiveVoiceEvidenceConfig,
+    run_id: str,
+    journal: InMemoryEventJournal,
+    turn_committed_event: Mapping[str, Any],
+    asr_event: Mapping[str, Any] | None,
+    fast_event: Mapping[str, Any] | None,
+    foreground_candidate_event: Mapping[str, Any] | None,
+    safe_audio_ref: str,
+    grant: MVP5LiveProviderApprovalGrant,
+    injected_transport_used: bool,
+    latency_debug: Mapping[str, Any],
+    asr_observation_status: str,
+    fast_path_result: object | None,
+) -> MVP5LiveVoiceEvidenceResult:
     events = tuple(journal.events())
-    safe_refs = _collect_safe_refs(events, extra_refs=(safe_audio_ref, *grant.safe_refs))
+    safe_refs = _collect_safe_refs(
+        events,
+        extra_refs=(safe_audio_ref, *grant.safe_refs),
+    )
     asr_output_mode = str(asr_event["output_mode"]) if asr_event is not None else None
     fast_output_mode = str(fast_event["output_mode"]) if fast_event is not None else None
     fast_input_mode = str(fast_event["input_mode"]) if fast_event is not None else None
@@ -547,7 +752,10 @@ def _run_mvp63_fast_interaction_evidence(
         thinker_output_mode=None,
         fast_interaction_output_mode=fast_output_mode,
         fast_interaction_input_mode=fast_input_mode,
+        asr_observation_enabled=config.asr_observation_enabled,
+        asr_observation_status=asr_observation_status,
         asr_text_fallback_used=fast_input_mode == "asr_text_fallback",
+        fast_path_result=fast_path_result,
         safe_refs=safe_refs,
         provider_call_used=not injected_transport_used,
         fake_transport_used=injected_transport_used,
@@ -562,6 +770,75 @@ def _run_mvp63_fast_interaction_evidence(
             or asr_event is not None
         )
         else _failure_reasons_from_events(events),
+    )
+
+
+def _call_fast_interaction_provider_request(
+    *,
+    config: MVP5LiveVoiceEvidenceConfig,
+    turn_committed_event: Mapping[str, Any],
+    fast_interaction_transport: object,
+    grant: MVP5LiveProviderApprovalGrant,
+    env: Mapping[str, str],
+    binding: FastInteractionBinding,
+    request_payload: object,
+    audio_bytes: bytes | None,
+    audio_format: str | None,
+    allow_asr_text_fallback: bool,
+    fast_timeout_ms: int,
+) -> FastInteractionProviderCallOutcome:
+    if not isinstance(request_payload, Mapping):
+        raise MVP5LiveVoiceEvidenceError("Fast Interaction request payload must be a mapping")
+    return call_fast_interaction_provider(
+        transport=fast_interaction_transport,
+        request_payload=request_payload,
+        audio_bytes=audio_bytes,
+        audio_format=audio_format,
+        turn_ingress_monotonic_ms=int(turn_committed_event["created_monotonic_ms"]),
+        allow_asr_text_fallback=allow_asr_text_fallback,
+        credential_handle=FastInteractionCredentialHandle(
+            credential_ref="secret-ref://runtime-env/dashscope-api-key",
+        ),
+        credential_value=env.get(grant.credential_env_var_name, ""),
+        binding=binding,
+        timeout_ms=fast_timeout_ms,
+        model_alias=FAST_INTERACTION_RUNTIME_MODEL_ALIAS,
+    )
+
+
+def _emit_fast_interaction_provider_request_outcome(
+    *,
+    outcome: FastInteractionProviderCallOutcome,
+    boundary: AdapterCallbackAppendBoundary,
+    config: MVP5LiveVoiceEvidenceConfig,
+    run_id: str,
+    turn_committed_event: Mapping[str, Any],
+    binding: FastInteractionBinding,
+    fast_timeout_ms: int,
+    created_monotonic_ms: int,
+    created_wall_clock_ms: int,
+) -> Any:
+    return emit_fast_interaction_provider_outcome(
+        outcome=outcome,
+        boundary=boundary,
+        binding=binding,
+        adapter_id=config.fast_interaction_adapter_id,
+        ref_prefix=f"mvp63/live-evidence/{_slug(run_id)}",
+        output_event_id=(
+            f"evt_mvp63_live_evidence_{_slug(run_id)}_fast_interaction_output"
+        ),
+        candidate_event_id=(
+            f"evt_mvp63_live_evidence_{_slug(run_id)}_foreground_candidate"
+        ),
+        validation_failed_event_id=(
+            f"evt_mvp63_live_evidence_{_slug(run_id)}_fast_interaction_validation_failed"
+        ),
+        request_failed_event_id=(
+            f"evt_mvp63_live_evidence_{_slug(run_id)}_fast_interaction_request_failed"
+        ),
+        created_monotonic_ms=created_monotonic_ms,
+        created_wall_clock_ms=created_wall_clock_ms,
+        timeout_ms=fast_timeout_ms,
     )
 
 
@@ -667,7 +944,9 @@ def _fast_interaction_result_status(
     if asr_text_fallback_required and asr_output_mode is None:
         return "evidence_failed"
     degraded_modes = {"degraded", "fallback"}
-    if fast_interaction_output_mode in degraded_modes or asr_output_mode in degraded_modes:
+    if fast_interaction_output_mode in degraded_modes or (
+        asr_text_fallback_required and asr_output_mode in degraded_modes
+    ):
         return "degraded_evidence_emitted"
     return "evidence_emitted"
 
@@ -676,29 +955,39 @@ def _merge_fast_interaction_latency_debug(
     latency_debug: dict[str, Any],
     fast_result: Any,
 ) -> None:
-    latency_debug["fast_interaction_provider_http_ms"] = _non_negative_int(
-        getattr(fast_result, "provider_http_ms", 0),
-        "fast_interaction_provider_http_ms",
+    provider_http_ms = getattr(fast_result, "provider_http_ms", None)
+    latency_debug["fast_interaction_provider_http_ms"] = (
+        None
+        if provider_http_ms is None
+        else _non_negative_int(provider_http_ms, "fast_interaction_provider_http_ms")
     )
     metadata = getattr(fast_result, "fast_interaction_latency_metadata", None)
     if isinstance(metadata, Mapping):
         for key, value in metadata.items():
             if key in _LATENCY_MS_FIELDS:
-                latency_debug[key] = 0 if value is None else _non_negative_int(value, key)
+                latency_debug[key] = (
+                    None if value is None else _non_negative_int(value, key)
+                )
             elif key in _LATENCY_BOOL_FIELDS:
                 latency_debug[key] = bool(value)
             elif key in _LATENCY_STRING_FIELDS:
                 latency_debug[key] = "" if value is None else _safe_latency_string(value, key)
+    parse_validate_emit_ms = getattr(fast_result, "parse_validate_emit_ms", None)
     latency_debug.setdefault(
         "fast_interaction_parse_validate_emit_ms",
-        _non_negative_int(
-            getattr(fast_result, "parse_validate_emit_ms", 0),
+        None
+        if parse_validate_emit_ms is None
+        else _non_negative_int(
+            parse_validate_emit_ms,
             "fast_interaction_parse_validate_emit_ms",
         ),
     )
+    total_ms = getattr(fast_result, "total_ms", None)
     latency_debug.setdefault(
         "fast_interaction_total_ms",
-        _non_negative_int(getattr(fast_result, "total_ms", 0), "fast_interaction_total_ms"),
+        None
+        if total_ms is None
+        else _non_negative_int(total_ms, "fast_interaction_total_ms"),
     )
     latency_debug["fast_interaction_timed_out"] = (
         getattr(fast_result, "failure_category", None) == "provider_timeout"
@@ -773,7 +1062,10 @@ def _build_journal(
 
 def _provider_adapter_ids_for_config(config: MVP5LiveVoiceEvidenceConfig) -> tuple[str, ...]:
     if config.fast_interaction_enabled:
-        if not config.allow_fast_interaction_asr_text_fallback:
+        if not (
+            config.allow_fast_interaction_asr_text_fallback
+            or config.asr_observation_enabled
+        ):
             return (config.fast_interaction_adapter_id,)
         return (config.asr_adapter_id, config.fast_interaction_adapter_id)
     return (config.asr_adapter_id, config.thinker_adapter_id)
@@ -781,7 +1073,10 @@ def _provider_adapter_ids_for_config(config: MVP5LiveVoiceEvidenceConfig) -> tup
 
 def _provider_adapter_types_for_config(config: MVP5LiveVoiceEvidenceConfig) -> tuple[str, ...]:
     if config.fast_interaction_enabled:
-        if not config.allow_fast_interaction_asr_text_fallback:
+        if not (
+            config.allow_fast_interaction_asr_text_fallback
+            or config.asr_observation_enabled
+        ):
             return ("fast_interaction",)
         return ("asr", "fast_interaction")
     return ("asr", "thinker")
@@ -1010,7 +1305,25 @@ def _emit_asr_adapter_transport_outcome(
         )
         return None
     if outcome.error is not None:
-        raise outcome.error
+        if not isinstance(outcome.error, Exception):
+            raise outcome.error
+        _adapter_harness(
+            boundary=boundary,
+            adapter_id=config.asr_adapter_id,
+            adapter_type="asr",
+            output_mode="degraded",
+            source_module="mvp5_asr_adapter",
+        ).emit_request_failed(
+            event_id=f"{event_base}_request_failed",
+            caused_by_event_id=str(turn_committed_event["event_id"]),
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            adapter_request_id=binding.adapter_request_id,
+            failure_reason="provider_request_failed",
+            retryable=False,
+            timeout_ms=None,
+        )
+        return None
 
     if isinstance(outcome.value, AsrFakeTransportResult):
         return _emit_asr_fake_transport_result(
@@ -1637,6 +1950,28 @@ def _transient_asr_text(asr_event: Mapping[str, Any] | None) -> str | None:
     return _resolve_asr_live_transcript_text_ref(text_ref)
 
 
+def _validate_fast_path_completed_before_asr_observation(
+    journal: InMemoryEventJournal,
+) -> None:
+    event_names = {str(event.get("event_name")) for event in journal.events()}
+    if "ROUTER_DECISION_EMITTED" not in event_names:
+        raise MVP5LiveVoiceEvidenceError(
+            "Fast Router/Gate coordinator did not append a Router decision"
+        )
+    if not event_names.intersection(
+        {"FOREGROUND_ACT_GATE_PASSED", "FOREGROUND_ACT_GATE_FAILED"}
+    ):
+        raise MVP5LiveVoiceEvidenceError(
+            "Fast Router/Gate coordinator did not append a foreground gate decision"
+        )
+    if not event_names.intersection(
+        {"FOREGROUND_OUTPUT_COMMITTED", "FOREGROUND_OUTPUT_DISCARDED"}
+    ):
+        raise MVP5LiveVoiceEvidenceError(
+            "Fast Router/Gate coordinator did not finalize foreground output"
+        )
+
+
 def _safe_provider_failure_reason(reasons: Sequence[str]) -> str:
     for reason in reasons:
         if reason in {
@@ -1727,7 +2062,10 @@ def _result_status(asr_output_mode: str | None, thinker_output_mode: str | None)
 def _normalize_latency_debug(value: Mapping[str, Any]) -> dict[str, Any]:
     latency_debug: dict[str, Any] = {}
     for field in _LATENCY_MS_FIELDS:
-        latency_debug[field] = _non_negative_int(value.get(field, 0), field)
+        raw_value = value.get(field)
+        latency_debug[field] = (
+            None if raw_value is None else _non_negative_int(raw_value, field)
+        )
     for field in _LATENCY_BOOL_FIELDS:
         latency_debug[field] = bool(value.get(field, False))
     for field in _LATENCY_STRING_FIELDS:

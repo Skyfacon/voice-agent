@@ -118,6 +118,52 @@ def test_single_fast_interaction_primary_uses_one_audio_native_provider_call(
     assert base64.b64encode(wav_bytes).decode("ascii") not in rendered
 
 
+def test_single_fast_qa_runs_asr_observation_without_delaying_fast_gate(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "private-fast-qa-input.wav"
+    _write_wav_file(wav_path)
+    fast_transport = _FakeFastInteractionTransport()
+
+    metadata = run_mvp5_real_voice_e2e_single(
+        local_wav=wav_path,
+        live_provider=True,
+        allow_local_wav=True,
+        approval_packet=_fast_approval_packet(
+            max_provider_calls=2,
+            asr_observation=True,
+        ),
+        expected_route="FAST_ONLY",
+        run_id="mvp63-goal4-single-fast-qa",
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_fake_asr_transport("mvp63-fast-qa"),
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport,
+        fast_interaction_enabled=True,
+        audio_native_thinker_enabled=False,
+        asr_observation_enabled=True,
+    )
+
+    event_names = metadata["event_names"]
+    latency_debug = metadata["latency_debug"]
+    assert metadata["status"] == "routed"
+    assert metadata["actual_route"] == "FAST_ONLY"
+    assert metadata["asr_output_mode"] == "real"
+    assert metadata["asr_observation_enabled"] is True
+    assert metadata["asr_observation_status"] == "completed"
+    assert metadata["asr_observation_event_id"] == metadata["question_event_id"]
+    assert str(metadata["question_text_ref"]).startswith("text://synthetic/")
+    assert metadata["fast_interaction_output_mode"] == "real"
+    assert metadata["evidence_ref_policy"] == "preserve_fast_ref"
+    assert event_names.index("FOREGROUND_OUTPUT_COMMITTED") < event_names.index(
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED"
+    )
+    assert latency_debug["provider_calls_parallel"] is True
+    assert latency_debug["fast_answer_ready_offset_ms"] <= latency_debug[
+        "qa_pair_ready_offset_ms"
+    ]
+
+
 def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_output(
     tmp_path: Path,
 ) -> None:
@@ -561,7 +607,7 @@ class _FakeFastInteractionTransport:
         assert credential_value.startswith("DUMMY_TEST_CREDENTIAL")
         assert adapter_request_id.startswith("adapter-request-mvp63-fast-interaction-")
         assert timeout_ms == 1_500
-        assert model_alias == "qwen3.5-fast-interaction"
+        assert model_alias == "qwen3.5-omni-flash"
         assert turn_ingress_monotonic_ms > 0
         assert "secret_materialized=False" in repr(credential_handle)
         return FastInteractionProviderCompletion(
@@ -678,14 +724,21 @@ def _approval_packet(*, max_provider_calls: int = 2) -> dict[str, object]:
     }
 
 
-def _fast_approval_packet(*, max_provider_calls: int = 1) -> dict[str, object]:
+def _fast_approval_packet(
+    *,
+    max_provider_calls: int = 1,
+    asr_observation: bool = False,
+) -> dict[str, object]:
+    adapter_ids = ["mvp63_fast_interaction_runtime"]
+    if asr_observation:
+        adapter_ids = ["mvp5_asr_adapter", "mvp63_fast_interaction_runtime"]
     return {
         "approval_id": "mvp63-live-smoke-fast-interaction-test",
         "live_provider_opt_in": True,
         "local_wav_opt_in": True,
         "metadata_only_output": True,
         "replay_reruns_provider": False,
-        "provider_adapter_ids": ["mvp63_fast_interaction_runtime"],
+        "provider_adapter_ids": adapter_ids,
         "credential_env_var_name": "MVP63_TEST_PROVIDER_KEY",
         "max_provider_calls": max_provider_calls,
         "timeout_ms": 1_500,

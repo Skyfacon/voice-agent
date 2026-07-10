@@ -94,6 +94,42 @@ def test_live_provider_gate_rejects_request_budget_overflow_before_provider_call
         validate_mvp5_live_provider_approval(request, env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL"})
 
 
+def test_live_provider_gate_rejects_adapter_ids_not_approved_by_packet() -> None:
+    request = MVP5LiveProviderApprovalRequest(
+        live_provider=True,
+        approval_packet=_approval_packet(),
+        credential_env_var_name="MVP5_TEST_PROVIDER_KEY",
+        requested_provider_calls=2,
+        max_provider_calls=2,
+        timeout_ms=1_500,
+        allow_local_wav=True,
+        provider_adapter_ids=("mvp5_asr_adapter", "mvp63_fast_interaction_runtime"),
+    )
+
+    with pytest.raises(LiveProviderApprovalError, match="exactly match approval packet"):
+        validate_mvp5_live_provider_approval(
+            request,
+            env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL"},
+        )
+
+
+def test_live_provider_gate_requires_request_adapter_ids_even_when_packet_has_ids() -> None:
+    request = MVP5LiveProviderApprovalRequest(
+        live_provider=True,
+        approval_packet=_approval_packet(),
+        credential_env_var_name="MVP5_TEST_PROVIDER_KEY",
+        requested_provider_calls=1,
+        max_provider_calls=2,
+        allow_local_wav=True,
+    )
+
+    with pytest.raises(LiveProviderApprovalError, match="request provider adapter ids"):
+        validate_mvp5_live_provider_approval(
+            request,
+            env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL"},
+        )
+
+
 def test_live_provider_gate_rejects_unsafe_refs_and_invalid_credential_names() -> None:
     request = MVP5LiveProviderApprovalRequest(
         live_provider=True,
@@ -102,6 +138,7 @@ def test_live_provider_gate_rejects_unsafe_refs_and_invalid_credential_names() -
         requested_provider_calls=1,
         max_provider_calls=2,
         allow_local_wav=True,
+        provider_adapter_ids=("mvp5_asr_adapter", "mvp5_thinker_adapter"),
         safe_refs=("file://redacted-local-wav",),
     )
 

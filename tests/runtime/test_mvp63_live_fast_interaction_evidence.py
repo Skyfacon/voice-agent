@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Event
 import wave
+
+import pytest
 
 from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
 from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
@@ -10,7 +13,12 @@ from voice_agent.adapters.fast_interaction_live_transport import FastInteraction
 from voice_agent.adapters.fast_interaction_live_transport import FastInteractionLiveTransportError
 from voice_agent.runtime.mvp5_live_voice_evidence import (
     MVP5LiveVoiceEvidenceConfig,
+    MVP5LiveVoiceEvidenceError,
     run_mvp5_live_voice_evidence,
+)
+from voice_agent.runtime.mvp5_live_router_runner import (
+    MVP5LiveRouterConfig,
+    run_mvp5_live_router_runner,
 )
 
 
@@ -98,6 +106,415 @@ def test_fast_interaction_primary_path_is_audio_native_before_any_asr_dependency
     assert str(wav_path) not in rendered
     assert wav_path.name not in rendered
     assert wav_bytes.hex() not in rendered
+
+
+def test_parallel_asr_observation_does_not_feed_audio_native_fast_interaction(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-fast-with-asr-observation.wav"
+    _write_wav_file(wav_path)
+    asr_started = Event()
+    fast_finished = Event()
+    asr_transport = _ParallelObservationAsrTransport(
+        asr_started=asr_started,
+        fast_finished=fast_finished,
+    )
+    fast_transport = _ParallelObservationFastTransport(
+        asr_started=asr_started,
+        fast_finished=fast_finished,
+    )
+    captured_route: list[object] = []
+
+    def on_fast_ready(partial_result: object, journal: object) -> object:
+        route_result = run_mvp5_live_router_runner(
+            partial_result,
+            config=MVP5LiveRouterConfig(
+                run_id="mvp63-fast-with-asr-observation",
+                expected_route="FAST_ONLY",
+            ),
+            journal=journal,
+        )
+        captured_route.append(route_result)
+        return route_result
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp63-fast-with-asr-observation",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(asr_observation=True),
+            credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+            timeout_ms=1500,
+            fast_interaction_enabled=True,
+            audio_native_thinker_enabled=False,
+            asr_observation_enabled=True,
+            allow_fast_interaction_asr_text_fallback=False,
+            fast_interaction_timeout_ms=1500,
+        ),
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=asr_transport,
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport,
+        on_fast_evidence_ready=on_fast_ready,
+    )
+
+    turn_event = _event(result.events, "TURN_INGRESS_COMMITTED")
+    asr_event = _event(result.events, "ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    fast_event = _event(result.events, "FAST_INTERACTION_OUTPUT_EMITTED")
+
+    assert asr_transport.call_count == 1
+    assert fast_transport.call_count == 1
+    assert fast_event["caused_by_event_id"] == turn_event["event_id"]
+    assert fast_event["source_event_ids"] == (turn_event["event_id"],)
+    assert asr_event["caused_by_event_id"] == turn_event["event_id"]
+    assert fast_event["event_seq"] < asr_event["event_seq"]
+    assert result.asr_event_id == asr_event["event_id"]
+    assert result.asr_output_mode is not None
+    assert result.asr_observation_enabled is True
+    assert result.asr_observation_status == "completed"
+    assert result.asr_text_fallback_used is False
+    assert result.fast_interaction_input_mode == "audio_native"
+    assert result.latency_debug["provider_calls_parallel"] is True
+    assert result.latency_debug["asr_started_before_fast_interaction_finished"] is True
+    assert result.latency_debug["fast_interaction_started_before_asr_finished"] is True
+
+    route_result = captured_route[0]
+    router_event = _event(route_result.events, "ROUTER_DECISION_EMITTED")
+    assert router_event["fast_interaction_output_event_id"] == fast_event["event_id"]
+    assert router_event.get("asr_frame_event_id") in (None, "")
+    assert router_event["evidence_ref_policy"] == "preserve_fast_ref"
+
+
+def test_asr_observation_requires_router_gate_coordinator_callback(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-observation-missing-coordinator.wav"
+    _write_wav_file(wav_path)
+
+    with pytest.raises(MVP5LiveVoiceEvidenceError, match="coordinator callback"):
+        run_mvp5_live_voice_evidence(
+            local_wav=wav_path,
+            config=MVP5LiveVoiceEvidenceConfig(
+                fast_interaction_enabled=True,
+                asr_observation_enabled=True,
+            ),
+        )
+
+
+def test_asr_observation_rejects_callback_that_does_not_finalize_fast_path(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-observation-incomplete-coordinator.wav"
+    _write_wav_file(wav_path)
+
+    with pytest.raises(MVP5LiveVoiceEvidenceError, match="Router decision"):
+        run_mvp5_live_voice_evidence(
+            local_wav=wav_path,
+            config=MVP5LiveVoiceEvidenceConfig(
+                run_id="mvp63-observation-incomplete-coordinator",
+                live_provider=True,
+                allow_local_wav=True,
+                approval_packet=_approval_packet(asr_observation=True),
+                credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+                requested_provider_calls=2,
+                max_provider_calls=2,
+                timeout_ms=1500,
+                fast_interaction_enabled=True,
+                audio_native_thinker_enabled=False,
+                asr_observation_enabled=True,
+                fast_interaction_timeout_ms=1500,
+            ),
+            env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+            asr_transport=FakeAsrTransport(
+                (
+                    FakeAsrProviderResponse.success(
+                        asr_frame_ref="asr-frame://synthetic/mvp63/incomplete",
+                        text_ref="text://synthetic/mvp63/incomplete",
+                        audio_timestamps_ref=None,
+                        streaming_status="unsupported_final_only",
+                    ),
+                )
+            ),
+            fast_interaction_transport=_FakeFastInteractionTransport(),
+            on_fast_evidence_ready=lambda *_args: None,
+        )
+
+
+def test_route_expectation_mismatch_still_finalizes_gate_before_asr_observation(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-observation-route-mismatch.wav"
+    _write_wav_file(wav_path)
+
+    def on_fast_ready(partial_result: object, journal: object) -> object:
+        return run_mvp5_live_router_runner(
+            partial_result,
+            config=MVP5LiveRouterConfig(
+                run_id="mvp63-observation-route-mismatch",
+                expected_route="SPAWN_SLOW_TASK",
+            ),
+            journal=journal,
+        )
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp63-observation-route-mismatch",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(asr_observation=True),
+            credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+            timeout_ms=1500,
+            fast_interaction_enabled=True,
+            audio_native_thinker_enabled=False,
+            asr_observation_enabled=True,
+            fast_interaction_timeout_ms=1500,
+        ),
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=FakeAsrTransport(
+            (
+                FakeAsrProviderResponse.success(
+                    asr_frame_ref="asr-frame://synthetic/mvp63/mismatch",
+                    text_ref="text://synthetic/mvp63/mismatch",
+                    audio_timestamps_ref=None,
+                    streaming_status="unsupported_final_only",
+                ),
+            )
+        ),
+        fast_interaction_transport=_FakeFastInteractionTransport(),
+        on_fast_evidence_ready=on_fast_ready,
+    )
+
+    committed = _event(result.events, "FOREGROUND_OUTPUT_COMMITTED")
+    asr_event = _event(result.events, "ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    assert committed["event_seq"] < asr_event["event_seq"]
+    assert getattr(result.fast_path_result, "status") == "route_mismatch"
+
+
+def test_fast_router_and_gate_finish_before_asr_observation_is_emitted(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-fast-route-before-asr.wav"
+    _write_wav_file(wav_path)
+    asr_started = Event()
+    route_finished = Event()
+    asr_finished = Event()
+    asr_transport = _RouteBlockingObservationAsrTransport(
+        asr_started=asr_started,
+        route_finished=route_finished,
+        asr_finished=asr_finished,
+    )
+    fast_transport = _FastWaitsForAsrStartTransport(asr_started=asr_started)
+    captured_route: list[object] = []
+
+    def on_fast_ready(partial_result: object, journal: object) -> object:
+        assert asr_finished.is_set() is False
+        route_result = run_mvp5_live_router_runner(
+            partial_result,
+            config=MVP5LiveRouterConfig(
+                run_id="mvp63-fast-route-before-asr",
+                expected_route="FAST_ONLY",
+            ),
+            journal=journal,
+        )
+        assert _event(route_result.events, "FOREGROUND_OUTPUT_COMMITTED")
+        captured_route.append(route_result)
+        route_finished.set()
+        return route_result
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp63-fast-route-before-asr",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(asr_observation=True),
+            credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+            timeout_ms=1500,
+            fast_interaction_enabled=True,
+            audio_native_thinker_enabled=False,
+            asr_observation_enabled=True,
+            fast_interaction_timeout_ms=1500,
+        ),
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=asr_transport,
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport,
+        on_fast_evidence_ready=on_fast_ready,
+    )
+
+    committed = _event(result.events, "FOREGROUND_OUTPUT_COMMITTED")
+    asr_event = _event(result.events, "ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    assert committed["event_seq"] < asr_event["event_seq"]
+    assert result.fast_path_result is captured_route[0]
+    assert asr_finished.is_set() is True
+
+
+def test_asr_observation_failure_preserves_committed_fast_answer(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-asr-failure-preserves-fast.wav"
+    _write_wav_file(wav_path)
+
+    def on_fast_ready(partial_result: object, journal: object) -> object:
+        return run_mvp5_live_router_runner(
+            partial_result,
+            config=MVP5LiveRouterConfig(
+                run_id="mvp63-asr-failure-preserves-fast",
+                expected_route="FAST_ONLY",
+            ),
+            journal=journal,
+        )
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp63-asr-failure-preserves-fast",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(asr_observation=True),
+            credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+            timeout_ms=1500,
+            fast_interaction_enabled=True,
+            audio_native_thinker_enabled=False,
+            asr_observation_enabled=True,
+            fast_interaction_timeout_ms=1500,
+        ),
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=FakeAsrTransport(
+            (FakeAsrProviderResponse.request_failure("provider_unavailable"),)
+        ),
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=_FakeFastInteractionTransport(),
+        on_fast_evidence_ready=on_fast_ready,
+    )
+
+    committed = _event(result.events, "FOREGROUND_OUTPUT_COMMITTED")
+    asr_failure = next(
+        event
+        for event in result.events
+        if event["event_name"] == "ADAPTER_REQUEST_FAILED"
+        and event["adapter_type"] == "asr"
+    )
+    assert committed["event_seq"] < asr_failure["event_seq"]
+    assert result.status == "evidence_emitted"
+    assert result.asr_observation_status == "failed"
+    assert result.fast_path_result is not None
+
+
+def test_unexpected_asr_observation_exception_preserves_committed_fast_answer(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-asr-unexpected-failure.wav"
+    _write_wav_file(wav_path)
+
+    def on_fast_ready(partial_result: object, journal: object) -> object:
+        return run_mvp5_live_router_runner(
+            partial_result,
+            config=MVP5LiveRouterConfig(
+                run_id="mvp63-asr-unexpected-failure",
+                expected_route="FAST_ONLY",
+            ),
+            journal=journal,
+        )
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp63-asr-unexpected-failure",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(asr_observation=True),
+            credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+            timeout_ms=1500,
+            fast_interaction_enabled=True,
+            audio_native_thinker_enabled=False,
+            asr_observation_enabled=True,
+            fast_interaction_timeout_ms=1500,
+        ),
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_UnexpectedAsrTransport(),
+        fast_interaction_transport=_FakeFastInteractionTransport(),
+        on_fast_evidence_ready=on_fast_ready,
+    )
+
+    committed = _event(result.events, "FOREGROUND_OUTPUT_COMMITTED")
+    asr_failure = next(
+        event
+        for event in result.events
+        if event["event_name"] == "ADAPTER_REQUEST_FAILED"
+        and event["adapter_type"] == "asr"
+    )
+    assert committed["event_seq"] < asr_failure["event_seq"]
+    assert asr_failure["failure_reason"] == "provider_request_failed"
+    assert result.status == "evidence_emitted"
+    assert result.asr_observation_status == "failed"
+
+
+def test_fast_failure_preserves_asr_observation_question_event(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "mvp63-fast-failure-preserves-asr.wav"
+    _write_wav_file(wav_path)
+    fast_transport = _FailingFastInteractionTransport(
+        FastInteractionLiveTransportError(
+            "provider timeout",
+            category="provider_timeout",
+            failure_reasons=("provider_timeout",),
+        )
+    )
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp63-fast-failure-preserves-asr",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(asr_observation=True),
+            credential_env_var_name="MVP63_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+            timeout_ms=1500,
+            fast_interaction_enabled=True,
+            audio_native_thinker_enabled=False,
+            asr_observation_enabled=True,
+            fast_interaction_timeout_ms=1500,
+        ),
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=FakeAsrTransport(
+            (
+                FakeAsrProviderResponse.success(
+                    asr_frame_ref="asr-frame://synthetic/mvp63/fast-failure",
+                    text_ref="text://synthetic/mvp63/fast-failure",
+                    audio_timestamps_ref=None,
+                    streaming_status="unsupported_final_only",
+                ),
+            )
+        ),
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport,
+        on_fast_evidence_ready=_fail_if_fast_callback_runs,
+    )
+
+    assert _event(result.events, "ASR_TRANSCRIPT_OUTPUT_EMITTED")
+    assert "FOREGROUND_OUTPUT_COMMITTED" not in {
+        event["event_name"] for event in result.events
+    }
+    assert result.status == "evidence_failed"
+    assert result.asr_observation_status == "completed"
+    assert result.asr_event_id is not None
+    assert result.fast_path_result is None
 
 
 def test_fast_interaction_asr_text_fallback_requires_explicit_flag(
@@ -213,6 +630,10 @@ def test_fast_interaction_timeout_fails_closed_without_audio_native_thinker(
     assert "raw provider body" not in rendered
 
 
+def _fail_if_fast_callback_runs(*_args: object) -> object:
+    raise AssertionError("Fast callback must not run after Fast provider failure")
+
+
 class _FakeFastInteractionTransport:
     def __init__(self, *, call_order: list[str] | None = None) -> None:
         self.call_count = 0
@@ -255,7 +676,7 @@ class _FakeFastInteractionTransport:
         assert turn_ingress_monotonic_ms == 190
         assert credential_value.startswith("DUMMY_TEST_CREDENTIAL")
         assert adapter_request_id.startswith("adapter-request-mvp63-fast-interaction-")
-        assert model_alias == "qwen3.5-fast-interaction"
+        assert model_alias == "qwen3.5-omni-flash"
         assert "secret_materialized=False" in repr(credential_handle)
         return FastInteractionProviderCompletion(
             provider_text=_fast_provider_json(output_mode="real"),
@@ -269,6 +690,11 @@ class _FailingFastInteractionTransport:
 
     def complete_audio_with_timing(self, **_kwargs: object) -> FastInteractionProviderCompletion:
         raise self._exc
+
+
+class _UnexpectedAsrTransport:
+    def transcribe(self, _binding: object) -> object:
+        raise RuntimeError("unsafe provider details must not escape")
 
 
 class _FallbackFastInteractionTransport:
@@ -292,7 +718,7 @@ class _FallbackFastInteractionTransport:
         assert request_payload["text_ref"] == "text://synthetic/mvp63/fallback"
         assert credential_value.startswith("DUMMY_TEST_CREDENTIAL")
         assert timeout_ms == 1500
-        assert model_alias == "qwen3.5-fast-interaction"
+        assert model_alias == "qwen3.5-omni-flash"
         assert turn_ingress_monotonic_ms == 190
         assert "secret_materialized=False" in repr(credential_handle)
         return FastInteractionProviderCompletion(
@@ -324,6 +750,80 @@ class _OrderingAsrTransport:
                 ),
             )
         ).transcribe(binding)
+
+
+class _ParallelObservationAsrTransport:
+    def __init__(self, *, asr_started: Event, fast_finished: Event) -> None:
+        self._asr_started = asr_started
+        self._fast_finished = fast_finished
+        self.call_count = 0
+
+    def transcribe(self, binding: object) -> object:
+        self.call_count += 1
+        self._asr_started.set()
+        assert self._fast_finished.wait(timeout=1.0)
+        return FakeAsrTransport(
+            (
+                FakeAsrProviderResponse.success(
+                    asr_frame_ref="asr-frame://synthetic/mvp63/observation",
+                    text_ref="text://synthetic/mvp63/observation",
+                    audio_timestamps_ref=None,
+                    streaming_status="unsupported_final_only",
+                ),
+            )
+        ).transcribe(binding)
+
+
+class _ParallelObservationFastTransport(_FakeFastInteractionTransport):
+    def __init__(self, *, asr_started: Event, fast_finished: Event) -> None:
+        super().__init__()
+        self._asr_started = asr_started
+        self._fast_finished = fast_finished
+
+    def complete_audio_with_timing(self, **kwargs: object) -> FastInteractionProviderCompletion:
+        assert self._asr_started.wait(timeout=1.0)
+        try:
+            return super().complete_audio_with_timing(**kwargs)  # type: ignore[arg-type]
+        finally:
+            self._fast_finished.set()
+
+
+class _RouteBlockingObservationAsrTransport:
+    def __init__(
+        self,
+        *,
+        asr_started: Event,
+        route_finished: Event,
+        asr_finished: Event,
+    ) -> None:
+        self._asr_started = asr_started
+        self._route_finished = route_finished
+        self._asr_finished = asr_finished
+
+    def transcribe(self, binding: object) -> object:
+        self._asr_started.set()
+        assert self._route_finished.wait(timeout=1.0)
+        self._asr_finished.set()
+        return FakeAsrTransport(
+            (
+                FakeAsrProviderResponse.success(
+                    asr_frame_ref="asr-frame://synthetic/mvp63/route-before-asr",
+                    text_ref="text://synthetic/mvp63/route-before-asr",
+                    audio_timestamps_ref=None,
+                    streaming_status="unsupported_final_only",
+                ),
+            )
+        ).transcribe(binding)
+
+
+class _FastWaitsForAsrStartTransport(_FakeFastInteractionTransport):
+    def __init__(self, *, asr_started: Event) -> None:
+        super().__init__()
+        self._asr_started = asr_started
+
+    def complete_audio_with_timing(self, **kwargs: object) -> FastInteractionProviderCompletion:
+        assert self._asr_started.wait(timeout=1.0)
+        return super().complete_audio_with_timing(**kwargs)  # type: ignore[arg-type]
 
 
 class _ExplodingThinkerTransport:
@@ -377,10 +877,14 @@ def _fast_timing_snapshot() -> AdapterTimingSnapshot:
     )
 
 
-def _approval_packet(*, asr_text_fallback: bool = False) -> dict[str, object]:
+def _approval_packet(
+    *,
+    asr_text_fallback: bool = False,
+    asr_observation: bool = False,
+) -> dict[str, object]:
     provider_adapter_ids = ["mvp63_fast_interaction_runtime"]
     max_provider_calls = 1
-    if asr_text_fallback:
+    if asr_text_fallback or asr_observation:
         provider_adapter_ids = ["mvp5_asr_adapter", "mvp63_fast_interaction_runtime"]
         max_provider_calls = 2
     return {

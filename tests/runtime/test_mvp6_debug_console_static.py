@@ -37,12 +37,16 @@ def test_static_html_contains_pipeline_and_history_surfaces() -> None:
     assert "foreground_gate" in html
     assert "qa_history" in html
     assert "Latency" in html
+    assert 'id="questionDisplay"' in html
+    assert 'id="answerDisplay"' in html
+    assert 'id="qaStatus"' in html
     assert 'id="latencyPanel"' in html
     assert "QA history is local-only" in html
     assert 'id="showModelIo"' in html
     assert 'id="modelIoPanel"' in html
     assert 'id="modelIoEmpty"' in html
     assert 'id="modelIoAsrText"' in html
+    assert 'id="modelIoFastInteraction"' in html
     assert 'id="modelIoThinkerSystem"' in html
     assert "Thinker User Payload" in html
     assert 'id="modelIoThinkerRequest"' in html
@@ -76,6 +80,7 @@ def test_static_js_submits_and_renders_model_io_debug() -> None:
     assert "renderModelIoDebug(payload.model_io_debug || null);" in html
     assert "function renderModelIoDebug(modelIo)" in html
     assert "setText('modelIoAsrText', formatModelIoSummary(modelIo.asr));" in html
+    assert "setText('modelIoFastInteraction', formatModelIoSummary(modelIo.fast_interaction));" in html
     assert "setText('modelIoThinkerSystem', formatModelIoSummary(modelIo.thinker));" in html
     assert "metadata only; request payload redacted" in html
     assert "metadata only; provider output redacted" in html
@@ -85,3 +90,6 @@ def test_static_js_submits_and_renders_model_io_debug() -> None:
     assert ".request_body" not in html
     assert "JSON.stringify(buildModelIoMetadata(modelIo), null, 2)" in html
     assert "document.getElementById('latencyPanel').textContent = JSON.stringify(payload.latency_debug || {}, null, 2);" in html
+    assert "document.getElementById('questionDisplay').textContent" in html
+    assert "payload.question_text" in html
+    assert "payload.qa_status" in html

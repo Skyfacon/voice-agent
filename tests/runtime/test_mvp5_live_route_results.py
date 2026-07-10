@@ -98,7 +98,12 @@ def test_fast_interaction_fast_only_commits_gated_reply_without_thinker(
     assert metadata["foreground_candidate_event_id"] == candidate_event["event_id"]
     assert metadata["foreground_gate_event_id"] == gate_event["event_id"]
     assert metadata["foreground_output_event_id"] == committed["event_id"]
+    assert metadata["foreground_candidate_ref"] == candidate_event["candidate_ref"]
+    assert metadata["foreground_output_ref"] == committed["output_ref"]
     assert metadata["response_text_ref"] == committed["output_ref"]
+    assert metadata["router_ms"] >= 0
+    assert metadata["foreground_gate_ms"] >= 0
+    assert metadata["foreground_output_finalize_ms"] >= 0
     assert router_event["fast_interaction_output_event_id"] == fast_event["event_id"]
     assert committed["output_basis"] == "reply_candidate"
     assert committed["output_ref"] == candidate_event["candidate_ref"]
@@ -187,6 +192,11 @@ def test_fast_interaction_slow_route_discards_candidate_and_spawns_slowtask(
     assert metadata["foreground_output_basis"] == "template_ack"
     assert metadata["foreground_discard_event_id"] == discarded["event_id"]
     assert metadata["foreground_output_event_id"] == committed["event_id"]
+    assert metadata["foreground_output_ref"] == committed["output_ref"]
+    assert metadata["foreground_fallback_policy_ref"] == committed[
+        "fallback_policy_ref"
+    ]
+    assert metadata["foreground_fallback_reason"] == committed["fallback_reason"]
     assert metadata["fast_interaction_event_id"] == fast_event["event_id"]
     assert committed["output_basis"] == "template_ack"
     assert "FOREGROUND_OUTPUT_DISCARDED" in event_names
@@ -546,7 +556,7 @@ class _FakeFastInteractionTransport:
         assert credential_value.startswith("DUMMY_TEST_CREDENTIAL")
         assert adapter_request_id.startswith("adapter-request-mvp63-fast-interaction-")
         assert timeout_ms == 1500
-        assert model_alias == "qwen3.5-fast-interaction"
+        assert model_alias == "qwen3.5-omni-flash"
         assert turn_ingress_monotonic_ms == 190
         assert "secret_materialized=False" in repr(credential_handle)
         return FastInteractionProviderCompletion(

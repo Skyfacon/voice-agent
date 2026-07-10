@@ -238,6 +238,27 @@ def test_asr_transcript_replay_rejects_raw_payload_fields(raw_field: str) -> Non
         run_replay_fixture(fixture)
 
 
+@pytest.mark.parametrize(
+    "nested_payload",
+    (
+        {"debug": {"raw_transcript": "synthetic unsafe transcript"}},
+        {"metadata": [{"provider_payload": {"synthetic": "unsafe provider payload"}}]},
+    ),
+)
+def test_asr_transcript_replay_rejects_nested_raw_payload_fields(
+    nested_payload: dict[str, Any],
+) -> None:
+    fixture = _asr_fixture()
+    asr_event = _event_by_id(fixture["events"], ASR_EVENT_ID)
+    asr_event["validation_metadata"] = nested_payload
+
+    with pytest.raises(
+        ReplayValidationError,
+        match="ASR_TRANSCRIPT_OUTPUT_EMITTED must not contain raw audio, transcript, or provider payload",
+    ):
+        run_replay_fixture(fixture)
+
+
 def _asr_fixture(
     *,
     asr_overrides: dict[str, Any] | None = None,

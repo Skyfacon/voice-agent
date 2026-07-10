@@ -100,7 +100,7 @@ Example values:
 | `adapter_id` | `mvp63_fast_interaction_runtime` |
 | `adapter_type` | `fast_interaction` |
 | `provider` | `dashscope_bailian` |
-| `model_name` | `qwen3.5-fast-interaction` |
+| `model_name` | `qwen3.5-omni-flash` |
 | `deployment_mode` | `remote_api` |
 | `capability_version` | `mvp6.3.fast-interaction.runtime.v1` |
 | `latency_class` | `remote_api_http_audio_native_fast_interaction` |

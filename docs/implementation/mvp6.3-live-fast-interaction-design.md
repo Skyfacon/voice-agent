@@ -124,6 +124,11 @@ MVP6.3 scope includes:
   the current LALM Thinker, but does not reuse the LALM Thinker role contract.
 - ASR transcript text/ref as a secondary fallback/degraded/debug input, not the
   primary live fast answer input.
+- An explicit `asr_observation_enabled` branch for the local debug console. It
+  consumes the same committed turn audio in parallel, emits the existing ASR
+  event, and supplies the displayed Question plus local-only QA history. It is
+  distinct from `allow_fast_interaction_asr_text_fallback` and never becomes a
+  prerequisite or input for the audio-native Fast Interaction call.
 - One Fast Interaction model call per turn for route evidence plus foreground
   candidate. No post-Router answer model call.
 - Runtime integration behind explicit provider mode and approval gate.
@@ -313,15 +318,44 @@ local wav / browser draft audio
 ```
 
 ASR remains part of the live voice system, but it should not define the primary
-fast answer architecture:
+fast answer architecture. In the complete QA debug profile it is an observation
+branch, not a dependency:
 
 ```text
-local wav / browser draft audio
--> ASR Adapter in parallel or as fallback
--> ASR_TRANSCRIPT_OUTPUT_EMITTED
--> optional ASR-text Fast Interaction fallback when audio-native fast profile is
-   unavailable, timed out, explicitly disabled, or selected for A/B diagnostics
+TURN_INGRESS_COMMITTED(audio)
+├── Live audio-native Fast Interaction Adapter
+│   └── Router -> Fast Foreground Gate -> committed/fallback Answer
+└── ASR Adapter with asr_observation_enabled=true
+    └── ASR_TRANSCRIPT_OUTPUT_EMITTED -> displayed Question / local QA history
 ```
+
+The two provider calls start from the same committed turn and may execute in
+parallel. Provider I/O may be concurrent, but canonical event appends remain
+serialized through one per-session journal boundary. Fast Interaction output is
+eligible for Router and gate processing as soon as it is ready; ASR completion
+must not delay or change that decision. The debug response may join both branches
+before returning a complete QA pair, but latency metadata must preserve the
+independent fast-answer-ready time.
+
+The observation profile requires a coordinator callback owned by the runtime.
+Before the ASR observation event may be appended, the shared journal must already
+contain `ROUTER_DECISION_EMITTED`, one foreground gate decision, and one final
+foreground commit/discard event. A missing callback, a callback that writes a
+different journal, or a callback that does not finalize foreground output fails
+closed. Ordinary ASR observation exceptions become metadata-only adapter failure
+events and cannot invalidate an already committed Fast Answer.
+
+ASR-text Fast Interaction remains a separate fallback profile:
+
+```text
+TURN_INGRESS_COMMITTED(audio)
+-> ASR_TRANSCRIPT_OUTPUT_EMITTED
+-> Fast Interaction input_mode=asr_text_fallback
+```
+
+That fallback is serial by definition and must be labeled
+`output_mode=degraded|fallback`. Enabling QA observation alone must never select
+it.
 
 The fast path may use an optimized audio-native Thinker profile, but it should
 not wait for the current heavy Thinker profile before the foreground candidate
@@ -429,6 +463,8 @@ turn_ingress_ms
 audio_ref_ready_ms
 asr_provider_http_ms
 asr_normalize_emit_ms
+asr_provider_request_start_offset_ms
+asr_adapter_event_emit_offset_ms
 fast_interaction_provider_request_start_offset_ms
 fast_interaction_audio_prepare_ms
 fast_interaction_request_build_ms
@@ -443,12 +479,25 @@ thinker_parse_validate_emit_ms
 thinker_total_ms
 router_ms
 foreground_gate_ms
+foreground_output_finalize_ms
+fast_answer_ready_offset_ms
+qa_pair_ready_offset_ms
 total_server_ms
 ```
+
+Unavailable timing values are represented as `null`, never fabricated as zero.
+`router_ms` measures Router work only, `foreground_gate_ms` measures the
+deterministic gate decision, and `foreground_output_finalize_ms` measures the
+subsequent commit/discard/fallback finalization boundary.
 
 ASR and Thinker may run in parallel with Fast Interaction, so the waterfall
 should include both absolute offsets from turn ingress and duration fields where
 possible. This lets experiments distinguish:
+
+- `provider_calls_parallel=true` means the provider calls were submitted through
+  the explicit parallel I/O boundary;
+- `provider_calls_overlapped` records whether their measured execution windows
+  actually overlapped (instant fake calls may legitimately report `false`);
 
 - audio preparation / encoding overhead;
 - request construction and client-side body build overhead;
@@ -504,6 +553,8 @@ Replay requirements:
 - Replay never reconstructs behavior from raw prompt, provider body, env secret,
   local wav path, or raw audio.
 - Shareable replay / GitHub fixtures are synthetic, redacted, or metadata-only.
+- Forbidden ASR payload checks are recursive, so nested raw transcript or
+  provider payload fields are rejected as well as top-level fields.
 - Debug history/API may include display text only after safety validation.
 - History/API must not contain raw prompt, provider body, secret, credential,
   raw audio, local path, diagnostics, local replay cache, or unredacted real
@@ -562,11 +613,22 @@ Gate failure policy:
 
 Gate pass only means the candidate can be displayed as low-risk foreground text.
 It is not SemanticCommitment, not playback delivery, and not user confirmation.
+The debug/API projection must additionally prove that the committed
+`output_ref` exactly matches the emitted `candidate_ref`. Template fallback text
+is resolved only from the runtime template catalog after validating the
+committed `output_ref`, `output_basis`, `fallback_policy_ref`, and
+`fallback_reason`; route-based UI hardcoding is not an authority source.
 
 ## 9. Debug Console And History
 
 MVP6.3 extends the MVP6 debug console response/history with safe metadata:
 
+- `question_source=asr_transcript|credential_filter|unavailable`
+- `question_text` from the normalized ASR transcript for local-only display
+- `answer_display` from `FOREGROUND_OUTPUT_COMMITTED` or deterministic fallback
+- `qa_status=complete|question_unavailable|answer_fallback|redacted|failed`
+- `asr_observation_enabled`
+- `asr_output_mode`
 - `fast_interaction_output_mode`
 - `fast_interaction_input_mode`
 - `fast_interaction_adapter_id`
@@ -581,9 +643,12 @@ MVP6.3 extends the MVP6 debug console response/history with safe metadata:
 - `foreground_gate_event_id`
 - `foreground_gate_failure_reason`
 - `foreground_output_event_id`
+- `foreground_candidate_ref`
+- `foreground_output_ref`
 - `foreground_output_basis`
 - `foreground_discard_event_id`
 - `foreground_fallback_reason`
+- `foreground_fallback_policy_ref`
 - `fast_interaction_adapter_start_offset_ms`
 - `fast_interaction_provider_request_start_offset_ms`
 - `fast_interaction_provider_first_chunk_offset_ms`
@@ -596,6 +661,8 @@ MVP6.3 extends the MVP6 debug console response/history with safe metadata:
 - `fast_interaction_provider_generation_ms`
 - `fast_interaction_stream_decode_ms`
 - `fast_interaction_parse_validate_emit_ms`
+- `foreground_gate_ms`
+- `foreground_output_finalize_ms`
 - `fast_interaction_total_ms`
 - `fast_interaction_timed_out`
 - `thinker_adapter_start_offset_ms`
@@ -614,14 +681,25 @@ MVP6.3 extends the MVP6 debug console response/history with safe metadata:
 
 The console display may show:
 
+- the normalized ASR Question from the parallel observation branch;
 - the real gated reply candidate for `FAST_ONLY + ANSWER + LOW risk`;
 - template `ACK_SLOW` for slow task spawn;
 - template `ACK_PATCH` for active task patch;
 - template clarification for ambiguous input;
 - silence/no output for ignore.
 
-History should preserve enough route/gate/failure/latency metadata to debug the
-run without saving raw prompt/provider body/provider response/raw audio/secrets.
+When the user keeps `Save QA history locally` enabled, local ignored history may
+store the normalized ASR Question and the exact runtime-approved displayed
+Answer. It must never store raw audio, raw prompt, provider request/response
+bodies, candidate text that was discarded, local paths, authorization data, or
+secrets. Shareable fixtures and committed artifacts remain synthetic or
+redacted.
+
+Before Question or Answer text enters the response or local history, a shared
+credential detector checks common API-key, JWT, private-key, authorization, and
+credential-assignment shapes. Suspect text is replaced by a safe local
+placeholder/status (`question_status=redacted`, `answer_status=redacted`,
+`qa_status=redacted`) and the original text is not persisted.
 
 ## 10. Implementation Slices Proposal
 
