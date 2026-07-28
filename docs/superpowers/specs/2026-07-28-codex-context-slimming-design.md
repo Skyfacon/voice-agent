@@ -2,10 +2,10 @@
 
 ## Status
 
-Draft for written user review.
+Approved for shadow implementation planning on 2026-07-28.
 
-The conversational design has been approved. This document must receive an
-explicit written-review approval before an implementation plan is created.
+Written user approval was received before the implementation plan was created.
+Atomic switch approval remains separate.
 
 ## Date
 
