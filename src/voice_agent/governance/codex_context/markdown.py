@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from .model import LegacyRule, LegacySourceKind
+from .model import (
+    AuthorityRef,
+    CandidateInvariant,
+    EnforcementRef,
+    InvariantMapping,
+    LegacyRule,
+    LegacySourceKind,
+)
 
 
 _REQUIRED_HEADINGS = (
@@ -29,6 +37,84 @@ _UNEXPECTED_CONTENT = "legacy_instruction_unexpected_governed_content"
 _DUPLICATE_DIGEST = "legacy_instruction_duplicate_digest"
 _UNEXPECTED_COUNT = "legacy_instruction_unexpected_rule_count"
 _READ_FAILED = "legacy_instruction_read_failed"
+
+MAP_BEGIN = "<!-- codex-context-map:v1 begin -->"
+MAP_END = "<!-- codex-context-map:v1 end -->"
+_MAP_SCHEMA = "voice_agent.codex_context.invariant_map.v1"
+_MAP_ROOT_FIELDS = frozenset({"schema", "rows"})
+_MAP_ROW_FIELDS = frozenset(
+    {
+        "legacy_ref",
+        "legacy_summary",
+        "source_heading",
+        "normalized_digest",
+        "invariant_id",
+        "candidate_ref",
+        "candidate_clause_digest",
+        "authority_refs",
+        "enforcement_refs",
+        "auto_context",
+        "equivalence_note",
+        "switch_prerequisite",
+    }
+)
+_AUTHORITY_FIELDS = frozenset({"path", "heading"})
+_ENFORCEMENT_FIELDS = frozenset({"kind", "path", "symbol"})
+_ENFORCEMENT_KINDS = frozenset({"pytest", "script", "review-check"})
+_SWITCH_PREREQUISITE = "ADR015_EXPLICIT_OPERATIONAL_AUTHORITY_REQUIRED"
+_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_LEGACY_REF_RE = re.compile(
+    r"^LEGACY-(?:PREAMBLE-\d{2}|CORE-\d{2}(?:-\d{2})?|SCOPE-\d{2}|"
+    r"DEBUG-\d{2}|ARTIFACT-(?:\d{2}|IGNORE-\d{2}|FIXTURE-\d{2})|"
+    r"REVIEW-\d{2}|ADR-INDEX-\d{2})$"
+)
+_INVARIANT_ID_RE = re.compile(
+    r"^INV-(ADR|ADAPTER|JOURNAL|PLAN|TOOL|COMMITMENT|PRIVACY|"
+    r"CONCURRENCY|FOREGROUND|VERIFY)-\d{2}$"
+)
+_CANDIDATE_H2 = (
+    "Authority and mode selection",
+    "Stable invariants",
+    "Verification and detailed checks",
+    "Scope reminder",
+)
+_CANDIDATE_H3 = (
+    "INV-ADR — ADR and scope governance",
+    "INV-ADAPTER — Adapters",
+    "INV-JOURNAL — Journal/replay",
+    "INV-PLAN — Plan/lifecycle",
+    "INV-TOOL — Tools/evidence",
+    "INV-COMMITMENT — Commitments",
+    "INV-PRIVACY — Privacy/artifacts",
+    "INV-CONCURRENCY — Concurrency",
+    "INV-FOREGROUND — Foreground/projection",
+    "INV-VERIFY — Verification",
+)
+_CANDIDATE_CLAUSE_RE = re.compile(
+    r"^- (INV-(?:ADR|ADAPTER|JOURNAL|PLAN|TOOL|COMMITMENT|PRIVACY|"
+    r"CONCURRENCY|FOREGROUND|VERIFY)-\d{2}):[ \t]+(.+?)\s*$"
+)
+
+_MAP_MARKERS = "invariant_map_marker_count_invalid"
+_MAP_FENCE = "invariant_map_json_fence_invalid"
+_MAP_JSON = "invariant_map_json_invalid"
+_MAP_DUPLICATE_KEY = "invariant_map_duplicate_json_key"
+_MAP_SCHEMA_ERROR = "invariant_map_schema_invalid"
+_MAP_FIELDS = "invariant_map_fields_invalid"
+_MAP_VALUE = "invariant_map_value_invalid"
+_MAP_BOOLEAN = "invariant_map_boolean_invalid"
+_MAP_DIGEST = "invariant_map_digest_invalid"
+_MAP_INVARIANT = "invariant_map_invariant_id_invalid"
+_MAP_PATH = "invariant_map_path_invalid"
+_MAP_ENFORCEMENT = "invariant_map_enforcement_invalid"
+_MAP_DUPLICATE = "invariant_map_duplicate_legacy_ref"
+_MAP_SORT = "invariant_map_rows_not_sorted"
+_MAP_READ = "invariant_map_read_failed"
+_CANDIDATE_READ = "candidate_instruction_read_failed"
+_CANDIDATE_HEADINGS = "candidate_instruction_heading_structure_invalid"
+_CANDIDATE_CLAUSE = "candidate_instruction_clause_invalid"
+_CANDIDATE_OUTSIDE = "candidate_instruction_invariant_outside_family"
+_CANDIDATE_DUPLICATE = "candidate_instruction_duplicate_invariant_id"
 
 
 @dataclass
@@ -195,6 +281,246 @@ def collect_legacy_rules_from_text(text: str) -> tuple[LegacyRule, ...]:
     if len(collected) != 111:
         raise ValueError(_UNEXPECTED_COUNT)
     return tuple(collected)
+
+
+def load_invariant_map(path: Path) -> tuple[InvariantMapping, ...]:
+    """Load and strictly validate the canonical invariant map."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise ValueError(_MAP_READ) from None
+    return load_invariant_map_from_text(text)
+
+
+def load_invariant_map_from_text(text: str) -> tuple[InvariantMapping, ...]:
+    """Load a v1 invariant map from its marked Markdown JSON payload."""
+
+    if text.count(MAP_BEGIN) != 1 or text.count(MAP_END) != 1:
+        raise ValueError(_MAP_MARKERS)
+    begin = text.index(MAP_BEGIN)
+    end = text.index(MAP_END)
+    if begin >= end:
+        raise ValueError(_MAP_MARKERS)
+    payload = text[begin + len(MAP_BEGIN) : end].strip()
+    fence = re.fullmatch(r"```json[ \t]*\n(.*)\n```", payload, flags=re.DOTALL)
+    if (
+        fence is None
+        or payload.count("```") != 2
+        or text.count("```") != 2
+    ):
+        raise ValueError(_MAP_FENCE)
+    try:
+        document = json.loads(
+            fence.group(1),
+            object_pairs_hook=_reject_duplicate_object_pairs,
+        )
+    except (json.JSONDecodeError, UnicodeError):
+        raise ValueError(_MAP_JSON) from None
+    if type(document) is not dict:
+        raise ValueError(_MAP_FIELDS)
+    if frozenset(document) != _MAP_ROOT_FIELDS:
+        raise ValueError(_MAP_FIELDS)
+    if document["schema"] != _MAP_SCHEMA or type(document["schema"]) is not str:
+        raise ValueError(_MAP_SCHEMA_ERROR)
+    rows = document["rows"]
+    if type(rows) is not list:
+        raise ValueError(_MAP_VALUE)
+
+    mappings = tuple(_parse_mapping_row(row) for row in rows)
+    refs = [mapping.legacy_ref for mapping in mappings]
+    if len(refs) != len(set(refs)):
+        raise ValueError(_MAP_DUPLICATE)
+    if refs != sorted(refs):
+        raise ValueError(_MAP_SORT)
+    return mappings
+
+
+def collect_candidate_invariants(path: Path) -> tuple[CandidateInvariant, ...]:
+    """Collect exact invariant clauses from the candidate instruction."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise ValueError(_CANDIDATE_READ) from None
+    return collect_candidate_invariants_from_text(text)
+
+
+def collect_candidate_invariants_from_text(
+    text: str,
+) -> tuple[CandidateInvariant, ...]:
+    """Parse the candidate heading and clause contract without inference."""
+
+    lines = text.splitlines()
+    headings, fenced_lines = _scan_headings(lines)
+    if not headings or headings[0] != (0, 1, "AGENTS.md"):
+        raise ValueError(_CANDIDATE_HEADINGS)
+    expected: list[tuple[int, str]] = [(1, "AGENTS.md")]
+    expected.append((2, _CANDIDATE_H2[0]))
+    expected.append((2, _CANDIDATE_H2[1]))
+    expected.extend((3, title) for title in _CANDIDATE_H3)
+    expected.append((2, _CANDIDATE_H2[2]))
+    expected.append((2, _CANDIDATE_H2[3]))
+    if [(level, title) for _, level, title in headings] != expected:
+        raise ValueError(_CANDIDATE_HEADINGS)
+
+    heading_by_line = {
+        line_index: (level, title) for line_index, level, title in headings
+    }
+    active_heading: str | None = None
+    active_family: str | None = None
+    clauses: list[CandidateInvariant] = []
+    seen_ids: set[str] = set()
+    family_ids: dict[str, list[str]] = {title: [] for title in _CANDIDATE_H3}
+    for index, line in enumerate(lines):
+        if index in fenced_lines:
+            continue
+        heading = heading_by_line.get(index)
+        if heading is not None:
+            level, title = heading
+            if level == 3:
+                active_heading = title
+                active_family = title.split(" ", 1)[0]
+            elif level <= 2:
+                active_heading = None
+                active_family = None
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        clause = _CANDIDATE_CLAUSE_RE.fullmatch(stripped)
+        if stripped.startswith("- INV-"):
+            if active_heading is None or active_family is None:
+                raise ValueError(_CANDIDATE_OUTSIDE)
+            if clause is None:
+                raise ValueError(_CANDIDATE_CLAUSE)
+            invariant_id, body = clause.groups()
+            if not invariant_id.startswith(f"{active_family}-"):
+                raise ValueError(_CANDIDATE_OUTSIDE)
+            if invariant_id in seen_ids:
+                raise ValueError(_CANDIDATE_DUPLICATE)
+            seen_ids.add(invariant_id)
+            family_ids[active_heading].append(invariant_id)
+            clauses.append(
+                CandidateInvariant(
+                    invariant_id=invariant_id,
+                    heading=active_heading,
+                    normalized_clause_digest=requirement_digest(body),
+                )
+            )
+            continue
+        if active_heading is not None:
+            raise ValueError(_CANDIDATE_CLAUSE)
+
+    for invariant_ids in family_ids.values():
+        if not invariant_ids:
+            raise ValueError(_CANDIDATE_CLAUSE)
+    return tuple(clauses)
+
+
+def _parse_mapping_row(value: object) -> InvariantMapping:
+    if type(value) is not dict or frozenset(value) != _MAP_ROW_FIELDS:
+        raise ValueError(_MAP_FIELDS)
+    row = value
+    legacy_ref = _nonempty_string(row["legacy_ref"])
+    if _LEGACY_REF_RE.fullmatch(legacy_ref) is None:
+        raise ValueError(_MAP_VALUE)
+    invariant_id = _nonempty_string(row["invariant_id"])
+    if _INVARIANT_ID_RE.fullmatch(invariant_id) is None:
+        raise ValueError(_MAP_INVARIANT)
+    normalized_digest = _digest(row["normalized_digest"])
+    candidate_clause_digest = _digest(row["candidate_clause_digest"])
+    auto_context = row["auto_context"]
+    if type(auto_context) is not bool:
+        raise ValueError(_MAP_BOOLEAN)
+    switch_prerequisite = row["switch_prerequisite"]
+    if switch_prerequisite is not None and (
+        type(switch_prerequisite) is not str
+        or switch_prerequisite != _SWITCH_PREREQUISITE
+    ):
+        raise ValueError(_MAP_VALUE)
+
+    authorities = row["authority_refs"]
+    enforcements = row["enforcement_refs"]
+    if type(authorities) is not list or not authorities:
+        raise ValueError(_MAP_VALUE)
+    if type(enforcements) is not list or not enforcements:
+        raise ValueError(_MAP_VALUE)
+    return InvariantMapping(
+        legacy_ref=legacy_ref,
+        legacy_summary=_nonempty_string(row["legacy_summary"]),
+        source_heading=_nonempty_string(row["source_heading"]),
+        normalized_digest=normalized_digest,
+        invariant_id=invariant_id,
+        candidate_ref=_nonempty_string(row["candidate_ref"]),
+        candidate_clause_digest=candidate_clause_digest,
+        authority_refs=tuple(_parse_authority_ref(item) for item in authorities),
+        enforcement_refs=tuple(
+            _parse_enforcement_ref(item) for item in enforcements
+        ),
+        auto_context=auto_context,
+        equivalence_note=_nonempty_string(row["equivalence_note"]),
+        switch_prerequisite=switch_prerequisite,
+    )
+
+
+def _parse_authority_ref(value: object) -> AuthorityRef:
+    if type(value) is not dict or frozenset(value) != _AUTHORITY_FIELDS:
+        raise ValueError(_MAP_FIELDS)
+    return AuthorityRef(
+        path=_safe_relative_path(value["path"]),
+        heading=_nonempty_string(value["heading"]),
+    )
+
+
+def _parse_enforcement_ref(value: object) -> EnforcementRef:
+    if type(value) is not dict or frozenset(value) != _ENFORCEMENT_FIELDS:
+        raise ValueError(_MAP_FIELDS)
+    kind = value["kind"]
+    if type(kind) is not str or kind not in _ENFORCEMENT_KINDS:
+        raise ValueError(_MAP_ENFORCEMENT)
+    return EnforcementRef(
+        kind=kind,
+        path=_safe_relative_path(value["path"]),
+        symbol=_nonempty_string(value["symbol"]),
+    )
+
+
+def _nonempty_string(value: object) -> str:
+    if type(value) is not str or not value.strip():
+        raise ValueError(_MAP_VALUE)
+    return value
+
+
+def _digest(value: object) -> str:
+    if type(value) is not str or _DIGEST_RE.fullmatch(value) is None:
+        raise ValueError(_MAP_DIGEST)
+    return value
+
+
+def _safe_relative_path(value: object) -> PurePosixPath:
+    path_text = _nonempty_string(value)
+    if (
+        not path_text.isascii()
+        or any(ord(character) < 32 or ord(character) == 127 for character in path_text)
+        or "\\" in path_text
+    ):
+        raise ValueError(_MAP_PATH)
+    path = PurePosixPath(path_text)
+    if path.is_absolute() or ".." in path.parts or path == PurePosixPath("."):
+        raise ValueError(_MAP_PATH)
+    return path
+
+
+def _reject_duplicate_object_pairs(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(_MAP_DUPLICATE_KEY)
+        result[key] = value
+    return result
 
 
 def _scan_headings(
@@ -522,8 +848,14 @@ def _rule(
 
 
 __all__ = (
+    "MAP_BEGIN",
+    "MAP_END",
+    "collect_candidate_invariants",
+    "collect_candidate_invariants_from_text",
     "collect_legacy_rules",
     "collect_legacy_rules_from_text",
+    "load_invariant_map",
+    "load_invariant_map_from_text",
     "normalize_requirement",
     "requirement_digest",
 )
