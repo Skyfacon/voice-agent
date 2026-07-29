@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from voice_agent.governance.codex_context.audit import (
@@ -15,6 +16,9 @@ from voice_agent.governance.codex_context.audit import (
     audit_cards,
     default_audit_paths,
 )
+from voice_agent.governance.codex_context.markdown import (
+    collect_candidate_invariants,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +29,139 @@ MASTER_PLAN = (
     / "docs/superpowers/plans/"
     "2026-07-27-qwen-slice3b1-protocol-faithful-fake.md"
 )
+LIVE_CARD_ROOT = ROOT / "docs/governance/codex-task-cards/slice3b1"
+EXPECTED_LIVE_CARD_FILES = {
+    "TC-S3B1-01": "TC-S3B1-01-events-and-envelopes.md",
+    "TC-S3B1-02": "TC-S3B1-02-capabilities-and-assembly.md",
+    "TC-S3B1-03": "TC-S3B1-03-protocol-and-transport.md",
+    "TC-S3B1-04": "TC-S3B1-04-scripted-wire.md",
+    "TC-S3B1-05": "TC-S3B1-05-candidate-quarantine.md",
+    "TC-S3B1-06": "TC-S3B1-06-session-lifecycle.md",
+    "TC-S3B1-07": "TC-S3B1-07-route-evidence-and-orchestration.md",
+    "TC-S3B1-08": "TC-S3B1-08-gate-and-release.md",
+    "TC-S3B1-09": "TC-S3B1-09-replay.md",
+    "TC-S3B1-10": "TC-S3B1-10-scenario-runner.md",
+    "TC-S3B1-11": "TC-S3B1-11-cli-and-acceptance.md",
+}
+EXPECTED_DEPENDENCIES = {
+    "TC-S3B1-01": (),
+    "TC-S3B1-02": ("TC-S3B1-01",),
+    "TC-S3B1-03": (),
+    "TC-S3B1-04": ("TC-S3B1-03",),
+    "TC-S3B1-05": ("TC-S3B1-03",),
+    "TC-S3B1-06": (
+        "TC-S3B1-01",
+        "TC-S3B1-02",
+        "TC-S3B1-03",
+        "TC-S3B1-04",
+        "TC-S3B1-05",
+    ),
+    "TC-S3B1-07": (
+        "TC-S3B1-01",
+        "TC-S3B1-02",
+        "TC-S3B1-05",
+        "TC-S3B1-06",
+    ),
+    "TC-S3B1-08": (
+        "TC-S3B1-01",
+        "TC-S3B1-02",
+        "TC-S3B1-05",
+        "TC-S3B1-06",
+        "TC-S3B1-07",
+    ),
+    "TC-S3B1-09": (
+        "TC-S3B1-01",
+        "TC-S3B1-06",
+        "TC-S3B1-07",
+        "TC-S3B1-08",
+    ),
+    "TC-S3B1-10": (
+        "TC-S3B1-01",
+        "TC-S3B1-02",
+        "TC-S3B1-03",
+        "TC-S3B1-04",
+        "TC-S3B1-05",
+        "TC-S3B1-06",
+        "TC-S3B1-07",
+        "TC-S3B1-08",
+        "TC-S3B1-09",
+    ),
+    "TC-S3B1-11": ("TC-S3B1-09", "TC-S3B1-10"),
+}
+ALLOWED_LIVE_STATUSES = {
+    "not-started",
+    "in-progress",
+    "blocked",
+    "verified",
+    "superseded",
+}
+EXPECTED_INTERFACE_MARKERS = {
+    "TC-S3B1-01": (
+        "base_canonical_event(...)",
+        "valid_adr018_event(...)",
+        "valid_asr_event(...)",
+        "valid_legacy_candidate_event(...)",
+        "valid_parallel_fast_event(...)",
+        "valid_parallel_candidate_event(...)",
+        "parallel_journal()",
+    ),
+    "TC-S3B1-02": (
+        "ADR018_BOOLEAN_CAPABILITY_FIELDS",
+        "ADR018_SUPPORT_FACT_FIELDS",
+        "Card 01 does not produce a capability snapshot",
+    ),
+    "TC-S3B1-05": (
+        "open_response(...)",
+        "accept_assistant_item(...)",
+        "accept_output_item(...)",
+        "accept_content_part(...)",
+        "bind_committed_turn(...)",
+        "append_transcript_delta(...)",
+        "append_pcm_delta(...)",
+        "mark_transcript_done(...)",
+        "mark_audio_done(...)",
+        "mark_content_done(...)",
+        "mark_output_item_done(...)",
+        "mark_response_done(...)",
+        "transcript_completion()",
+        "completion()",
+        "discard(...)",
+    ),
+    "TC-S3B1-06": (
+        "fence_for_generation(",
+        "attach_open_transport(",
+        "stop_pump(",
+        "append_audio(",
+        "cancel_active_response(",
+        "delete_assistant_item(",
+        "bind_committed_turn(",
+        "connect(",
+        "rebuild(",
+        "close(",
+        "dispose_resources(",
+        "current_epoch_snapshot(",
+        "advance_playback_epoch_for_provider_rebuild(",
+        'Literal["WAITING_PROVIDER_FINAL", "READY", "REJECTED"]',
+        "final_asr_projection: FinalASRReadyProjectionV1 | None",
+    ),
+    "TC-S3B1-07": (
+        "classify_route(",
+        "classify_candidate_safety(",
+    ),
+    "TC-S3B1-08": (
+        "_compare_authorize_and_enqueue_contract_only(...)",
+        "valid_fast_router_event()",
+        "valid_route_evidence_event()",
+        "valid_safe_candidate_evidence_event()",
+        "valid_default_parallel_context()",
+        "gate_event_ids(case_id: str)",
+    ),
+    "TC-S3B1-10": (
+        "InteractionController.resolve_audio_ingress(...) -> "
+        "AudioIngressResolutionV1",
+        "Slice3B1RunnerError",
+    ),
+}
 
 
 def test_budgets_count_utf8_bytes_and_enforce_6_12_20_kib(
@@ -175,6 +312,214 @@ def test_live_budget_and_artifact_auditors_pass_before_cards() -> None:
     paths = default_audit_paths(ROOT)
     assert audit_budgets(paths).passed
     assert audit_artifacts(paths).passed
+
+
+def test_live_slice3b1_cards_match_declared_dependency_dag() -> None:
+    for card_id, expected_dependencies in EXPECTED_DEPENDENCIES.items():
+        card = LIVE_CARD_ROOT / EXPECTED_LIVE_CARD_FILES[card_id]
+        assert card.is_file(), card_id
+        dependency_body = _h2_body(
+            card.read_text(encoding="utf-8"),
+            "Required read-only dependencies",
+        )
+        observed_dependencies = tuple(
+            (match.group(1), match.group(2))
+            for match in re.finditer(
+                r"\[(TC-S3B1-\d{2})\]\(([^)]+)\)",
+                dependency_body,
+            )
+        )
+        expected_links = tuple(
+            (dependency, EXPECTED_LIVE_CARD_FILES[dependency])
+            for dependency in expected_dependencies
+        )
+        assert observed_dependencies == expected_links
+        for dependency, target in observed_dependencies:
+            assert target == EXPECTED_LIVE_CARD_FILES[dependency]
+            assert (LIVE_CARD_ROOT / target).is_file()
+
+
+def test_live_slice3b1_cards_stay_within_write_sets_and_budgets() -> None:
+    paths = default_audit_paths(ROOT)
+    assert audit_cards(paths).passed
+    budget_report = audit_budgets(paths)
+    assert budget_report.passed
+    assert budget_report.issues == ()
+    candidate_ids = {
+        invariant.invariant_id
+        for invariant in collect_candidate_invariants(CANDIDATE)
+    }
+    for task_number, (card_id, filename) in enumerate(
+        EXPECTED_LIVE_CARD_FILES.items(),
+        start=1,
+    ):
+        card = LIVE_CARD_ROOT / filename
+        text = card.read_text(encoding="utf-8")
+        assert card.stat().st_size <= CARD_MAX_BYTES
+        assert _h2_body(
+            text,
+            "Allowed write files",
+        ).strip() == _historical_files_block(task_number)
+        invariant_body = _h2_body(text, "Stable invariant IDs")
+        invariant_ids = set(re.findall(r"`(INV-[A-Z]+-\d{2})`", invariant_body))
+        assert invariant_ids
+        assert invariant_ids <= candidate_ids
+
+        stop_body = " ".join(_h2_body(text, "Stop conditions").split())
+        for required_stop in (
+            "ADR conflict",
+            "write-set expansion",
+            "new architecture capability or event",
+            "runtime/provider/network scope expansion",
+            "sensitive artifact discovery",
+            "focused/overlap test failure",
+        ):
+            assert required_stop in stop_body, (card_id, required_stop)
+
+        contract_body = " ".join(
+            _h2_body(text, "Input and output contracts").split()
+        )
+        for marker in EXPECTED_INTERFACE_MARKERS.get(card_id, ()):
+            assert marker in contract_body, (card_id, marker)
+
+        verification_body = " ".join(
+            _h2_body(text, "Verification commands").split()
+        )
+        if EXPECTED_DEPENDENCIES[card_id]:
+            assert "before editing and again after this card's focused command" in (
+                verification_body
+            )
+        else:
+            assert "No dependency-overlap command applies" in verification_body
+
+        if card_id == "TC-S3B1-05":
+            exact_adr_body = _h2_body(text, "Exact ADR sections")
+            for heading in (
+                "Decision",
+                "Commit Boundary Definition",
+                "ADR-018 Accepted Addendum",
+            ):
+                assert (
+                    "`docs/adr/ADR-001 Duplex Boundary and Interaction "
+                    f"Controller.md` — `{heading}`"
+                ) in exact_adr_body
+
+        historical_files = _historical_files_block(task_number)
+        if "- Regression test:" in historical_files:
+            non_goals = " ".join(_h2_body(text, "Non-goals").split())
+            assert (
+                "Only paths labeled `Create:` or `Modify:` above are writable."
+                in non_goals
+            )
+            assert (
+                "Rows labeled `Regression test:` are read-only verification "
+                "surfaces and do not grant mutation authority."
+                in non_goals
+            )
+            assert (
+                "Editing a `Regression test:` path is write-set expansion "
+                "and requires stopping."
+                in stop_body
+            )
+
+
+def test_live_work_package_promotes_master_plan_task12_to_package_gate() -> None:
+    package = LIVE_CARD_ROOT / "WP-S3B1-01.md"
+    assert package.is_file()
+    text = package.read_text(encoding="utf-8")
+    assert 2 * 1024 <= package.stat().st_size <= 4 * 1024
+    assert not (LIVE_CARD_ROOT / "TC-S3B1-12.md").exists()
+    acceptance = _h2_body(text, "Package-level acceptance criteria")
+    for required in (
+        "focused suite",
+        "overlap regressions",
+        "./scripts/test -q",
+        "deterministic repository safety audit",
+        "pre/post worktree comparison",
+        "independent review",
+        "final acceptance-criterion mapping",
+    ):
+        assert required in acceptance
+    normalized_acceptance = " ".join(acceptance.split())
+    assert "full `./scripts/test -q` is green" in normalized_acceptance
+    assert "leave the package `blocked`, never `verified`" in (
+        normalized_acceptance
+    )
+    card_list = _h2_body(
+        text,
+        "Ordered or dependency-based Task Card list",
+    )
+    observed_links = tuple(
+        (match.group(1), match.group(2))
+        for match in re.finditer(
+            r"\[(TC-S3B1-\d{2})\]\(([^)]+)\)",
+            card_list,
+        )
+    )
+    assert len(observed_links) == len(EXPECTED_LIVE_CARD_FILES)
+    assert dict(observed_links) == EXPECTED_LIVE_CARD_FILES
+    package_order = {
+        card_id: index for index, (card_id, _) in enumerate(observed_links)
+    }
+    for card_id, dependencies in EXPECTED_DEPENDENCIES.items():
+        assert all(
+            package_order[dependency] < package_order[card_id]
+            for dependency in dependencies
+        )
+
+
+def test_live_work_package_requires_verify_first_resume_audit() -> None:
+    package = (LIVE_CARD_ROOT / "WP-S3B1-01.md").read_text(encoding="utf-8")
+    entry = _h2_body(package, "Entry criteria")
+    normalized_entry = " ".join(entry.split())
+    assert "verify-first resume audit" in entry
+    assert "File existence is never completion evidence." in entry
+    assert "ADR-018 remains accepted and registered." in entry
+    assert "active Task Card execution must not stage" in normalized_entry
+    assert "Status: `not-started`" in package
+
+    index = (LIVE_CARD_ROOT / "index.md").read_text(encoding="utf-8")
+    assert index.count("| ID | Title | Dependencies | Status | Link |") == 1
+    expected_targets = {
+        **EXPECTED_LIVE_CARD_FILES,
+        "WP-S3B1-01": "WP-S3B1-01.md",
+    }
+    rows = [
+        match.groupdict()
+        for line in index.splitlines()
+        if (
+            match := re.fullmatch(
+                r"\| `(?P<id>(?:TC|WP)-S3B1-\d{2})` \| "
+                r"[^|]+ \| [^|]+ \| `(?P<status>[^`]+)` \| "
+                r"\[[^\]]+\]\((?P<target>[^)]+)\) \|",
+                line,
+            )
+        )
+    ]
+    assert len(rows) == len(expected_targets)
+    assert {row["id"] for row in rows} == set(expected_targets)
+    for row in rows:
+        assert row["status"] in ALLOWED_LIVE_STATUSES
+        assert row["status"] == "not-started"
+        assert row["target"] == expected_targets[row["id"]]
+        assert (LIVE_CARD_ROOT / row["target"]).is_file()
+    historical_target = (
+        "../../../superpowers/plans/"
+        "2026-07-27-qwen-slice3b1-protocol-faithful-fake.md"
+    )
+    assert f"]({historical_target})" in index
+    assert (LIVE_CARD_ROOT / historical_target).resolve().is_file()
+    assert "## " not in index
+    assert "- [ ]" not in index
+    for forbidden in (
+        "data:",
+        "-----BEGIN ",
+        "diagnostics/",
+        "traces/",
+        "replays/local/",
+        "audio/raw/",
+    ):
+        assert forbidden not in index
 
 
 def test_repo_root_symlink_alias_remains_a_valid_logical_root(
@@ -912,6 +1257,25 @@ def _write_text(path: Path, content: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _h2_body(text: str, heading: str) -> str:
+    marker = f"## {heading}\n"
+    assert text.count(marker) == 1
+    after = text.split(marker, 1)[1]
+    return after.split("\n## ", 1)[0]
+
+
+def _historical_files_block(task_number: int) -> str:
+    text = MASTER_PLAN.read_text(encoding="utf-8")
+    task_marker = f"### Task {task_number}:"
+    assert text.count(task_marker) == 1
+    task = text.split(task_marker, 1)[1]
+    if task_number < 12:
+        task = task.split(f"\n### Task {task_number + 1}:", 1)[0]
+    files_marker = "**Files:**\n\n"
+    assert task.count(files_marker) == 1
+    return task.split(files_marker, 1)[1].split("\n\n**Interfaces:**", 1)[0].strip()
 
 
 def _write_bytes(path: Path, content: bytes) -> Path:
