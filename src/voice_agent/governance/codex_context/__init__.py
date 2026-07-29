@@ -1,5 +1,20 @@
 """Deterministic audit contracts for Codex context governance."""
 
+from .audit import (
+    ACTIVE_BUNDLE_RECOMMENDED_BYTES,
+    BUDGET_EXCEPTION_FIELDS,
+    BUDGET_EXCEPTION_HEADING,
+    CANDIDATE_MAX_BYTES,
+    CARD_MAX_BYTES,
+    TASK_CARD_HEADINGS,
+    WORK_PACKAGE_HEADINGS,
+    audit_artifacts,
+    audit_budgets,
+    audit_cards,
+    audit_mapping,
+    audit_references,
+    default_audit_paths,
+)
 from .markdown import (
     collect_legacy_rules,
     collect_legacy_rules_from_text,
@@ -23,11 +38,16 @@ from .model import (
 )
 
 __all__ = (
+    "ACTIVE_BUNDLE_RECOMMENDED_BYTES",
     "AuditCheck",
     "AuditIssue",
     "AuditPaths",
     "AuditReport",
     "AuthorityRef",
+    "BUDGET_EXCEPTION_FIELDS",
+    "BUDGET_EXCEPTION_HEADING",
+    "CANDIDATE_MAX_BYTES",
+    "CARD_MAX_BYTES",
     "CandidateInvariant",
     "CheckReport",
     "EnforcementKind",
@@ -36,8 +56,16 @@ __all__ = (
     "LegacyRule",
     "LegacySourceKind",
     "Severity",
+    "TASK_CARD_HEADINGS",
+    "WORK_PACKAGE_HEADINGS",
+    "audit_artifacts",
+    "audit_budgets",
+    "audit_cards",
+    "audit_mapping",
+    "audit_references",
     "collect_legacy_rules",
     "collect_legacy_rules_from_text",
     "normalize_requirement",
     "requirement_digest",
+    "default_audit_paths",
 )

@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
 
 import pytest
 
+from voice_agent.governance.codex_context.audit import (
+    audit_mapping,
+    audit_references,
+    default_audit_paths,
+)
 from voice_agent.governance.codex_context.markdown import (
     collect_candidate_invariants,
     collect_candidate_invariants_from_text,
@@ -578,6 +584,392 @@ def test_candidate_parser_requires_h1_at_byte_zero() -> None:
             collect_candidate_invariants_from_text(prefix + original)
 
 
+def test_references_require_exact_heading_and_registered_accepted_adr(
+    tmp_path: Path,
+) -> None:
+    valid = _write_reference_fixture(tmp_path / "valid")
+    assert audit_references(valid).passed
+
+    missing_heading = _write_reference_fixture(
+        tmp_path / "missing-heading",
+        adr_heading="Decisions",
+    )
+    assert "AUTHORITY_HEADING_MISSING" in _issue_codes(
+        audit_references(missing_heading)
+    )
+
+    proposed = _write_reference_fixture(
+        tmp_path / "proposed",
+        adr_status="proposed",
+    )
+    assert "AUTHORITY_ADR_NOT_ACCEPTED" in _issue_codes(
+        audit_references(proposed)
+    )
+
+    unregistered = _write_reference_fixture(
+        tmp_path / "unregistered",
+        register_path="docs/adr/ADR-002 Other.md",
+    )
+    assert "AUTHORITY_ADR_NOT_REGISTERED" in _issue_codes(
+        audit_references(unregistered)
+    )
+
+    duplicate_register = _write_reference_fixture(
+        tmp_path / "duplicate-register"
+    )
+    register = duplicate_register.adr_register
+    row = (
+        "| ADR-001 | Synthetic | accepted | MVP-0 | "
+        "`docs/adr/ADR-001 Synthetic.md` |\n"
+    )
+    register.write_text(
+        register.read_text(encoding="utf-8") + row,
+        encoding="utf-8",
+    )
+    assert "ADR_REGISTER_NOT_ACCEPTED" in _issue_codes(
+        audit_references(duplicate_register)
+    )
+
+    fenced_only = _write_reference_fixture(tmp_path / "fenced-register")
+    register = fenced_only.adr_register
+    register.write_text(
+        register.read_text(encoding="utf-8").replace(
+            row,
+            row.replace(" accepted ", " proposed ")
+            + "\n```markdown\n"
+            + row
+            + "```\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    assert "AUTHORITY_ADR_NOT_REGISTERED" in _issue_codes(
+        audit_references(fenced_only)
+    )
+
+    duplicate_section = _write_reference_fixture(
+        tmp_path / "duplicate-section"
+    )
+    duplicate_section.adr_register.write_text(
+        duplicate_section.adr_register.read_text(encoding="utf-8")
+        + "\n## ADR Register\n",
+        encoding="utf-8",
+    )
+    assert "ADR_REGISTER_NOT_ACCEPTED" in _issue_codes(
+        audit_references(duplicate_section)
+    )
+
+    mismatched_id = _write_reference_fixture(tmp_path / "mismatched-id")
+    register = mismatched_id.adr_register
+    register.write_text(
+        register.read_text(encoding="utf-8").replace(
+            "| ADR-001 | Synthetic |",
+            "| ADR-002 | Synthetic |",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    assert "ADR_REGISTER_NOT_ACCEPTED" in _issue_codes(
+        audit_references(mismatched_id)
+    )
+
+    non_adr_surface = _write_reference_fixture(
+        tmp_path / "non-adr-authority",
+        authority_path="docs/policies/ADR-001 Synthetic.md",
+        register_path="docs/policies/ADR-001 Synthetic.md",
+    )
+    assert "AUTHORITY_ADR_PATH_INVALID" in _issue_codes(
+        audit_references(non_adr_surface)
+    )
+
+    commented_adr = _write_reference_fixture(tmp_path / "commented-adr")
+    adr = commented_adr.repo_root / "docs/adr/ADR-001 Synthetic.md"
+    adr.write_text(
+        "# ADR-001 Synthetic\n\n"
+        "<!--\n"
+        "## Status\n\naccepted\n\n"
+        "## Decision\n\nHidden decision.\n"
+        "-->\n",
+        encoding="utf-8",
+    )
+    commented_codes = _issue_codes(audit_references(commented_adr))
+    assert "AUTHORITY_ADR_NOT_ACCEPTED" in commented_codes
+    assert "AUTHORITY_HEADING_MISSING" in commented_codes
+
+
+def test_live_mapping_and_reference_auditors_pass_in_shadow() -> None:
+    paths = default_audit_paths(ROOT)
+    assert audit_mapping(paths).passed
+    assert audit_references(paths).passed
+
+
+def test_reference_rejects_parent_traversal_and_absolute_paths(
+    tmp_path: Path,
+) -> None:
+    for index, unsafe_path in enumerate(("../ADR.md", "/tmp/ADR.md"), start=1):
+        paths = _write_reference_fixture(
+            tmp_path / f"unsafe-{index}",
+            authority_path=unsafe_path,
+        )
+        report = audit_references(paths)
+        assert not report.passed
+        assert _issue_codes(report) == {"REFERENCE_MAP_INVALID"}
+
+    fifo_map = _write_reference_fixture(tmp_path / "fifo-map")
+    fifo_map.invariant_map.unlink()
+    os.mkfifo(fifo_map.invariant_map)
+    assert _issue_codes(audit_references(fifo_map)) == {
+        "REFERENCE_MAP_INVALID"
+    }
+
+    symlink_candidate = _write_reference_fixture(
+        tmp_path / "symlink-candidate"
+    )
+    outside = tmp_path / "outside-candidate.md"
+    outside.write_text(CANDIDATE.read_text(encoding="utf-8"), encoding="utf-8")
+    symlink_candidate.candidate_instruction.unlink()
+    symlink_candidate.candidate_instruction.symlink_to(outside)
+    assert _issue_codes(audit_references(symlink_candidate)) == {
+        "CANDIDATE_DOCUMENT_INVALID"
+    }
+
+    symlink_adr_parent = _write_reference_fixture(
+        tmp_path / "symlink-adr-parent"
+    )
+    adr_parent = symlink_adr_parent.repo_root / "docs/adr"
+    real_adr_parent = symlink_adr_parent.repo_root / "docs/real-adr"
+    adr_parent.rename(real_adr_parent)
+    adr_parent.symlink_to(real_adr_parent.name, target_is_directory=True)
+    assert "AUTHORITY_PATH_MISSING" in _issue_codes(
+        audit_references(symlink_adr_parent)
+    )
+
+    symlink_pytest_parent = _write_reference_fixture(
+        tmp_path / "symlink-pytest-parent"
+    )
+    pytest_parent = symlink_pytest_parent.repo_root / "tests"
+    real_pytest_parent = symlink_pytest_parent.repo_root / "real-tests"
+    pytest_parent.rename(real_pytest_parent)
+    pytest_parent.symlink_to(real_pytest_parent.name, target_is_directory=True)
+    assert "ENFORCEMENT_PATH_MISSING" in _issue_codes(
+        audit_references(symlink_pytest_parent)
+    )
+
+
+def test_enforcement_reference_requires_existing_symbol(tmp_path: Path) -> None:
+    top_level = _write_reference_fixture(tmp_path / "top-level")
+    assert audit_references(top_level).passed
+
+    class_method = _write_reference_fixture(
+        tmp_path / "class-method",
+        enforcement_symbol="test_class_rule",
+    )
+    assert audit_references(class_method).passed
+
+    missing_pytest = _write_reference_fixture(
+        tmp_path / "missing-pytest",
+        enforcement_symbol="helper",
+    )
+    assert "ENFORCEMENT_PYTEST_SYMBOL_INVALID" in _issue_codes(
+        audit_references(missing_pytest)
+    )
+
+    script_token = _write_reference_fixture(
+        tmp_path / "script-token",
+        enforcement_kind="script",
+        enforcement_path="scripts/check-policy",
+        enforcement_symbol="verify",
+    )
+    assert audit_references(script_token).passed
+
+    missing_script_token = _write_reference_fixture(
+        tmp_path / "missing-script-token",
+        enforcement_kind="script",
+        enforcement_path="scripts/check-policy",
+        enforcement_symbol="apply",
+    )
+    assert "ENFORCEMENT_SCRIPT_SYMBOL_INVALID" in _issue_codes(
+        audit_references(missing_script_token)
+    )
+
+    echo_only = _write_reference_fixture(
+        tmp_path / "echo-only",
+        enforcement_kind="script",
+        enforcement_path="scripts/check-policy",
+        enforcement_symbol="verify",
+    )
+    script = echo_only.repo_root / "scripts/check-policy"
+    script.write_text(
+        "#!/bin/sh\n"
+        "# python3 tools/check_policy_cli.py \"$@\"\n"
+        "echo 'python3 tools/check_policy_cli.py verify'\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    assert "ENFORCEMENT_SCRIPT_SYMBOL_INVALID" in _issue_codes(
+        audit_references(echo_only)
+    )
+
+    heredoc_only = _write_reference_fixture(
+        tmp_path / "heredoc-only",
+        enforcement_kind="script",
+        enforcement_path="scripts/check-policy",
+        enforcement_symbol="verify",
+    )
+    script = heredoc_only.repo_root / "scripts/check-policy"
+    script.write_text(
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        "python3 tools/check_policy_cli.py verify\n"
+        "verify)\n"
+        "EOF\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    assert "ENFORCEMENT_SCRIPT_SYMBOL_INVALID" in _issue_codes(
+        audit_references(heredoc_only)
+    )
+
+    complete_case = _write_reference_fixture(
+        tmp_path / "complete-case",
+        enforcement_kind="script",
+        enforcement_path="scripts/check-policy",
+        enforcement_symbol="verify",
+    )
+    script = complete_case.repo_root / "scripts/check-policy"
+    script.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "verify)\n"
+        "  exit 0\n"
+        "  ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    assert audit_references(complete_case).passed
+
+    bare_case_arm = _write_reference_fixture(
+        tmp_path / "bare-case-arm",
+        enforcement_kind="script",
+        enforcement_path="scripts/check-policy",
+        enforcement_symbol="verify",
+    )
+    script = bare_case_arm.repo_root / "scripts/check-policy"
+    script.write_text(
+        "#!/bin/sh\n"
+        "verify)\n"
+        "  exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    assert "ENFORCEMENT_SCRIPT_SYMBOL_INVALID" in _issue_codes(
+        audit_references(bare_case_arm)
+    )
+
+    non_executable = _write_reference_fixture(
+        tmp_path / "non-executable",
+        enforcement_kind="script",
+        enforcement_path="scripts/check-policy",
+        enforcement_symbol="__entrypoint__",
+        script_executable=False,
+    )
+    assert "ENFORCEMENT_SCRIPT_NOT_EXECUTABLE" in _issue_codes(
+        audit_references(non_executable)
+    )
+
+
+def test_enforcement_rejects_register_and_generic_document_references(
+    tmp_path: Path,
+) -> None:
+    register = _write_reference_fixture(
+        tmp_path / "register",
+        enforcement_kind="review-check",
+        enforcement_path="stage_b_adr_register.md",
+        enforcement_symbol="ADR Register",
+    )
+    assert "ENFORCEMENT_SURFACE_INVALID" in _issue_codes(
+        audit_references(register)
+    )
+
+    generic = _write_reference_fixture(
+        tmp_path / "generic",
+        enforcement_kind="review-check",
+        enforcement_path="docs/generic.md",
+        enforcement_symbol="Review",
+    )
+    assert "ENFORCEMENT_SURFACE_INVALID" in _issue_codes(
+        audit_references(generic)
+    )
+
+    loop_guard = _write_reference_fixture(
+        tmp_path / "loop-guard",
+        enforcement_kind="review-check",
+        enforcement_path="AGENTS.md",
+        enforcement_symbol="Review",
+    )
+    register = loop_guard.adr_register
+    register.write_text(
+        register.read_text(encoding="utf-8")
+        + "| ADR-002 | Loop | accepted | MVP-0 | "
+        "`docs/adr/ADR-002 Loop.md` |\n",
+        encoding="utf-8",
+    )
+    loop = loop_guard.repo_root / "docs/adr/ADR-002 Loop.md"
+    loop.symlink_to(loop.name)
+    assert audit_references(loop_guard).passed
+
+    proposed_review = _write_reference_fixture(
+        tmp_path / "proposed-review",
+        adr_status="proposed",
+        enforcement_kind="review-check",
+        enforcement_path="docs/adr/ADR-001 Synthetic.md",
+        enforcement_symbol="Decision",
+    )
+    assert "ENFORCEMENT_REVIEW_ADR_NOT_ACCEPTED" in _issue_codes(
+        audit_references(proposed_review)
+    )
+
+    path_only = _write_reference_fixture(
+        tmp_path / "path-only",
+        enforcement_kind="review-check",
+        enforcement_path="docs/generic.md",
+        enforcement_symbol="",
+    )
+    assert _issue_codes(audit_references(path_only)) == {
+        "REFERENCE_MAP_INVALID"
+    }
+
+
+def test_candidate_reference_rejects_missing_heading_clause_or_digest_drift(
+    tmp_path: Path,
+) -> None:
+    missing_heading = _write_reference_fixture(
+        tmp_path / "candidate-heading",
+        candidate_ref="INV-ADR — missing heading",
+    )
+    assert "CANDIDATE_HEADING_MISMATCH" in _issue_codes(
+        audit_references(missing_heading)
+    )
+
+    missing_clause = _write_reference_fixture(
+        tmp_path / "candidate-clause",
+        candidate_invariant_id="INV-ADR-99",
+    )
+    assert "CANDIDATE_CLAUSE_MISSING" in _issue_codes(
+        audit_references(missing_clause)
+    )
+
+    digest_drift = _write_reference_fixture(
+        tmp_path / "candidate-digest",
+        candidate_digest="0" * 64,
+    )
+    assert "CANDIDATE_DIGEST_MISMATCH" in _issue_codes(
+        audit_references(digest_drift)
+    )
+
+
 def _accepted_adr_paths() -> set[str]:
     register = ADR_REGISTER.read_text(encoding="utf-8")
     return {
@@ -653,3 +1045,100 @@ def _map_markdown(document: dict[str, object]) -> str:
         "```\n"
         "<!-- codex-context-map:v1 end -->\n"
     )
+
+
+def _write_reference_fixture(
+    root: Path,
+    *,
+    authority_path: str = "docs/adr/ADR-001 Synthetic.md",
+    adr_heading: str = "Decision",
+    adr_status: str = "accepted",
+    register_path: str = "docs/adr/ADR-001 Synthetic.md",
+    enforcement_kind: str = "pytest",
+    enforcement_path: str = "tests/test_policy.py",
+    enforcement_symbol: str = "test_top_level_rule",
+    script_executable: bool = True,
+    candidate_ref: str = "INV-ADR — ADR and scope governance",
+    candidate_invariant_id: str = "INV-ADR-01",
+    candidate_digest: str | None = None,
+):
+    paths = default_audit_paths(root)
+    candidate_text = CANDIDATE.read_text(encoding="utf-8")
+    _write_fixture_text(paths.candidate_instruction, candidate_text)
+    first_candidate = collect_candidate_invariants(paths.candidate_instruction)[0]
+
+    document = _valid_map_document()
+    row = document["rows"][0]
+    row["invariant_id"] = candidate_invariant_id
+    row["candidate_ref"] = candidate_ref
+    row["candidate_clause_digest"] = (
+        candidate_digest or first_candidate.normalized_clause_digest
+    )
+    row["authority_refs"] = [
+        {"path": authority_path, "heading": "Decision"}
+    ]
+    row["enforcement_refs"] = [
+        {
+            "kind": enforcement_kind,
+            "path": enforcement_path,
+            "symbol": enforcement_symbol,
+        }
+    ]
+    _write_fixture_text(paths.invariant_map, _map_markdown(document))
+    _write_fixture_text(paths.legacy_instruction, "# AGENTS.md\n\n## Review\n")
+    _write_fixture_text(
+        paths.adr_register,
+        "# Register\n\n"
+        "## Status\n\naccepted\n\n"
+        "## ADR Register\n\n"
+        "| ADR | Title | Status | Scope | File |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        f"| ADR-001 | Synthetic | accepted | MVP-0 | `{register_path}` |\n",
+    )
+    if not Path(authority_path).is_absolute() and ".." not in Path(
+        authority_path
+    ).parts:
+        _write_fixture_text(
+            root / authority_path,
+            "# ADR-001 Synthetic\n\n"
+            "## Status\n\n"
+            f"{adr_status}\n\n"
+            f"## {adr_heading}\n\nSynthetic decision.\n",
+        )
+    _write_fixture_text(
+        root / "tests/test_policy.py",
+        "def test_top_level_rule():\n"
+        "    pass\n\n"
+        "def helper():\n"
+        "    pass\n\n"
+        "class TestPolicy:\n"
+        "    def test_class_rule(self):\n"
+        "        pass\n",
+    )
+    script = _write_fixture_text(
+        root / "scripts/check-policy",
+        "#!/bin/sh\nexec python3 tools/check_policy_cli.py \"$@\"\n",
+    )
+    script.chmod(0o755 if script_executable else 0o644)
+    _write_fixture_text(
+        root / "tools/check_policy_cli.py",
+        "import argparse\n"
+        "parser = argparse.ArgumentParser()\n"
+        "subcommands = parser.add_subparsers()\n"
+        "subcommands.add_parser(\"verify\")\n",
+    )
+    _write_fixture_text(
+        root / "docs/generic.md",
+        "# Generic\n\n## Review\n\nNot a permitted governance surface.\n",
+    )
+    return paths
+
+
+def _write_fixture_text(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _issue_codes(report: object) -> set[str]:
+    return {issue.code for issue in report.issues}
