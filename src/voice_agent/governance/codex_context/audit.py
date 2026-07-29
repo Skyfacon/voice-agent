@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -21,6 +22,7 @@ from .model import (
     AuditCheck,
     AuditIssue,
     AuditPaths,
+    AuditReport,
     CheckReport,
     InvariantMapping,
     Severity,
@@ -31,6 +33,13 @@ CANDIDATE_MAX_BYTES = 6 * 1024
 CARD_MAX_BYTES = 12 * 1024
 ACTIVE_BUNDLE_RECOMMENDED_BYTES = 20 * 1024
 
+CHECK_ORDER: tuple[AuditCheck, ...] = (
+    "mapping",
+    "references",
+    "budgets",
+    "cards",
+    "artifacts",
+)
 TASK_CARD_HEADINGS: tuple[str, ...] = (
     "Task ID and title",
     "Goal",
@@ -135,6 +144,9 @@ _RAW_ARTIFACT_PATH_RE = re.compile(
 _DOCUMENT_STEM_RE = re.compile(
     r"^(?P<id>(?P<kind>TC|WP)-[A-Z0-9]+-\d{2})(?:-[a-z0-9]+)*$"
 )
+_SAFE_OUTPUT_ID_RE = re.compile(r"^[A-Z0-9][A-Z0-9_.:-]{0,127}$")
+_SAFE_OUTPUT_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,512}$")
+_AUDIT_SCHEMA = "voice_agent.codex_context.audit.v1"
 
 
 def default_audit_paths(repo_root: Path) -> AuditPaths:
@@ -151,6 +163,124 @@ def default_audit_paths(repo_root: Path) -> AuditPaths:
         master_plan=repo_root
         / "docs/superpowers/plans/"
         "2026-07-27-qwen-slice3b1-protocol-faithful-fake.md",
+    )
+
+
+def run_audit(
+    paths: AuditPaths,
+    checks: tuple[AuditCheck, ...] = CHECK_ORDER,
+) -> AuditReport:
+    """Run selected shadow checks without ambient or nondeterministic inputs."""
+
+    ordered_checks, selection_valid = _ordered_checks(checks)
+    reports_by_check: dict[AuditCheck, CheckReport] = {}
+    for check in ordered_checks:
+        reports_by_check[check] = _run_check(paths, check)
+
+    if not selection_valid:
+        failure_check = ordered_checks[0] if ordered_checks else CHECK_ORDER[0]
+        current = reports_by_check.get(failure_check)
+        issues = list(current.issues) if current is not None else []
+        issues.append(
+            AuditIssue(
+                check=failure_check,
+                code="AUDIT_CHECK_SELECTION_INVALID",
+                rule_id=None,
+                relative_path=None,
+                line=None,
+                severity="error",
+            )
+        )
+        reports_by_check[failure_check] = _report(
+            failure_check,
+            issues,
+            current.checked_count if current is not None else 0,
+        )
+
+    reports = tuple(
+        reports_by_check[check]
+        for check in CHECK_ORDER
+        if check in reports_by_check
+    )
+    prerequisites, prerequisites_valid = _load_switch_prerequisites(paths)
+    complete = (
+        selection_valid
+        and ordered_checks == CHECK_ORDER
+        and tuple(report.check for report in reports) == CHECK_ORDER
+    )
+    switch_ready = (
+        complete
+        and prerequisites_valid
+        and all(report.passed for report in reports)
+        and not prerequisites
+    )
+    return AuditReport(
+        reports=reports,
+        switch_ready=switch_ready,
+        switch_prerequisites=prerequisites,
+    )
+
+
+def render_audit_json(
+    report: AuditReport,
+    *,
+    diagnostic: bool = False,
+) -> str:
+    """Render only the documented, redacted audit projection."""
+
+    projected_checks = tuple(
+        sorted(
+            (_project_check(check_report) for check_report in report.reports),
+            key=lambda item: CHECK_ORDER.index(item["name"]),
+        )
+    )
+    prerequisites, prerequisites_valid = _project_prerequisites(
+        report.switch_prerequisites
+    )
+    check_names = tuple(item["name"] for item in projected_checks)
+    passed = bool(projected_checks) and all(
+        item["passed"] for item in projected_checks
+    )
+    switch_ready = (
+        report.switch_ready is True
+        and check_names == CHECK_ORDER
+        and passed
+        and prerequisites_valid
+        and not prerequisites
+    )
+    payload: dict[str, object] = {
+        "checks": list(projected_checks),
+        "passed": passed,
+        "schema": _AUDIT_SCHEMA,
+        "switch_prerequisites": list(prerequisites),
+        "switch_ready": switch_ready,
+    }
+    if diagnostic:
+        issues = [
+            _project_issue(issue, fallback_check=check_report.check)
+            for check_report in report.reports
+            for issue in check_report.issues
+        ]
+        payload["issues"] = sorted(
+            issues,
+            key=lambda item: (
+                CHECK_ORDER.index(item["check"]),
+                item["code"],
+                item["rule_id"] or "",
+                item["relative_path"] or "",
+                item["line"] or 0,
+                item["severity"],
+            ),
+        )
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
     )
 
 
@@ -867,6 +997,156 @@ def audit_artifacts(paths: AuditPaths) -> CheckReport:
                     paths=paths,
                 )
     return _report(check, issues, len(scan_paths) + len(_REQUIRED_IGNORE_RULES) + 1)
+
+
+def _ordered_checks(
+    checks: tuple[AuditCheck, ...],
+) -> tuple[tuple[AuditCheck, ...], bool]:
+    try:
+        requested = tuple(checks)
+    except Exception:
+        return (), False
+    selected: set[AuditCheck] = set()
+    valid = bool(requested)
+    for check in requested:
+        if isinstance(check, str) and check in CHECK_ORDER:
+            selected.add(check)
+        else:
+            valid = False
+    return tuple(check for check in CHECK_ORDER if check in selected), valid
+
+
+def _run_check(paths: AuditPaths, check: AuditCheck) -> CheckReport:
+    try:
+        if check == "mapping":
+            return audit_mapping(paths)
+        if check == "references":
+            return audit_references(paths)
+        if check == "budgets":
+            return audit_budgets(paths)
+        if check == "cards":
+            return audit_cards(paths)
+        if check == "artifacts":
+            return audit_artifacts(paths)
+    except Exception:
+        pass
+    return CheckReport(
+        check=check,
+        issues=(
+            AuditIssue(
+                check=check,
+                code="AUDIT_CHECK_FAILED",
+                rule_id=None,
+                relative_path=None,
+                line=None,
+                severity="error",
+            ),
+        ),
+        checked_count=0,
+    )
+
+
+def _load_switch_prerequisites(
+    paths: AuditPaths,
+) -> tuple[tuple[str, ...], bool]:
+    if _contained_regular_file(paths, paths.invariant_map) is None:
+        return (), False
+    try:
+        mappings = load_invariant_map(paths.invariant_map)
+        values = tuple(
+            mapping.switch_prerequisite
+            for mapping in mappings
+            if mapping.switch_prerequisite is not None
+        )
+    except Exception:
+        return (), False
+    if any(_safe_output_id(value) is None for value in values):
+        return (), False
+    return tuple(sorted(set(values))), True
+
+
+def _project_check(report: CheckReport) -> dict[str, object]:
+    name = _safe_check(report.check)
+    severities = tuple(_safe_severity(issue.severity) for issue in report.issues)
+    error_count = sum(severity == "error" for severity in severities)
+    checked_count = (
+        report.checked_count
+        if type(report.checked_count) is int and report.checked_count >= 0
+        else 0
+    )
+    return {
+        "checked_count": checked_count,
+        "error_count": error_count,
+        "name": name,
+        "passed": error_count == 0,
+    }
+
+
+def _project_issue(
+    issue: AuditIssue,
+    *,
+    fallback_check: AuditCheck,
+) -> dict[str, object]:
+    check = (
+        issue.check
+        if isinstance(issue.check, str) and issue.check in CHECK_ORDER
+        else _safe_check(fallback_check)
+    )
+    code = _safe_output_id(issue.code) or "AUDIT_ISSUE_REDACTED"
+    rule_id = _safe_output_id(issue.rule_id)
+    relative_path = _safe_relative_output_path(issue.relative_path)
+    line = issue.line if type(issue.line) is int and issue.line > 0 else None
+    return {
+        "check": check,
+        "code": code,
+        "line": line,
+        "relative_path": relative_path,
+        "rule_id": rule_id,
+        "severity": _safe_severity(issue.severity),
+    }
+
+
+def _project_prerequisites(
+    prerequisites: tuple[str, ...],
+) -> tuple[tuple[str, ...], bool]:
+    try:
+        values = tuple(prerequisites)
+    except Exception:
+        return (), False
+    projected = tuple(_safe_output_id(value) for value in values)
+    if any(value is None for value in projected):
+        return (), False
+    return tuple(sorted(set(value for value in projected if value is not None))), True
+
+
+def _safe_check(value: object) -> AuditCheck:
+    if isinstance(value, str) and value in CHECK_ORDER:
+        return value
+    return CHECK_ORDER[0]
+
+
+def _safe_severity(value: object) -> Severity:
+    return "warning" if value == "warning" else "error"
+
+
+def _safe_output_id(value: object) -> str | None:
+    if not isinstance(value, str) or _SAFE_OUTPUT_ID_RE.fullmatch(value) is None:
+        return None
+    return value
+
+
+def _safe_relative_output_path(value: object) -> str | None:
+    if not isinstance(value, PurePosixPath):
+        return None
+    rendered = value.as_posix()
+    if (
+        value.is_absolute()
+        or rendered in {"", "."}
+        or ".." in value.parts
+        or _SAFE_OUTPUT_PATH_RE.fullmatch(rendered) is None
+    ):
+        return None
+    return rendered
 
 
 def _add_mapping_issue(
@@ -2032,6 +2312,7 @@ __all__ = (
     "BUDGET_EXCEPTION_HEADING",
     "CANDIDATE_MAX_BYTES",
     "CARD_MAX_BYTES",
+    "CHECK_ORDER",
     "TASK_CARD_HEADINGS",
     "WORK_PACKAGE_HEADINGS",
     "audit_artifacts",
@@ -2040,4 +2321,6 @@ __all__ = (
     "audit_mapping",
     "audit_references",
     "default_audit_paths",
+    "render_audit_json",
+    "run_audit",
 )

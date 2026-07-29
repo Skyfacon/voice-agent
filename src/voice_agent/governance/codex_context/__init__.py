@@ -6,6 +6,7 @@ from .audit import (
     BUDGET_EXCEPTION_HEADING,
     CANDIDATE_MAX_BYTES,
     CARD_MAX_BYTES,
+    CHECK_ORDER,
     TASK_CARD_HEADINGS,
     WORK_PACKAGE_HEADINGS,
     audit_artifacts,
@@ -14,6 +15,8 @@ from .audit import (
     audit_mapping,
     audit_references,
     default_audit_paths,
+    render_audit_json,
+    run_audit,
 )
 from .markdown import (
     collect_legacy_rules,
@@ -48,6 +51,7 @@ __all__ = (
     "BUDGET_EXCEPTION_HEADING",
     "CANDIDATE_MAX_BYTES",
     "CARD_MAX_BYTES",
+    "CHECK_ORDER",
     "CandidateInvariant",
     "CheckReport",
     "EnforcementKind",
@@ -68,4 +72,6 @@ __all__ = (
     "normalize_requirement",
     "requirement_digest",
     "default_audit_paths",
+    "render_audit_json",
+    "run_audit",
 )
