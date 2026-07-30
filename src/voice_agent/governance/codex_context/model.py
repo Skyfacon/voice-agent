@@ -104,6 +104,42 @@ class AuditReport:
         return all(report.passed for report in self.reports)
 
 
+@dataclass(frozen=True)
+class SnapshotRequest:
+    repo_root: Path
+    output_root: Path
+    candidate_instruction: PurePosixPath
+    baseline_entry: PurePosixPath
+    candidate_entry: PurePosixPath
+    selected_uncommitted: tuple[PurePosixPath, ...] = ()
+
+
+@dataclass(frozen=True)
+class SourceEntry:
+    relative_path: PurePosixPath
+    sha256: str
+    size_bytes: int
+    origin: Literal["tracked", "selected-uncommitted", "overlay"]
+
+
+@dataclass(frozen=True)
+class SnapshotPairManifest:
+    schema: str
+    pair_digest: str
+    pair_name: str
+    anchor_kind: Literal["system-temp", "ignored-repo-diagnostics"]
+    anchor_digest: str
+    source_entries: tuple[SourceEntry, ...]
+    expected_differences: tuple[PurePosixPath, ...]
+
+
+@dataclass(frozen=True)
+class SnapshotVerification:
+    passed: bool
+    issue_codes: tuple[str, ...]
+    observed_differences: tuple[PurePosixPath, ...]
+
+
 __all__ = (
     "AuditCheck",
     "AuditIssue",
@@ -118,4 +154,8 @@ __all__ = (
     "LegacyRule",
     "LegacySourceKind",
     "Severity",
+    "SnapshotPairManifest",
+    "SnapshotRequest",
+    "SnapshotVerification",
+    "SourceEntry",
 )
