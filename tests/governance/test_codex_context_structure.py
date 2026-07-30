@@ -24,6 +24,11 @@ from voice_agent.governance.codex_context.markdown import (
 ROOT = Path(__file__).resolve().parents[2]
 CANDIDATE = ROOT / "docs/governance/codex-context/AGENTS.candidate.md"
 BASELINE = ROOT / "docs/governance/codex-context/shadow-baseline.md"
+AB_SCENARIOS = ROOT / "docs/governance/codex-context/ab-scenarios.md"
+AB_ACCEPTANCE = (
+    ROOT
+    / "docs/implementation/codex-context-slimming-shadow-acceptance.md"
+)
 MASTER_PLAN = (
     ROOT
     / "docs/superpowers/plans/"
@@ -95,6 +100,24 @@ ALLOWED_LIVE_STATUSES = {
     "verified",
     "superseded",
 }
+EXPECTED_AB_SCENARIOS = tuple(f"AB-{index:02d}" for index in range(1, 6))
+EXPECTED_AB_OUTCOMES = {
+    "normal",
+    "content_unavailable",
+    "rerouted",
+    "delayed",
+    "other",
+}
+EXPECTED_AB_RESULT_FIELDS = (
+    "scenario_id",
+    "arm",
+    "repeat_id",
+    "outcome",
+    "timestamp_timezone",
+    "visible_model",
+    "redacted_identifier_suffix",
+    "uncontrolled_difference_note",
+)
 EXPECTED_INTERFACE_MARKERS = {
     "TC-S3B1-01": (
         "base_canonical_event(...)",
@@ -312,6 +335,344 @@ def test_live_budget_and_artifact_auditors_pass_before_cards() -> None:
     paths = default_audit_paths(ROOT)
     assert audit_budgets(paths).passed
     assert audit_artifacts(paths).passed
+
+
+def test_ab_methodology_has_five_scenarios_and_fixed_repeat_policy() -> None:
+    text = AB_SCENARIOS.read_text(encoding="utf-8")
+    scenario_ids = tuple(
+        re.findall(r"^## (AB-\d{2})\b", text, flags=re.MULTILINE)
+    )
+    assert scenario_ids == EXPECTED_AB_SCENARIOS
+
+    for repeat_id in ("B1", "B2", "C1", "C2", "B3", "C3"):
+        assert f"`{repeat_id}`" in text
+    normalized = " ".join(text.split())
+    repeat_policy = normalized.lower()
+    assert "only then, in one later comparable window" in repeat_policy
+    assert re.search(
+        r"later comparable window.*`b3`.*`c3`",
+        repeat_policy,
+    )
+    assert "later pair that remains mixed stays `inconclusive`" in repeat_policy
+
+    outcome_block = text.split(
+        "The allowed outcome enum is:",
+        1,
+    )[1].split("Use the fixed first-window order", 1)[0]
+    assert set(re.findall(r"`([^`]+)`", outcome_block)) == EXPECTED_AB_OUTCOMES
+
+    lowered = normalized.lower()
+    for phrase in (
+        "same account",
+        "same model",
+        "same product surface",
+        "same approximate time window",
+        "legitimate",
+        "local",
+        "provider-free",
+        "no external target",
+        "no real credential",
+        "no raw audio",
+        "no raw trace",
+        "no real side effect",
+    ):
+        assert phrase in lowered
+
+    neutral = " ".join(_h2_body(text, "AB-01").split()).lower()
+    assert re.search(r"neutral .*account/surface control", neutral)
+    assert "equivalent empty directories outside the repository" in neutral
+    assert "no repository instruction" in neutral
+    assert "does not test the candidate instruction" in neutral
+    assert "never evidence" in neutral
+
+
+def test_ab_acceptance_template_contains_only_redacted_metadata_fields() -> None:
+    text = AB_ACCEPTANCE.read_text(encoding="utf-8")
+    result_headers = []
+    for line in text.splitlines():
+        fields = tuple(
+            field.strip()
+            for field in line.strip().strip("|").split("|")
+        )
+        if "scenario_id" in fields:
+            result_headers.append(fields)
+    assert result_headers == [EXPECTED_AB_RESULT_FIELDS]
+
+    forbidden_fields = {
+        "raw_prompt",
+        "prompt_body",
+        "raw_response",
+        "response_body",
+        "screenshot",
+        "full_request_id",
+        "request_id",
+        "thread_id",
+        "log",
+        "absolute_snapshot_path",
+        "local_user_input",
+    }
+    assert not (set(result_headers[0]) & forbidden_fields)
+
+    status_line = next(
+        line
+        for line in text.splitlines()
+        if "status enum" in line.lower()
+    )
+    assert set(re.findall(r"`([^`]+)`", status_line)) == {
+        "not-run",
+        "inconclusive",
+        "passed",
+        "failed",
+    }
+    assert "A/B status: not-run" in text
+    assert "Atomic switch: not-authorized" in text
+    normalized = " ".join(text.split()).lower()
+    assert "does not claim" in normalized
+    assert "operational a/b" in normalized
+
+
+def test_artifact_audit_requires_ab_documents_and_snapshot_commands(
+    tmp_path: Path,
+) -> None:
+    valid = _write_artifact_fixture(tmp_path / "valid-ab")
+    valid_report = audit_artifacts(valid)
+    assert valid_report.passed
+    live_report = audit_artifacts(default_audit_paths(ROOT))
+    assert live_report.passed
+    assert live_report.checked_count == 22
+
+    missing_scenarios = _write_artifact_fixture(
+        tmp_path / "missing-ab-scenarios"
+    )
+    (
+        missing_scenarios.candidate_instruction.parent / "ab-scenarios.md"
+    ).unlink()
+    assert "AB_SCENARIOS_MISSING" in _issue_codes(
+        audit_artifacts(missing_scenarios)
+    )
+
+    missing_acceptance = _write_artifact_fixture(
+        tmp_path / "missing-ab-acceptance"
+    )
+    (
+        missing_acceptance.repo_root
+        / "docs/implementation/"
+        "codex-context-slimming-shadow-acceptance.md"
+    ).unlink()
+    assert "AB_ACCEPTANCE_MISSING" in _issue_codes(
+        audit_artifacts(missing_acceptance)
+    )
+
+    for action in ("prepare", "verify", "cleanup"):
+        missing_command = _write_artifact_fixture(
+            tmp_path / f"missing-snapshot-{action}"
+        )
+        methodology = (
+            missing_command.candidate_instruction.parent / "ab-scenarios.md"
+        )
+        methodology.write_text(
+            methodology.read_text(encoding="utf-8").replace(
+                f"scripts/codex-context-snapshot {action}",
+                f"scripts/codex-context-snapshot omitted-{action}",
+            ),
+            encoding="utf-8",
+        )
+        assert "AB_SNAPSHOT_COMMAND_MISSING" in _issue_codes(
+            audit_artifacts(missing_command)
+        )
+
+    missing_approved_parent = _write_artifact_fixture(
+        tmp_path / "missing-approved-parent"
+    )
+    methodology = (
+        missing_approved_parent.candidate_instruction.parent
+        / "ab-scenarios.md"
+    )
+    methodology.write_text(
+        methodology.read_text(encoding="utf-8").replace(
+            "--approved-parent",
+            "--parent-omitted",
+        ),
+        encoding="utf-8",
+    )
+    assert "AB_SNAPSHOT_COMMAND_MISSING" in _issue_codes(
+        audit_artifacts(missing_approved_parent)
+    )
+
+    fenced_headings = _write_artifact_fixture(
+        tmp_path / "fenced-ab-headings"
+    )
+    methodology = (
+        fenced_headings.candidate_instruction.parent
+        / "ab-scenarios.md"
+    )
+    methodology.write_text(
+        methodology.read_text(encoding="utf-8").replace(
+            "\n## AB-",
+            "\n### AB-",
+        )
+        + "\n```text\n"
+        + "\n".join(
+            f"## {scenario_id}" for scenario_id in EXPECTED_AB_SCENARIOS
+        )
+        + "\n```\n",
+        encoding="utf-8",
+    )
+    assert "AB_SCENARIO_SET_INVALID" in _issue_codes(
+        audit_artifacts(fenced_headings)
+    )
+
+    hidden_status = _write_artifact_fixture(
+        tmp_path / "hidden-ab-status"
+    )
+    acceptance = (
+        hidden_status.repo_root
+        / "docs/implementation/"
+        "codex-context-slimming-shadow-acceptance.md"
+    )
+    acceptance.write_text(
+        acceptance.read_text(encoding="utf-8")
+        .replace("A/B status: not-run", "A/B status: passed", 1)
+        .replace(
+            "Atomic switch: not-authorized",
+            "Atomic switch: authorized",
+            1,
+        )
+        + "\n<!--\n"
+        + "A/B status: not-run\n"
+        + "Atomic switch: not-authorized\n"
+        + "-->\n",
+        encoding="utf-8",
+    )
+    assert "AB_SWITCH_STATE_INVALID" in _issue_codes(
+        audit_artifacts(hidden_status)
+    )
+
+    hidden_header = _write_artifact_fixture(
+        tmp_path / "hidden-ab-header"
+    )
+    acceptance = (
+        hidden_header.repo_root
+        / "docs/implementation/"
+        "codex-context-slimming-shadow-acceptance.md"
+    )
+    safe_header = "| " + " | ".join(EXPECTED_AB_RESULT_FIELDS) + " |"
+    acceptance.write_text(
+        acceptance.read_text(encoding="utf-8").replace(
+            safe_header,
+            "| visible_header_removed |",
+            1,
+        )
+        + f"\n<!-- {safe_header} -->\n",
+        encoding="utf-8",
+    )
+    assert "AB_RESULT_FIELDS_INVALID" in _issue_codes(
+        audit_artifacts(hidden_header)
+    )
+
+    compact_header = _write_artifact_fixture(
+        tmp_path / "compact-ab-header"
+    )
+    acceptance = (
+        compact_header.repo_root
+        / "docs/implementation/"
+        "codex-context-slimming-shadow-acceptance.md"
+    )
+    acceptance.write_text(
+        acceptance.read_text(encoding="utf-8").replace(
+            safe_header,
+            "|" + "|".join(EXPECTED_AB_RESULT_FIELDS) + "|",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    assert audit_artifacts(compact_header).passed
+
+    symlink_scenarios = _write_artifact_fixture(
+        tmp_path / "symlink-ab-scenarios"
+    )
+    methodology = (
+        symlink_scenarios.candidate_instruction.parent
+        / "ab-scenarios.md"
+    )
+    methodology_content = methodology.read_text(encoding="utf-8")
+    methodology.unlink()
+    outside_methodology = _write_text(
+        tmp_path / "outside-ab-scenarios.md",
+        methodology_content,
+    )
+    methodology.symlink_to(outside_methodology)
+    assert "AB_SCENARIOS_MISSING" in _issue_codes(
+        audit_artifacts(symlink_scenarios)
+    )
+
+    symlink_acceptance_parent = _write_artifact_fixture(
+        tmp_path / "symlink-ab-acceptance-parent"
+    )
+    acceptance = (
+        symlink_acceptance_parent.repo_root
+        / "docs/implementation/"
+        "codex-context-slimming-shadow-acceptance.md"
+    )
+    acceptance_content = acceptance.read_text(encoding="utf-8")
+    acceptance.unlink()
+    acceptance.parent.rmdir()
+    outside_acceptance = _write_text(
+        tmp_path
+        / "outside-implementation/"
+        "codex-context-slimming-shadow-acceptance.md",
+        acceptance_content,
+    )
+    acceptance.parent.symlink_to(
+        outside_acceptance.parent,
+        target_is_directory=True,
+    )
+    assert "AB_ACCEPTANCE_MISSING" in _issue_codes(
+        audit_artifacts(symlink_acceptance_parent)
+    )
+
+    unsafe_fixed_artifact = _write_artifact_fixture(
+        tmp_path / "unsafe-fixed-ab-artifact"
+    )
+    methodology = (
+        unsafe_fixed_artifact.candidate_instruction.parent
+        / "ab-scenarios.md"
+    )
+    methodology.write_text(
+        methodology.read_text(encoding="utf-8")
+        + "\ndata:text/plain,synthetic-marker\n",
+        encoding="utf-8",
+    )
+    unsafe_report = audit_artifacts(unsafe_fixed_artifact)
+    assert any(
+        issue.code == "EMBEDDED_DATA_URI"
+        and issue.rule_id == "AB-METHODOLOGY"
+        for issue in unsafe_report.issues
+    )
+
+
+def test_ab_scenarios_declare_expected_snapshot_difference_sets() -> None:
+    text = AB_SCENARIOS.read_text(encoding="utf-8")
+    expected_differences = {
+        "AB-02": {"AGENTS.md"},
+        "AB-03": {"AGENTS.md"},
+        "AB-04": {"AGENTS.md", "CODEX_TASK.md"},
+        "AB-05": {"AGENTS.md"},
+    }
+    identical_entry_scenarios = {"AB-02", "AB-03", "AB-05"}
+
+    for scenario_id, expected in expected_differences.items():
+        body = _h2_body(text, scenario_id)
+        difference_line = next(
+            line
+            for line in body.splitlines()
+            if line.strip().startswith("- Expected snapshot differences:")
+        )
+        assert set(re.findall(r"`([^`]+)`", difference_line)) == expected
+        if scenario_id in identical_entry_scenarios:
+            assert "- Entry bytes: identical" in body
+        else:
+            assert "- Entry bytes: different" in body
 
 
 def test_live_slice3b1_cards_match_declared_dependency_dag() -> None:
@@ -1210,7 +1571,52 @@ def _write_artifact_fixture(root: Path):
     _write_text(paths.card_root / "TC-SYN-01.md", _task_card_text("TC-SYN-01"))
     _write_text(root / "tests/fixtures/test_fixture.py", "def test_fixture():\n    pass\n")
     _write_text(paths.invariant_map, _fixture_invariant_map())
+    _write_text(
+        paths.candidate_instruction.parent / "ab-scenarios.md",
+        _fixture_ab_scenarios(),
+    )
+    _write_text(
+        root
+        / "docs/implementation/"
+        "codex-context-slimming-shadow-acceptance.md",
+        _fixture_ab_acceptance(),
+    )
     return paths
+
+
+def _fixture_ab_scenarios() -> str:
+    scenario_sections = "\n".join(
+        (
+            f"## {scenario_id}\n\nSynthetic bounded scenario.\n"
+            for scenario_id in EXPECTED_AB_SCENARIOS
+        )
+    )
+    return (
+        "# Synthetic A/B methodology\n\n"
+        f"{scenario_sections}\n"
+        "```bash\n"
+        "scripts/codex-context-snapshot prepare <PAIR_ROOT> <ENTRY_PATH>\n"
+        "scripts/codex-context-snapshot verify <PAIR_ROOT> "
+        "--approved-parent <APPROVED_PARENT>\n"
+        "scripts/codex-context-snapshot cleanup <PAIR_ROOT> "
+        "--approved-parent <APPROVED_PARENT>\n"
+        "```\n"
+    )
+
+
+def _fixture_ab_acceptance() -> str:
+    return (
+        "# Synthetic A/B acceptance\n\n"
+        "A/B status: not-run\n\n"
+        "Atomic switch: not-authorized\n\n"
+        "| "
+        + " | ".join(EXPECTED_AB_RESULT_FIELDS)
+        + " |\n| "
+        + " | ".join("---" for _ in EXPECTED_AB_RESULT_FIELDS)
+        + " |\n| "
+        + " | ".join("not-run" for _ in EXPECTED_AB_RESULT_FIELDS)
+        + " |\n"
+    )
 
 
 def _fixture_invariant_map() -> str:

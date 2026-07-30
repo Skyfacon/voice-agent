@@ -306,6 +306,11 @@ def _copy_complete_synthetic_repo(repo: Path):
         live_paths.adr_register,
         live_paths.master_plan,
         live_paths.candidate_instruction.parent / "shadow-baseline.md",
+        (
+            ROOT
+            / "docs/implementation/"
+            "codex-context-slimming-shadow-acceptance.md"
+        ),
     }
     mappings = load_invariant_map(live_paths.invariant_map)
     referenced_files = {

@@ -147,6 +147,23 @@ _DOCUMENT_STEM_RE = re.compile(
 _SAFE_OUTPUT_ID_RE = re.compile(r"^[A-Z0-9][A-Z0-9_.:-]{0,127}$")
 _SAFE_OUTPUT_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,512}$")
 _AUDIT_SCHEMA = "voice_agent.codex_context.audit.v1"
+_AB_SCENARIO_IDS = tuple(f"AB-{index:02d}" for index in range(1, 6))
+_AB_SCENARIO_HEADING_RE = re.compile(r"^## (AB-\d{2})\b", re.MULTILINE)
+_AB_RESULT_FIELDS = (
+    "scenario_id",
+    "arm",
+    "repeat_id",
+    "outcome",
+    "timestamp_timezone",
+    "visible_model",
+    "redacted_identifier_suffix",
+    "uncontrolled_difference_note",
+)
+_AB_SNAPSHOT_COMMANDS = (
+    "scripts/codex-context-snapshot prepare",
+    "scripts/codex-context-snapshot verify",
+    "scripts/codex-context-snapshot cleanup",
+)
 
 
 def default_audit_paths(repo_root: Path) -> AuditPaths:
@@ -892,6 +909,132 @@ def audit_artifacts(paths: AuditPaths) -> CheckReport:
             paths=paths,
         )
 
+    ab_scenarios = (
+        paths.candidate_instruction.parent / "ab-scenarios.md"
+    )
+    ab_acceptance = (
+        paths.repo_root
+        / "docs/implementation/"
+        "codex-context-slimming-shadow-acceptance.md"
+    )
+    ab_scenarios_text = (
+        _read_text(ab_scenarios)
+        if _contained_regular_file(paths, ab_scenarios) is not None
+        else None
+    )
+    ab_acceptance_text = (
+        _read_text(ab_acceptance)
+        if _contained_regular_file(paths, ab_acceptance) is not None
+        else None
+    )
+    if ab_scenarios_text is None:
+        _add(
+            issues,
+            check,
+            "AB_SCENARIOS_MISSING",
+            rule_id="AB-METHODOLOGY",
+            path=ab_scenarios,
+            paths=paths,
+        )
+    else:
+        scenario_ids = tuple(
+            heading
+            for _, level, heading in _markdown_headings(
+                ab_scenarios_text
+            )
+            if level == 2 and _AB_SCENARIO_HEADING_RE.fullmatch(
+                f"## {heading}"
+            )
+        )
+        if scenario_ids != _AB_SCENARIO_IDS:
+            _add(
+                issues,
+                check,
+                "AB_SCENARIO_SET_INVALID",
+                rule_id="AB-METHODOLOGY",
+                path=ab_scenarios,
+                paths=paths,
+            )
+        visible_command_text = "\n".join(
+            _visible_markdown_lines(
+                ab_scenarios_text,
+                include_fenced=True,
+            )
+        )
+        if any(
+            command not in visible_command_text
+            for command in _AB_SNAPSHOT_COMMANDS
+        ) or visible_command_text.count("--approved-parent") < 2:
+            _add(
+                issues,
+                check,
+                "AB_SNAPSHOT_COMMAND_MISSING",
+                rule_id="AB-METHODOLOGY",
+                path=ab_scenarios,
+                paths=paths,
+            )
+    if ab_acceptance_text is None:
+        _add(
+            issues,
+            check,
+            "AB_ACCEPTANCE_MISSING",
+            rule_id="AB-ACCEPTANCE",
+            path=ab_acceptance,
+            paths=paths,
+        )
+    else:
+        visible_acceptance_lines = _visible_markdown_lines(
+            ab_acceptance_text,
+            include_fenced=False,
+        )
+        result_headers = tuple(
+            tuple(
+                field.strip()
+                for field in line.strip().strip("|").split("|")
+            )
+            for line in visible_acceptance_lines
+            if (
+                line.strip().startswith("|")
+                and "scenario_id"
+                in {
+                    field.strip()
+                    for field in line.strip().strip("|").split("|")
+                }
+            )
+        )
+        if result_headers != (_AB_RESULT_FIELDS,):
+            _add(
+                issues,
+                check,
+                "AB_RESULT_FIELDS_INVALID",
+                rule_id="AB-ACCEPTANCE",
+                path=ab_acceptance,
+                paths=paths,
+            )
+        ab_status_lines = [
+            line.strip()
+            for line in visible_acceptance_lines
+            if line.strip().startswith("A/B status:")
+        ]
+        atomic_switch_lines = [
+            line.strip()
+            for line in visible_acceptance_lines
+            if line.strip().startswith("Atomic switch:")
+        ]
+        if (
+            ab_status_lines != ["A/B status: not-run"]
+            or atomic_switch_lines
+            != ["Atomic switch: not-authorized"]
+        ):
+            _add(
+                issues,
+                check,
+                "AB_SWITCH_STATE_INVALID",
+                rule_id="AB-ACCEPTANCE",
+                path=ab_acceptance,
+                paths=paths,
+            )
+
     cards, packages = _card_documents(paths)
     if _path_exists(paths.card_root) and not _card_root_is_safe(paths):
         _add(
@@ -902,14 +1045,26 @@ def audit_artifacts(paths: AuditPaths) -> CheckReport:
             path=paths.card_root,
             paths=paths,
         )
-    scan_paths = (paths.candidate_instruction, *cards, *packages)
+    fixed_artifact_ids = {
+        ab_scenarios: "AB-METHODOLOGY",
+        ab_acceptance: "AB-ACCEPTANCE",
+    }
+    scan_paths = (
+        paths.candidate_instruction,
+        *cards,
+        *packages,
+        *fixed_artifact_ids,
+    )
     for document in scan_paths:
         is_candidate = document == paths.candidate_instruction
         kind = "TC" if document.name.startswith("TC-") else "WP"
         stable_id = (
-            document.stem
-            if is_candidate
-            else _stable_document_id(document.stem, kind)
+            fixed_artifact_ids.get(document)
+            or (
+                document.stem
+                if is_candidate
+                else _stable_document_id(document.stem, kind)
+            )
         )
         if (
             stable_id is None
@@ -1463,6 +1618,26 @@ def _html_hidden_line_numbers(text: str) -> frozenset[int]:
         if fence:
             fence_marker = fence.group(1)
     return frozenset(hidden)
+
+
+def _visible_markdown_lines(
+    text: str,
+    *,
+    include_fenced: bool,
+) -> tuple[str, ...]:
+    hidden = (
+        _html_hidden_line_numbers(text)
+        if include_fenced
+        else _fenced_line_numbers(text)
+    )
+    return tuple(
+        line
+        for line_number, line in enumerate(
+            text.splitlines(),
+            start=1,
+        )
+        if line_number not in hidden
+    )
 
 
 def _document_status_is_accepted(text: str) -> bool:
