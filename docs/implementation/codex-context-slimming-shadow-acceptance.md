@@ -22,18 +22,29 @@ an operational A/B has occurred.
 - Baseline authority:
   `docs/governance/codex-context/shadow-baseline.md`.
 
+## Shadow artifact sizes
+
+| Artifact | UTF-8 bytes | Gate |
+| --- | ---: | --- |
+| Candidate instruction | 6,056 | at or below 6 KiB |
+| Eleven Task Cards | 4,845–7,981 each | every card below 12 KiB |
+| Slice 3B.1 Work Package | 2,970 | inside the 2–4 KiB target |
+| Task Card index | 2,627 | compact navigation only |
+
+The invariant map contains exactly 111 primary legacy-rule rows.
+
 ## Local-equivalence command results
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Complete deterministic governance audit | `./scripts/codex-context-audit all` | `not-run` for final acceptance |
-| Snapshot prepare | `scripts/codex-context-snapshot prepare` | `not-run` for operational A/B |
-| Snapshot verify | `scripts/codex-context-snapshot verify` | `not-run` for operational A/B |
-| Snapshot cleanup | `scripts/codex-context-snapshot cleanup` | `not-run` for operational A/B |
+| Governance tests | `./scripts/test tests/governance -q` | passed: 80 |
+| Complete deterministic governance audit | `./scripts/codex-context-audit all` | passed: counts 111 / 373 / 14 / 12 / 22; `switch_ready=false` |
+| Snapshot prepare | `scripts/codex-context-snapshot prepare` | passed: 422 entries; pair digest `ee8efc81346e4df1af5a999f23ccae12e55e3208cc4320ca4468895b0973a40f` |
+| Snapshot verify | `scripts/codex-context-snapshot verify` | passed: two expected differences |
+| Snapshot cleanup | `scripts/codex-context-snapshot cleanup` | passed: exact pair removed; no private-container residue |
 
-Task 8 must replace only these safe result summaries with fresh counts, stable
-digests, boolean gate values, and issue codes. Complete command output and
-local snapshot locations are not committed.
+These are bounded summaries, not complete command output. No local snapshot
+location or interaction content is committed.
 
 ## Selected runtime-regression results
 
@@ -42,9 +53,15 @@ The unchanged-runtime selection is the nine-test command frozen in
 
 | Regression set | Result | Evidence allowed here |
 | --- | --- | --- |
-| Selected provider-free replay, privacy, task authority, Composer, gate, and adapter checks | `not-run` for final acceptance | aggregate pass count and duration |
-| Full repository suite | `not-run` for final acceptance | aggregate pass, skip, and failure counts |
-| Production runtime diff attributable to context slimming | `not-run` for final acceptance | bounded changed-path count |
+| Selected provider-free replay, privacy, task authority, Composer, gate, and adapter checks | passed: 9 in 0.38 s; same node set as the frozen baseline | aggregate pass count and duration |
+| Full repository suite | passed: 3,428 in 57.04 s | aggregate pass, skip, and failure counts |
+| Production runtime diff attributable to context slimming | zero plan-owned production runtime files | bounded changed-path count |
+
+The pre/post worktree comparison preserved every pre-existing modified or
+untracked surface. The pre-shadow aggregate `tests/governance/` entry now
+resolves to the still-untracked ADR-018 consistency test because the new shadow
+governance files were committed; no unrelated user path was reset, restored,
+overwritten, staged, or absorbed.
 
 ## Redacted A/B results
 
@@ -69,6 +86,8 @@ Decision: `not-authorized`.
 
 No candidate activation is permitted from this template. A future reviewer may
 not recommend the Atomic Switch from an operational result alone.
+`switch_ready` remains `false`; the sole reported prerequisite is
+`ADR015_EXPLICIT_OPERATIONAL_AUTHORITY_REQUIRED`.
 
 ## Switch prerequisites
 
@@ -124,9 +143,13 @@ entry together.
 
 ## Reviewer verdict
 
-Verdict: `pending`.
+Verdict: `passed` for the Shadow Completion Gate.
 
-Required final review: semantic-equivalence review, safe-artifact review,
-unchanged-runtime review, redacted A/B methodology/result review, and explicit
-human authorization. Until that review is recorded, A/B status remains
-`not-run` and Atomic switch remains `not-authorized`.
+Three independent read-only reviews covered semantic equivalence and authority,
+Task Card/Work Package structure, and deterministic audit/snapshot safety.
+Each reported zero P0, P1, or P2 findings after the review fixes were applied.
+
+This verdict covers the local shadow build only. It does not claim an
+operational A/B result, does not satisfy the ADR-015 switch prerequisite, and
+does not authorize candidate activation. A/B status remains `not-run` and the
+Atomic switch remains `not-authorized`.
