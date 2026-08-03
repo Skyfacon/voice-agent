@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="referrer" content="no-referrer">
+    <title>Qwen Realtime Fast / Slow Integration Spike</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">DUAL-SESSION CONTROL · SLICE 1 / 2 / 3A</p>
+          <h1>Realtime Fast / Slow</h1>
+          <p class="subtitle">Fake enforced, Qwen Shadow, and experimental Qwen enforced text-only control with local Router authority</p>
+        </div>
+        <div class="badges" aria-label="会话状态">
+          <span id="connectionBadge" class="badge neutral">Disconnected</span>
+          <span id="modeBadge" class="badge fake">Fake</span>
+          <span id="healthBadge" class="badge healthy">ready</span>
+        </div>
+      </header>
+
+      <section class="panel session-panel" aria-labelledby="sessionTitle">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">SESSION</p>
+            <h2 id="sessionTitle">连接、收音与打断</h2>
+          </div>
+          <span id="activityBadge" class="activity idle" aria-live="polite">Idle</span>
+        </div>
+
+        <div class="button-row">
+          <button id="connectBtn" class="primary" type="button">Connect</button>
+          <button id="disconnectBtn" type="button" disabled>Disconnect</button>
+          <button id="startMicBtn" class="accent" type="button" disabled>Start microphone</button>
+          <button id="stopMicBtn" type="button" disabled>Stop microphone</button>
+          <button id="interruptBtn" class="danger" type="button" disabled>Interrupt</button>
+        </div>
+
+        <div class="status-grid">
+          <div class="status-cell"><span>麦克风</span><strong id="micStatus">not_requested</strong></div>
+          <div class="status-cell level-cell">
+            <span>输入电平</span>
+            <progress id="inputLevel" max="1" value="0"></progress>
+            <strong id="inputLevelText">0%</strong>
+          </div>
+          <div class="status-cell"><span>输入丢帧</span><strong id="inputDropCount">0</strong></div>
+          <div class="status-cell"><span>输出丢帧</span><strong id="outputDropCount">0</strong></div>
+          <div class="status-cell"><span>迟到音频丢弃</span><strong id="lateAudioDropCount">0</strong></div>
+          <div class="status-cell"><span>Playback epoch</span><strong id="playbackEpoch">0</strong></div>
+          <div class="status-cell"><span>播放器缓冲</span><strong id="playbackBuffer">0 ms</strong></div>
+          <div class="status-cell"><span>Clear latency</span><strong id="clearLatency">—</strong></div>
+        </div>
+
+        <p class="notice">
+          麦克风音频只在内存中以 16 kHz / PCM16 / mono、约 100 ms 固定帧流转；页面不读取密钥，也不持久化音频或转写。
+        </p>
+      </section>
+
+      <section class="panel scenario-panel" aria-labelledby="scenarioTitle">
+        <div class="section-heading compact">
+          <div>
+            <p class="section-kicker">DETERMINISTIC QA</p>
+            <h2 id="scenarioTitle">Fake 场景</h2>
+          </div>
+          <span class="small-note">只发送 scenario id，不发送自由文本</span>
+        </div>
+        <div id="scenarioControls" class="scenario-grid" aria-label="Fake provider 场景">
+          <button type="button" data-scenario="fast" disabled>FAST chat</button>
+          <button type="button" data-scenario="spawn" disabled>SPAWN task</button>
+          <button type="button" data-scenario="patch" disabled>PATCH task</button>
+          <button type="button" data-scenario="ignore" disabled>IGNORE</button>
+          <button type="button" data-scenario="ambiguous" disabled>CLARIFY</button>
+          <button type="button" data-scenario="confirm" disabled>Confirm</button>
+          <button type="button" data-scenario="reject_confirmation" disabled>Reject confirm</button>
+          <button type="button" data-scenario="cancel" disabled>Cancel task</button>
+          <button type="button" data-scenario="late_audio" disabled>Late audio</button>
+          <button type="button" data-scenario="provider_error" disabled>Provider error</button>
+          <button type="button" data-scenario="provider_disconnect" disabled>Provider disconnect</button>
+        </div>
+      </section>
+
+      <section class="panel conversation-panel" aria-labelledby="conversationTitle">
+        <div class="section-heading compact">
+          <div>
+            <p class="section-kicker">SERVER-AUTHORIZED OUTPUT ONLY</p>
+            <h2 id="conversationTitle">QA 对话</h2>
+          </div>
+          <button id="clearConversationBtn" class="small" type="button">Clear view</button>
+        </div>
+        <div id="conversation" class="conversation" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0">
+          <p class="placeholder">运行 Fake 场景或开始讲话后，服务器已提交的文本会显示在这里。</p>
+        </div>
+      </section>
+
+      <section class="panel shadow-panel" aria-labelledby="shadowTitle">
+        <div class="section-heading shadow-heading">
+          <div>
+            <p class="section-kicker">NON-AUTHORITATIVE · TRANSIENT METADATA ONLY</p>
+            <h2 id="shadowTitle">Shadow Routing</h2>
+          </div>
+          <span id="shadowEvidenceMode" class="badge neutral">not_available</span>
+        </div>
+
+        <div class="shadow-grid">
+          <article class="shadow-card runtime-card">
+            <h3>Dual-session runtime</h3>
+            <dl>
+              <div><dt>Provider</dt><dd id="shadowProvider">not_available</dd></div>
+              <div><dt>Routing</dt><dd id="shadowRouting">not_available</dd></div>
+              <div><dt>Voice session</dt><dd id="voiceSessionStatus">not_available</dd></div>
+              <div><dt>Shadow control</dt><dd id="shadowControlStatus">not_available</dd></div>
+              <div><dt>Control topology</dt><dd id="shadowControlMode">not_available</dd></div>
+              <div><dt>Audio output</dt><dd id="shadowAudioOutput">not_available</dd></div>
+              <div><dt>Safe turn ref</dt><dd id="shadowSafeTurnRef">not_available</dd></div>
+              <div><dt>Active task context</dt><dd id="shadowActiveTaskContext">not_available</dd></div>
+              <div><dt>Pending confirmation</dt><dd id="shadowPendingConfirmation">not_available</dd></div>
+            </dl>
+          </article>
+
+          <article class="shadow-card proposal-card">
+            <h3>Qwen proposal</h3>
+            <dl>
+              <div><dt>Task focus hint</dt><dd id="shadowQwenFocus">not_available</dd></div>
+              <div><dt>Route hint</dt><dd id="shadowQwenRoute">not_available</dd></div>
+              <div><dt>Foreground act</dt><dd id="shadowForegroundAct">not_available</dd></div>
+              <div><dt>Risk class</dt><dd id="shadowRisk">not_available</dd></div>
+              <div><dt>Confidence</dt><dd id="shadowConfidence">not_available</dd></div>
+              <div><dt>Schema</dt><dd id="shadowSchema">not_available</dd></div>
+            </dl>
+          </article>
+
+          <article class="shadow-card comparison-card">
+            <h3>Local comparison</h3>
+            <dl>
+              <div><dt>Router decision</dt><dd id="shadowLocalDecision">not_available</dd></div>
+              <div><dt>Task focus</dt><dd id="shadowLocalFocus">not_available</dd></div>
+              <div><dt>Foreground act</dt><dd id="shadowLocalForegroundAct">not_available</dd></div>
+              <div><dt>Agreement</dt><dd id="shadowAgreement">not_available</dd></div>
+              <div><dt>ASR → request</dt><dd id="shadowAsrToRequest">not_available</dd></div>
+              <div><dt>Request → first delta</dt><dd id="shadowRequestToFirstDelta">not_available</dd></div>
+              <div><dt>Request → call done</dt><dd id="shadowRequestToDone">not_available</dd></div>
+              <div><dt>Call done → Router</dt><dd id="shadowDoneToLocal">not_available</dd></div>
+            </dl>
+          </article>
+
+          <article class="shadow-card reliability-card">
+            <h3>Isolation &amp; reliability</h3>
+            <dl>
+              <div><dt>Control timeouts</dt><dd id="shadowTimeoutCount">0</dd></div>
+              <div><dt>Control errors</dt><dd id="shadowErrorCount">0</dd></div>
+              <div><dt>Request drops</dt><dd id="shadowDropCount">0</dd></div>
+              <div><dt>Context deletes</dt><dd id="shadowContextDeleteCount">0</dd></div>
+              <div><dt>Context rebuilds</dt><dd id="shadowContextRebuildCount">0</dd></div>
+            </dl>
+            <p class="shadow-boundary">Architecture: <code>dual_session_shadow</code>. Proposal only: no task creation, patch, cancellation, gate commit, QA insertion, or playback.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="enforcedPanel" class="panel enforced-panel" aria-labelledby="enforcedTitle" data-active="false">
+        <div class="section-heading enforced-heading">
+          <div>
+            <p class="section-kicker">EXPERIMENTAL · TEXT-ONLY · LOCAL AUTHORITY</p>
+            <h2 id="enforcedTitle">Qwen Enforced Control</h2>
+          </div>
+          <span id="enforcedStatus" class="badge neutral">inactive</span>
+        </div>
+
+        <div class="enforced-boundary" role="note">
+          <strong>Authority boundary:</strong>
+          Qwen supplies non-authoritative evidence. Only the local Router and deterministic Gate may dispatch. Provider-native Voice audio is disabled.
+        </div>
+
+        <div class="enforced-grid">
+          <article class="enforced-card runtime-card">
+            <h3>Runtime &amp; topology</h3>
+            <dl>
+              <div><dt>Provider</dt><dd id="enforcedProvider">not_available</dd></div>
+              <div><dt>Routing</dt><dd id="enforcedRouting">not_available</dd></div>
+              <div><dt>Foreground output</dt><dd id="enforcedOutput">not_available</dd></div>
+              <div><dt>Audio output</dt><dd id="enforcedAudioOutput">not_available</dd></div>
+              <div><dt>Slow runtime</dt><dd id="enforcedSlowRuntime">not_available</dd></div>
+              <div><dt>Control topology</dt><dd id="enforcedTopology">not_available</dd></div>
+              <div><dt>Experimental</dt><dd id="enforcedExperimental">not_available</dd></div>
+              <div><dt>Voice ingress</dt><dd id="enforcedVoiceStatus">not_available</dd></div>
+              <div><dt>Control session</dt><dd id="enforcedControlStatus">not_available</dd></div>
+              <div><dt>Safe turn ref</dt><dd id="enforcedSafeTurnRef">not_available</dd></div>
+            </dl>
+          </article>
+
+          <article class="enforced-card authority-card">
+            <h3>Authority &amp; audio boundary</h3>
+            <dl>
+              <div><dt>Qwen proposal</dt><dd id="enforcedProposalAuthority">non_authoritative</dd></div>
+              <div><dt>Local Router</dt><dd id="enforcedRouterAuthority">authoritative</dd></div>
+              <div><dt>Provider-native audio</dt><dd id="enforcedProviderAudio">disabled</dd></div>
+              <div><dt>Candidate policy</dt><dd>gate_committed_text_only</dd></div>
+            </dl>
+            <p class="enforced-note">Voice assistant transcript, Voice PCM, provider candidate text, and Function Call arguments are never projected here or into QA. Output provenance remains explicit: real / mock / fallback / degraded.</p>
+          </article>
+
+          <article class="enforced-card proposal-card">
+            <h3>Qwen evidence</h3>
+            <dl>
+              <div><dt>Task-focus hint</dt><dd id="enforcedQwenFocus">not_available</dd></div>
+              <div><dt>Route hint</dt><dd id="enforcedQwenRoute">not_available</dd></div>
+              <div><dt>Foreground act</dt><dd id="enforcedForegroundAct">not_available</dd></div>
+              <div><dt>Risk class</dt><dd id="enforcedRisk">not_available</dd></div>
+              <div><dt>Confidence</dt><dd id="enforcedConfidence">not_available</dd></div>
+              <div><dt>Schema</dt><dd id="enforcedSchema">not_available</dd></div>
+              <div><dt>Evidence mode</dt><dd id="enforcedEvidenceMode">not_available</dd></div>
+            </dl>
+          </article>
+
+          <article class="enforced-card dispatch-card">
+            <h3>Local decision &amp; dispatch</h3>
+            <dl>
+              <div><dt>Router decision</dt><dd id="enforcedLocalDecision">not_available</dd></div>
+              <div><dt>Task focus</dt><dd id="enforcedLocalFocus">not_available</dd></div>
+              <div><dt>Foreground act</dt><dd id="enforcedLocalForegroundAct">not_available</dd></div>
+              <div><dt>Gate status</dt><dd id="enforcedGateStatus">not_available</dd></div>
+              <div><dt>Gate reason</dt><dd id="enforcedGateReason">not_available</dd></div>
+              <div><dt>Actual dispatch</dt><dd id="enforcedActualDispatch">not_available</dd></div>
+              <div><dt>Safe task ref</dt><dd id="enforcedTaskRef">not_available</dd></div>
+              <div><dt>Plan version</dt><dd id="enforcedPlanVersion">not_available</dd></div>
+              <div><dt>Stale / superseded</dt><dd id="enforcedStaleStatus">not_available</dd></div>
+              <div><dt>Dispatch mode</dt><dd id="enforcedDispatchMode">not_available</dd></div>
+            </dl>
+          </article>
+
+          <article class="enforced-card latency-card">
+            <h3>Committed-turn latencies</h3>
+            <dl>
+              <div><dt>ASR → control</dt><dd id="enforcedAsrToControl">not_available</dd></div>
+              <div><dt>Request → first delta</dt><dd id="enforcedRequestToFirstDelta">not_available</dd></div>
+              <div><dt>Request → call done</dt><dd id="enforcedRequestToDone">not_available</dd></div>
+              <div><dt>Router + Gate</dt><dd id="enforcedRouterGateLatency">not_available</dd></div>
+            </dl>
+          </article>
+
+          <article class="enforced-card reliability-card">
+            <h3>Cancellation, cleanup &amp; suppression</h3>
+            <dl>
+              <div><dt>Control cancels</dt><dd id="enforcedControlCancelCount">0</dd></div>
+              <div><dt>Control deletes</dt><dd id="enforcedControlDeleteCount">0</dd></div>
+              <div><dt>Control rebuilds</dt><dd id="enforcedControlRebuildCount">0</dd></div>
+              <div><dt>Control drops</dt><dd id="enforcedControlDropCount">0</dd></div>
+              <div><dt>Control context</dt><dd id="enforcedControlTainted">not_available</dd></div>
+              <div><dt>Voice cancels</dt><dd id="enforcedVoiceCancelCount">0</dd></div>
+              <div><dt>Voice cancel terminal</dt><dd id="enforcedVoiceCancelTerminalCount">0</dd></div>
+              <div><dt>Voice deletes</dt><dd id="enforcedVoiceDeleteCount">0</dd></div>
+              <div><dt>Voice rebuilds</dt><dd id="enforcedVoiceRebuildCount">0</dd></div>
+              <div><dt>Voice context</dt><dd id="enforcedVoiceTainted">not_available</dd></div>
+              <div><dt>Assistant text suppressed</dt><dd id="enforcedTextSuppressionCount">0</dd></div>
+              <div><dt>Audio suppressed</dt><dd id="enforcedAudioSuppressionCount">0</dd></div>
+              <div><dt>Binary frames played</dt><dd id="enforcedBinaryPlaybackCount">0</dd></div>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section class="control-layout" aria-label="控制面">
+        <article class="panel control-card">
+          <p class="section-kicker">PROVIDER EVIDENCE</p>
+          <h2>Qwen / Fake proposal</h2>
+          <dl>
+            <div><dt>Route hint</dt><dd id="proposalRoute">—</dd></div>
+            <div><dt>Task focus hint</dt><dd id="proposalFocus">—</dd></div>
+            <div><dt>Foreground act</dt><dd id="foregroundAct">—</dd></div>
+            <div><dt>Risk</dt><dd id="proposalRisk">—</dd></div>
+            <div><dt>Confidence</dt><dd id="proposalConfidence">—</dd></div>
+          </dl>
+        </article>
+
+        <article class="panel control-card router-card">
+          <p class="section-kicker">LOCAL AUTHORITY</p>
+          <h2>Router &amp; Gate</h2>
+          <dl>
+            <div><dt>Decision</dt><dd id="routerDecision">—</dd></div>
+            <div><dt>Task focus</dt><dd id="routerFocus">—</dd></div>
+            <div><dt>Gate</dt><dd id="gateStatus">—</dd></div>
+            <div><dt>Reason</dt><dd id="gateReason">—</dd></div>
+          </dl>
+        </article>
+
+        <article class="panel control-card task-card">
+          <p class="section-kicker">MOCK SLOWTASK</p>
+          <h2>Active task</h2>
+          <dl>
+            <div><dt>Task id</dt><dd id="taskId">none</dd></div>
+            <div><dt>Lifecycle</dt><dd id="taskLifecycle">idle</dd></div>
+            <div><dt>Plan version</dt><dd id="planVersion">—</dd></div>
+            <div><dt>UserPatch</dt><dd id="patchStatus">—</dd></div>
+          </dl>
+        </article>
+      </section>
+
+      <section class="panel timeline-panel" aria-labelledby="timelineTitle">
+        <div class="section-heading compact">
+          <div>
+            <p class="section-kicker">EPHEMERAL · REDACTED METADATA</p>
+            <h2 id="timelineTitle">Metadata timeline</h2>
+          </div>
+          <button id="clearTimelineBtn" class="small" type="button">Clear</button>
+        </div>
+        <ol id="timeline" class="timeline" aria-live="polite">
+          <li class="placeholder">等待事件</li>
+        </ol>
+      </section>
+
+      <footer>
+        此页面中的 Shadow / Enforced control projection 是 experiment-local UI metadata，不是 ADR-002 canonical Event Journal，也不具有路由权威。
+      </footer>
+    </main>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
