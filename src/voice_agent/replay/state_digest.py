@@ -54,6 +54,7 @@ def state_digest(
     demo_ui_state: Any | None = None,
     spoken_plan_state: Any | None = None,
     spoken_plan_check_state: Any | None = None,
+    foreground_authority: Any | None = None,
 ) -> dict[str, Any]:
     digest_without_overall: dict[str, Any] = {
         "digest_schema_version": DIGEST_SCHEMA_VERSION,
@@ -71,6 +72,10 @@ def state_digest(
         "adapter_health_state_hash": stable_hash(adapter_health_state),
         "trace_privacy_state_hash": stable_hash(trace_privacy_state),
     }
+    if foreground_authority is not None:
+        digest_without_overall["foreground_authority_hash"] = stable_hash(
+            foreground_authority
+        )
     return {
         **digest_without_overall,
         "overall_digest": stable_hash(digest_without_overall),

@@ -14,6 +14,10 @@ from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, Fak
 from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_MODEL_ALIAS
 from voice_agent.router.router import MVP1_ROUTER_DECISIONS
 from voice_agent.events.journal import InMemoryEventJournal
+from voice_agent.runtime.fast_foreground_gate import (
+    CandidatePolicyDecision,
+    FastForegroundGateContext,
+)
 from voice_agent.runtime.mvp5_live_router_runner import (
     MVP5ActiveSlowTaskContext,
     MVP5LiveRouterConfig,
@@ -135,12 +139,26 @@ def run_mvp5_real_voice_e2e_single(
         raise MVP5RealVoiceE2ESmokeError(
             "PATCH_ACTIVE_SLOW_TASK expected route requires active task context"
         )
+    if active_task_context is not None and not any(
+        transport is not None
+        for transport in (
+            asr_transport,
+            thinker_transport,
+            fast_interaction_transport,
+        )
+    ):
+        raise MVP5RealVoiceE2ESmokeError(
+            "real-provider active task authority requires a canonical session journal"
+        )
     credential_env_var_name = _credential_env_var_name(approval_packet)
 
     router_config = MVP5LiveRouterConfig(
         run_id=run_id,
         expected_route=expected_route,
         active_task_context=active_task_context,
+        fast_foreground_gate_context=_live_fast_gate_context(
+            active_task_context=active_task_context
+        ),
     )
     fast_path_latency: dict[str, int] = {}
 
@@ -148,6 +166,7 @@ def run_mvp5_real_voice_e2e_single(
         partial_evidence: Any,
         journal: InMemoryEventJournal,
     ) -> MVP5LiveRouteResult:
+        _append_smoke_active_task_authority(journal, active_task_context)
         result = run_mvp5_live_router_runner(
             partial_evidence,
             config=router_config,
@@ -232,9 +251,15 @@ def run_mvp5_real_voice_e2e_single(
             events=tuple(evidence.events),
         )
     else:
+        route_journal = _journal_from_smoke_evidence(evidence.events)
+        _append_smoke_active_task_authority(
+            route_journal,
+            active_task_context,
+        )
         route_result = run_mvp5_live_router_runner(
             evidence,
             config=router_config,
+            journal=route_journal,
         )
         if route_result.router_ms is not None:
             evidence_latency_debug["router_ms"] = route_result.router_ms
@@ -296,6 +321,152 @@ def run_mvp5_real_voice_e2e_single(
     metadata.update(_fast_interaction_projection(evidence))
     _validate_smoke_metadata(metadata)
     return metadata
+
+
+def _live_fast_gate_context(
+    *, active_task_context: MVP5ActiveSlowTaskContext | None
+) -> FastForegroundGateContext:
+    """Bind the live smoke to fail-closed provider candidate provenance.
+
+    Interaction and task-focus values are replaced from canonical journal
+    events by the live Router runner.  The remaining fields are locally owned
+    execution/capability facts; none are accepted from provider payloads.
+    """
+
+    pending = bool(
+        active_task_context is not None
+        and active_task_context.pending_confirmation_scope is not None
+    )
+    return FastForegroundGateContext(
+        authority_mode="live_runtime",
+        authority_binding_status="bound",
+        interaction_state=None,
+        interaction_state_ref=None,
+        task_focus=None,
+        task_focus_snapshot_ref=None,
+        has_active_slowtask=active_task_context is not None,
+        active_task_id=(active_task_context.task_id if active_task_context else None),
+        active_slowtask_lifecycle=(
+            active_task_context.lifecycle_phase if active_task_context else None
+        ),
+        pending_confirmation=pending,
+        pending_confirmation_id=(
+            active_task_context.pending_confirmation_id if pending else None
+        ),
+        pending_confirmation_scope=(
+            active_task_context.pending_confirmation_scope if pending else None
+        ),
+        capability_snapshot_ref="capability://mvp5/live-voice-evidence/provider-free",
+        capability_health_status="ready",
+        capability_output_mode="real",
+        capability_verification_status="provider_free_verified",
+        candidate_policy_decision=CandidatePolicyDecision.quarantined_provider(),
+        schema_valid=True,
+        confidence_threshold=0.8,
+    )
+
+
+def _journal_from_smoke_evidence(
+    events: Sequence[Mapping[str, Any]],
+) -> InMemoryEventJournal:
+    if not events:
+        raise MVP5RealVoiceE2ESmokeError("evidence events are required")
+    journal = InMemoryEventJournal(
+        session_id=str(events[0]["session_id"]),
+        conversation_id=str(events[0]["conversation_id"]),
+    )
+    for event in events:
+        journal._append_validated_event(dict(event))
+    return journal
+
+
+def _append_smoke_active_task_authority(
+    journal: InMemoryEventJournal,
+    active_task_context: MVP5ActiveSlowTaskContext | None,
+) -> None:
+    """Append the local smoke fixture's canonical current SlowTask state."""
+
+    if active_task_context is None:
+        return
+    if (
+        active_task_context.current_plan_version != 1
+        or active_task_context.current_task_event_seq != 4
+        or active_task_context.lifecycle_phase != "PLANNING"
+        or active_task_context.terminal_status is not None
+        or active_task_context.pending_confirmation_id is not None
+        or active_task_context.pending_confirmation_scope is not None
+    ):
+        raise MVP5RealVoiceE2ESmokeError(
+            "smoke active task authority must be canonical PLANNING plan 1 sequence 4"
+        )
+    if any(
+        event.get("event_name") == "SLOWTASK_CREATED"
+        and event.get("task_id") == active_task_context.task_id
+        for event in journal.events()
+    ):
+        return
+
+    last = journal.events()[-1]
+    monotonic_ms = int(last["created_monotonic_ms"])
+    wall_clock_ms = int(last["created_wall_clock_ms"])
+    task_id = active_task_context.task_id
+    safe_task_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", task_id).strip("-")
+    created = journal.append(
+        event_name="SLOWTASK_CREATED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_created",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(last["event_id"]),
+        created_monotonic_ms=monotonic_ms + 1,
+        created_wall_clock_ms=wall_clock_ms + 1,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=1,
+        initial_goal_ref=f"goal://synthetic/mvp5/{safe_task_id}",
+    )
+    created_state = journal.append(
+        event_name="SLOWTASK_STATE_CHANGED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_created_state",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(created["event_id"]),
+        created_monotonic_ms=monotonic_ms + 2,
+        created_wall_clock_ms=wall_clock_ms + 2,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=2,
+        from_state="CREATED",
+        to_state="CREATED",
+        reason="trusted_synthetic_smoke_authority",
+    )
+    planning = journal.append(
+        event_name="PLANNING_STARTED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_planning",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(created_state["event_id"]),
+        created_monotonic_ms=monotonic_ms + 3,
+        created_wall_clock_ms=wall_clock_ms + 3,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=3,
+        planning_reason="trusted_synthetic_smoke_authority",
+    )
+    journal.append(
+        event_name="SLOWTASK_STATE_CHANGED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_planning_state",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(planning["event_id"]),
+        created_monotonic_ms=monotonic_ms + 4,
+        created_wall_clock_ms=wall_clock_ms + 4,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=4,
+        from_state="CREATED",
+        to_state="PLANNING",
+        reason="trusted_synthetic_smoke_authority",
+    )
 
 
 def _incomplete_evidence_metadata(

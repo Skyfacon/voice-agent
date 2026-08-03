@@ -8,7 +8,11 @@ from voice_agent.adapters.lalm_thinker_routing_profiles import (
     get_default_lalm_thinker_routing_profile,
 )
 from voice_agent.router.router import MVP1Router, RouterContext, TaskFocusSnapshot
-from voice_agent.runtime.fast_foreground_gate import run_fast_foreground_gate
+from voice_agent.runtime.fast_foreground_gate import (
+    CandidatePolicyDecision,
+    FastForegroundGateContext,
+    run_fast_foreground_gate,
+)
 from voice_agent.runtime.session import start_mvp0_session
 
 
@@ -175,6 +179,37 @@ def _evaluate_case(case: RoutingGoldenCase) -> dict[str, Any]:
             candidate_event=candidate_event,
             fast_interaction_output_event=fast_event,
             router_decision_event=result.router_decision_event,
+            context=FastForegroundGateContext(
+                authority_mode="trusted_synthetic_eval",
+                authority_binding_status="bound",
+                interaction_state="TURN_COMMITTED",
+                interaction_state_ref=(
+                    f"interaction-state://synthetic/mvp6-routing/{case.case_id}"
+                ),
+                task_focus=str(result.router_decision_event["task_focus"]),
+                task_focus_snapshot_ref=(
+                    f"task-focus://synthetic/mvp6-routing/{case.case_id}"
+                ),
+                has_active_slowtask=case.active_task,
+                active_task_id=(
+                    f"task_mvp6_routing_active_{case.case_id}"
+                    if case.active_task
+                    else None
+                ),
+                active_slowtask_lifecycle=("PLANNING" if case.active_task else None),
+                pending_confirmation=False,
+                pending_confirmation_id=None,
+                pending_confirmation_scope=None,
+                capability_snapshot_ref=(
+                    f"capability://synthetic/mvp6-routing/{case.case_id}"
+                ),
+                capability_health_status="ready",
+                capability_output_mode=str(fast_event.get("output_mode", "mock")),
+                capability_verification_status="provider_free_verified",
+                candidate_policy_decision=CandidatePolicyDecision.trusted_synthetic(),
+                schema_valid=True,
+                confidence_threshold=0.8,
+            ),
             event_id_prefix=f"evt_mvp6_routing_eval_{case.case_id}_foreground_gate",
             created_monotonic_ms=1302,
             created_wall_clock_ms=1700000001302,
@@ -363,7 +398,7 @@ def _append_synthetic_fast_interaction_event(
         task_focus_hint="FOREGROUND_CHAT",
         foreground_act="ANSWER",
         final_fast_evidence_ref=f"fast-evidence://synthetic/mvp6/routing-eval/{suffix}",
-        risk_tags=("low_risk", "no_side_effects"),
+        risk_tags=("none",),
         risk_class="LOW",
         confidence=case.focus_confidence,
         schema_name="voice_agent.fast_interaction.output.v1",
@@ -395,7 +430,7 @@ def _append_synthetic_foreground_candidate_event(
         source_event_ids=(str(fast_event["event_id"]),),
         candidate_ref=f"foreground-candidate://synthetic/mvp6/routing-eval/{suffix}",
         candidate_status="complete",
-        risk_tags=("low_risk", "no_side_effects"),
+        risk_tags=("none",),
         confidence=case.focus_confidence,
     )
 

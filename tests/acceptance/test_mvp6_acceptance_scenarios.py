@@ -10,7 +10,12 @@ from voice_agent.adapters.fast_interaction_live_transport import (
     FastInteractionLiveTransportError,
     FastInteractionProviderCompletion,
 )
+from voice_agent.events.journal import InMemoryEventJournal
 from voice_agent.replay.runner import run_replay_fixture
+from voice_agent.runtime.fast_foreground_gate import (
+    CandidatePolicyDecision,
+    FastForegroundGateContext,
+)
 from voice_agent.runtime.mvp5_live_router_runner import (
     MVP5ActiveSlowTaskContext,
     MVP5LiveRouterConfig,
@@ -126,6 +131,7 @@ def test_mvp63_live_fast_answer_pass_acceptance(tmp_path: Path) -> None:
         config=MVP5LiveRouterConfig(
             run_id="mvp63-acceptance-fast-answer-pass",
             expected_route="FAST_ONLY",
+            fast_foreground_gate_context=_trusted_synthetic_gate_context(),
         ),
     )
     metadata = result.to_metadata()
@@ -147,6 +153,7 @@ def test_mvp63_live_qa_parallel_acceptance(tmp_path: Path) -> None:
             config=MVP5LiveRouterConfig(
                 run_id="mvp63-acceptance-qa-parallel",
                 expected_route="FAST_ONLY",
+                fast_foreground_gate_context=_trusted_synthetic_gate_context(),
             ),
             journal=journal,
         )
@@ -194,6 +201,7 @@ def test_mvp63_asr_failure_preserves_answer_acceptance(tmp_path: Path) -> None:
             config=MVP5LiveRouterConfig(
                 run_id="mvp63-acceptance-asr-failure",
                 expected_route="FAST_ONLY",
+                fast_foreground_gate_context=_trusted_synthetic_gate_context(),
             ),
             journal=journal,
         )
@@ -260,6 +268,7 @@ def test_mvp63_live_slow_discard_template_acceptance(tmp_path: Path) -> None:
         config=MVP5LiveRouterConfig(
             run_id="mvp63-acceptance-slow-discard-template",
             expected_route="SPAWN_SLOW_TASK",
+            fast_foreground_gate_context=_trusted_synthetic_gate_context(),
         ),
     )
     metadata = result.to_metadata()
@@ -279,23 +288,25 @@ def test_mvp63_live_patch_discard_template_acceptance(tmp_path: Path) -> None:
         route_decision_candidate="PATCH_ACTIVE_SLOW_TASK",
         foreground_act="ACK_PATCH",
     )
+    active_context = MVP5ActiveSlowTaskContext(
+        task_id="task_mvp63_acceptance_active",
+        current_plan_version=1,
+        current_task_event_seq=4,
+    )
     result = run_mvp5_live_router_runner(
         evidence,
         config=MVP5LiveRouterConfig(
             run_id="mvp63-acceptance-patch-discard-template",
             expected_route="PATCH_ACTIVE_SLOW_TASK",
-            active_task_context=MVP5ActiveSlowTaskContext(
-                task_id="task_mvp63_acceptance_active",
-                current_plan_version=1,
-                current_task_event_seq=1,
-            ),
+            active_task_context=active_context,
         ),
+        journal=_active_task_authority_journal(evidence, active_context),
     )
     metadata = result.to_metadata()
 
     assert metadata["router_decision"] == "PATCH_ACTIVE_SLOW_TASK"
     assert metadata["foreground_gate_decision"] == "failed"
-    assert metadata["foreground_output_basis"] == "template_ack"
+    assert metadata["foreground_output_basis"] == "template_clarify"
     assert metadata["status"] == "blocked_missing_thinker_patch_evidence"
     assert "FOREGROUND_OUTPUT_DISCARDED" in metadata["event_names"]
     assert "USER_PATCH_RECEIVED" not in metadata["event_names"]
@@ -314,6 +325,7 @@ def test_mvp63_replay_no_provider_rerun_acceptance(tmp_path: Path) -> None:
         config=MVP5LiveRouterConfig(
             run_id="mvp63-acceptance-replay-no-provider-rerun",
             expected_route="FAST_ONLY",
+            fast_foreground_gate_context=_trusted_synthetic_gate_context(),
         ),
     )
     fixture = _fixture_from_events(result.events)
@@ -336,11 +348,36 @@ def test_mvp63_safety_export_acceptance(tmp_path: Path) -> None:
         config=MVP5LiveRouterConfig(
             run_id="mvp63-acceptance-safety-export",
             expected_route="FAST_ONLY",
+            fast_foreground_gate_context=_trusted_synthetic_gate_context(),
         ),
     )
 
     _assert_acceptance_safe(evidence.to_metadata())
     _assert_acceptance_safe(result.to_metadata())
+
+
+def _trusted_synthetic_gate_context() -> FastForegroundGateContext:
+    return FastForegroundGateContext(
+        authority_mode="trusted_synthetic_eval",
+        authority_binding_status="bound",
+        interaction_state=None,
+        interaction_state_ref=None,
+        task_focus=None,
+        task_focus_snapshot_ref=None,
+        has_active_slowtask=False,
+        active_task_id=None,
+        active_slowtask_lifecycle=None,
+        pending_confirmation=False,
+        pending_confirmation_id=None,
+        pending_confirmation_scope=None,
+        capability_snapshot_ref="capability://mvp5/live-voice-evidence/provider-free",
+        capability_health_status="ready",
+        capability_output_mode="real",
+        capability_verification_status="provider_free_verified",
+        candidate_policy_decision=CandidatePolicyDecision.trusted_synthetic(),
+        schema_valid=True,
+        confidence_threshold=0.8,
+    )
 
 
 def _fast_evidence(
@@ -402,7 +439,7 @@ class _FakeFastInteractionTransport:
                     "foreground_act": self.foreground_act,
                     "reply_candidate": "A tiny safe spooky story.",
                     "final_fast_evidence": {"label": "acceptance"},
-                    "risk_tags": ["low_risk", "no_side_effects"],
+                    "risk_tags": ["none"],
                     "risk_class": "LOW",
                     "confidence": 0.91,
                     "output_mode": "real",
@@ -469,6 +506,79 @@ def _event(
     matches = [event for event in events if event["event_name"] == event_name]
     assert len(matches) == 1
     return matches[0]
+
+
+def _active_task_authority_journal(
+    evidence: object,
+    context: MVP5ActiveSlowTaskContext,
+) -> InMemoryEventJournal:
+    events = tuple(getattr(evidence, "events"))
+    journal = InMemoryEventJournal(
+        session_id=str(events[0]["session_id"]),
+        conversation_id=str(events[0]["conversation_id"]),
+    )
+    for event in events:
+        journal._append_validated_event(dict(event))
+    last = journal.events()[-1]
+    monotonic_ms = int(last["created_monotonic_ms"])
+    wall_clock_ms = int(last["created_wall_clock_ms"])
+    created = journal.append(
+        event_name="SLOWTASK_CREATED",
+        event_id="evt_mvp63_acceptance_active_created",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(last["event_id"]),
+        created_monotonic_ms=monotonic_ms + 1,
+        created_wall_clock_ms=wall_clock_ms + 1,
+        trace_redaction_level="metadata_only",
+        task_id=context.task_id,
+        plan_version=1,
+        task_event_seq=1,
+        initial_goal_ref="goal://synthetic/mvp63/acceptance-active",
+    )
+    created_state = journal.append(
+        event_name="SLOWTASK_STATE_CHANGED",
+        event_id="evt_mvp63_acceptance_active_created_state",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(created["event_id"]),
+        created_monotonic_ms=monotonic_ms + 2,
+        created_wall_clock_ms=wall_clock_ms + 2,
+        trace_redaction_level="metadata_only",
+        task_id=context.task_id,
+        plan_version=1,
+        task_event_seq=2,
+        from_state="CREATED",
+        to_state="CREATED",
+        reason="trusted_synthetic_acceptance_authority",
+    )
+    planning = journal.append(
+        event_name="PLANNING_STARTED",
+        event_id="evt_mvp63_acceptance_active_planning",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(created_state["event_id"]),
+        created_monotonic_ms=monotonic_ms + 3,
+        created_wall_clock_ms=wall_clock_ms + 3,
+        trace_redaction_level="metadata_only",
+        task_id=context.task_id,
+        plan_version=1,
+        task_event_seq=3,
+        planning_reason="trusted_synthetic_acceptance_authority",
+    )
+    journal.append(
+        event_name="SLOWTASK_STATE_CHANGED",
+        event_id="evt_mvp63_acceptance_active_planning_state",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(planning["event_id"]),
+        created_monotonic_ms=monotonic_ms + 4,
+        created_wall_clock_ms=wall_clock_ms + 4,
+        trace_redaction_level="metadata_only",
+        task_id=context.task_id,
+        plan_version=1,
+        task_event_seq=4,
+        from_state="CREATED",
+        to_state="PLANNING",
+        reason="trusted_synthetic_acceptance_authority",
+    )
+    return journal
 
 
 def _fast_approval_packet(*, asr_observation: bool = False) -> dict[str, object]:

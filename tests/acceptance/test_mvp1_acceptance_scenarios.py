@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from conftest import MVP1_REPLAY_FIXTURE_DIR, load_json_fixture
+from voice_agent.replay.runner import ReplayValidationError
 from voice_agent.replay.scenario_assertions import (
     MVP1AcceptanceError,
     assert_fixture_has_no_forbidden_mvp1_scope,
@@ -486,7 +487,10 @@ def test_mvp1_acceptance_rejects_switch_task_without_accepted_confirmation(tmp_p
     fixture["events"] = _remove_switch_task_confirmation_gate(fixture["events"])
     accepted_fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
 
-    with pytest.raises(MVP1AcceptanceError, match="SWITCH_TASK confirmation"):
+    with pytest.raises(
+        (MVP1AcceptanceError, ReplayValidationError),
+        match="SWITCH_TASK confirmation|ROUTER_DECISION_EMITTED",
+    ):
         run_mvp1_acceptance_manifest(
             manifest,
             fixture_dir=tmp_path,
@@ -529,7 +533,10 @@ def test_mvp1_acceptance_rejects_switch_task_respawn_without_focus_cleanup(tmp_p
     spawn_router["caused_by_event_id"] = "evt_mvp1_slice9_switch_accept_state_cancelled"
     accepted_fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
 
-    with pytest.raises(MVP1AcceptanceError, match="focus"):
+    with pytest.raises(
+        (MVP1AcceptanceError, ReplayValidationError),
+        match="focus|ROUTER_DECISION_EMITTED",
+    ):
         run_mvp1_acceptance_manifest(
             manifest,
             fixture_dir=tmp_path,

@@ -134,7 +134,7 @@ def test_patch_run_with_active_task_context_returns_patch_route(tmp_path: Path) 
             save_qa_history=False,
             active_task_id="task_mvp6_active",
             active_plan_version=1,
-            active_task_event_seq=1,
+            active_task_event_seq=4,
         ),
         env={},
     )
@@ -849,9 +849,11 @@ def test_committed_template_requires_runtime_catalog_provenance() -> None:
         "foreground_gate_decision": "failed",
         "foreground_output_event_id": "evt_template_committed",
         "foreground_output_basis": "template_ack",
-        "foreground_output_ref": "foreground-template://synthetic/run/ack",
+        "foreground_output_ref": (
+            "foreground-template://mvp6.3/v1/spawn-slow-task/ack"
+        ),
         "foreground_fallback_policy_ref": (
-            "fallback-policy://synthetic/run/template_ack"
+            "fallback-policy://mvp6.3/v1/spawn-slow-task/template_ack"
         ),
         "foreground_fallback_reason": "router_decision_not_fast_only",
     }
@@ -871,7 +873,7 @@ def test_committed_template_requires_runtime_catalog_provenance() -> None:
         {
             **metadata,
             "foreground_fallback_policy_ref": (
-                "fallback-policy://synthetic/run/template_clarify"
+                "fallback-policy://mvp6.3/v1/spawn-slow-task/template_clarify"
             ),
         },
         provider_mode="dashscope_live",

@@ -17,6 +17,7 @@ from voice_agent.events.envelope import EventValidationError, validate_event_env
 from voice_agent.events.registry import MVP1_EVENT_NAMES, get_event_definition
 from voice_agent.replay.manifest import ReplayManifest, validate_replay_manifest
 from voice_agent.replay.state_digest import state_digest
+from voice_agent.runtime.foreground_template_catalog import resolve_foreground_template
 from voice_agent.router.router import (
     MVP0_TASK_FOCUS_BY_DECISION,
     MVP1_PATCH_FOCUS_VALUES,
@@ -207,6 +208,7 @@ def run_replay_fixture(fixture: Mapping[str, Any]) -> ReplayResult:
         demo_ui_state=demo_ui_state,
         spoken_plan_state=spoken_plan_state,
         spoken_plan_check_state=spoken_plan_check_state,
+        foreground_authority=_stable_foreground_authority(ordered_events),
     )
     replay_events = _build_replay_marker_events(
         manifest=manifest,
@@ -253,6 +255,7 @@ def _validate_and_order_events(raw_events: Sequence[object], *, manifest: Replay
     _validate_causal_links_after_sort(ordered_events)
     _validate_task_event_seq_monotonicity(ordered_events)
     _validate_audio_turn_opened_before_commit(ordered_events)
+    _validate_per_turn_authority_cardinality(ordered_events)
     _validate_router_decision_scope(ordered_events, manifest=manifest)
     _validate_task_focus_state_update_causality(ordered_events)
     _validate_task_focus_active_task_creation_order(ordered_events)
@@ -445,6 +448,398 @@ def _validate_audio_turn_opened_before_commit(ordered_events: Sequence[Mapping[s
                 raise ReplayValidationError(f"{event_name} requires prior matching audio TURN_OPENED")
 
 
+def _validate_per_turn_authority_cardinality(
+    ordered_events: Sequence[Mapping[str, Any]],
+) -> None:
+    events_by_id = {
+        str(event["event_id"]): event
+        for event in ordered_events
+    }
+    router_events_by_id: dict[str, Mapping[str, Any]] = {}
+    router_event_ids_by_turn: dict[tuple[str, str], str] = {}
+    terminal_gate_event_ids_by_router: dict[str, str] = {}
+    terminal_gate_event_ids_by_turn: dict[tuple[str, str], str] = {}
+    foreground_commit_event_ids_by_turn: dict[tuple[str, str], str] = {}
+    spawn_event_ids_by_turn: dict[tuple[str, str], str] = {}
+    patch_event_ids_by_turn: dict[tuple[str, str], str] = {}
+
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        event_id = str(event["event_id"])
+        if event_name == "ROUTER_DECISION_EMITTED":
+            key = _turn_key(event)
+            if not _is_legacy_confirmed_switch_spawn_continuation(
+                event,
+                events_by_id=events_by_id,
+            ):
+                _record_single_authority_event(
+                    router_event_ids_by_turn,
+                    key,
+                    event_id,
+                    label="ROUTER_DECISION_EMITTED for turn_id and utterance_id",
+                )
+            router_events_by_id[event_id] = event
+            continue
+
+        if event_name in {"FOREGROUND_ACT_GATE_PASSED", "FOREGROUND_ACT_GATE_FAILED"}:
+            router_event_id = str(event.get("router_decision_event_id", ""))
+            router_event = router_events_by_id.get(router_event_id)
+            if router_event is None:
+                continue
+            key = _turn_key(router_event)
+            _record_single_authority_event(
+                terminal_gate_event_ids_by_router,
+                router_event_id,
+                event_id,
+                label="terminal foreground Gate for Router",
+            )
+            _record_single_authority_event(
+                terminal_gate_event_ids_by_turn,
+                key,
+                event_id,
+                label="terminal foreground Gate for turn_id and utterance_id",
+            )
+            continue
+
+        if event_name == "FOREGROUND_OUTPUT_COMMITTED":
+            _record_single_authority_event(
+                foreground_commit_event_ids_by_turn,
+                _turn_key(event),
+                event_id,
+                label="FOREGROUND_OUTPUT_COMMITTED for turn_id and utterance_id",
+            )
+            continue
+
+        if event_name == "SLOWTASK_CREATED":
+            router_event = router_events_by_id.get(str(event.get("caused_by_event_id", "")))
+            if router_event is None or router_event.get("router_decision") != "SPAWN_SLOW_TASK":
+                continue
+            _record_single_authority_event(
+                spawn_event_ids_by_turn,
+                _turn_key(router_event),
+                event_id,
+                label="SPAWN mutation initiation for turn_id and utterance_id",
+            )
+            continue
+
+        if event_name == "USER_PATCH_RECEIVED":
+            router_event = router_events_by_id.get(str(event.get("caused_by_event_id", "")))
+            if router_event is None or router_event.get("router_decision") != "PATCH_ACTIVE_SLOW_TASK":
+                continue
+            _record_single_authority_event(
+                patch_event_ids_by_turn,
+                _turn_key(router_event),
+                event_id,
+                label="PATCH/UserPatch mutation initiation for turn_id and utterance_id",
+            )
+
+
+def _record_single_authority_event(
+    seen: dict[Any, str],
+    key: Any,
+    event_id: str,
+    *,
+    label: str,
+) -> None:
+    prior_event_id = seen.get(key)
+    if prior_event_id is not None:
+        raise ReplayValidationError(
+            f"{label} must occur at most once; found {prior_event_id} and {event_id}"
+        )
+    seen[key] = event_id
+
+
+def _is_legacy_confirmed_switch_spawn_continuation(
+    event: Mapping[str, Any],
+    *,
+    events_by_id: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    if event.get("router_decision") != "SPAWN_SLOW_TASK":
+        return False
+    focus_event = events_by_id.get(str(event.get("caused_by_event_id", "")))
+    if (
+        focus_event is None
+        or focus_event.get("event_name") != "TASK_FOCUS_STATE_UPDATED"
+        or focus_event.get("active_task_id") is not None
+        or focus_event.get("foreground_mode") != "IDLE"
+        or focus_event.get("default_patch_policy") != "NO_ACTIVE_TASK"
+    ):
+        return False
+    prior_routers = [
+        prior
+        for prior in events_by_id.values()
+        if prior.get("event_name") == "ROUTER_DECISION_EMITTED"
+        and prior.get("event_id") != event.get("event_id")
+        and _turn_key(prior) == _turn_key(event)
+        and _event_seq_before(prior, event)
+    ]
+    if len(prior_routers) != 1:
+        return False
+    prior_router = prior_routers[0]
+    task_id = prior_router.get("active_task_id")
+    if (
+        task_id in (None, "")
+        or prior_router.get("router_decision") != "PATCH_ACTIVE_SLOW_TASK"
+        or prior_router.get("task_focus") != "NEW_TASK_CANDIDATE"
+        or any(
+            event.get(field) != prior_router.get(field)
+            for field in (
+                "turn_committed_event_id",
+                "asr_frame_event_id",
+                "thinker_frame_event_id",
+            )
+        )
+    ):
+        return False
+
+    initial_patch = _unique_event_caused_by(
+        events_by_id,
+        event_name="USER_PATCH_RECEIVED",
+        caused_by_event_id=prior_router.get("event_id"),
+    )
+    initial_interpreted = _unique_event_caused_by(
+        events_by_id,
+        event_name="USER_PATCH_INTERPRETED",
+        caused_by_event_id=_event_id(initial_patch),
+    )
+    required = _unique_event_caused_by(
+        events_by_id,
+        event_name="CONFIRMATION_REQUIRED",
+        caused_by_event_id=_event_id(initial_interpreted),
+    )
+    waiting = _unique_event_caused_by(
+        events_by_id,
+        event_name="WAITING_FOR_USER_CONFIRMATION",
+        caused_by_event_id=_event_id(required),
+    )
+    waiting_state = _unique_event_caused_by(
+        events_by_id,
+        event_name="SLOWTASK_STATE_CHANGED",
+        caused_by_event_id=_event_id(waiting),
+    )
+    confirmation_turn = _unique_event_caused_by(
+        events_by_id,
+        event_name="TURN_INGRESS_COMMITTED",
+        caused_by_event_id=_event_id(waiting_state),
+    )
+    confirmation_router = events_by_id.get(
+        str(focus_event.get("router_decision_event_id", ""))
+    )
+    confirmation_thinker = events_by_id.get(
+        str(
+            confirmation_router.get("thinker_frame_event_id", "")
+            if confirmation_router is not None
+            else ""
+        )
+    )
+    confirmation_patch = _unique_event_caused_by(
+        events_by_id,
+        event_name="USER_PATCH_RECEIVED",
+        caused_by_event_id=_event_id(confirmation_router),
+    )
+    confirmation_interpreted = _unique_event_caused_by(
+        events_by_id,
+        event_name="USER_PATCH_INTERPRETED",
+        caused_by_event_id=_event_id(confirmation_patch),
+    )
+    confirmation_received = _unique_event_caused_by(
+        events_by_id,
+        event_name="USER_CONFIRMATION_RECEIVED",
+        caused_by_event_id=_event_id(confirmation_interpreted),
+    )
+    accepted = _unique_event_caused_by(
+        events_by_id,
+        event_name="CONFIRMATION_ACCEPTED",
+        caused_by_event_id=_event_id(confirmation_received),
+    )
+    cancel_requested = _unique_event_caused_by(
+        events_by_id,
+        event_name="SLOWTASK_CANCEL_REQUESTED",
+        caused_by_event_id=_event_id(accepted),
+    )
+    cancelled = _unique_event_caused_by(
+        events_by_id,
+        event_name="SLOWTASK_CANCELLED",
+        caused_by_event_id=_event_id(cancel_requested),
+    )
+    cancelled_state = _unique_event_caused_by(
+        events_by_id,
+        event_name="SLOWTASK_STATE_CHANGED",
+        caused_by_event_id=_event_id(cancelled),
+    )
+    chain = (
+        prior_router,
+        initial_patch,
+        initial_interpreted,
+        required,
+        waiting,
+        waiting_state,
+        confirmation_turn,
+        confirmation_thinker,
+        confirmation_router,
+        confirmation_patch,
+        confirmation_interpreted,
+        confirmation_received,
+        accepted,
+        cancel_requested,
+        cancelled,
+        cancelled_state,
+        focus_event,
+        event,
+    )
+    confirmation_id = required.get("confirmation_id") if required is not None else None
+    plan_version = (
+        initial_patch.get("plan_version") if initial_patch is not None else None
+    )
+    return bool(
+        _event_matches(
+            initial_patch,
+            task_id=task_id,
+            turn_id=event.get("turn_id"),
+            utterance_id=event.get("utterance_id"),
+            observed_plan_version=plan_version,
+        )
+        and "switch_task_candidate"
+        in tuple(initial_patch.get("candidate_patch_types", ()))
+        and _event_matches(
+            initial_interpreted,
+            task_id=task_id,
+            patch_id=initial_patch.get("patch_id"),
+            plan_version=plan_version,
+            observed_plan_version=plan_version,
+            interpreted_against_plan_version=plan_version,
+            interpretation_type="switch_task",
+        )
+        and _event_matches(
+            required,
+            task_id=task_id,
+            plan_version=plan_version,
+            confirmation_id=confirmation_id,
+            confirmation_scope="SWITCH_TASK",
+            required_for_event_id=_event_id(initial_interpreted),
+        )
+        and _event_matches(
+            waiting,
+            task_id=task_id,
+            plan_version=plan_version,
+            confirmation_id=confirmation_id,
+        )
+        and _event_matches(
+            waiting_state,
+            task_id=task_id,
+            plan_version=plan_version,
+            to_state="WAITING_FOR_USER_CONFIRMATION",
+        )
+        and _event_matches(
+            confirmation_thinker,
+            event_name="MOCK_THINKER_FRAME_EMITTED",
+            turn_id=confirmation_turn.get("turn_id") if confirmation_turn else None,
+            utterance_id=(
+                confirmation_turn.get("utterance_id")
+                if confirmation_turn
+                else None
+            ),
+        )
+        and confirmation_thinker.get("caused_by_event_id")
+        == _event_id(confirmation_turn)
+        and _event_matches(
+            confirmation_router,
+            event_name="ROUTER_DECISION_EMITTED",
+            router_decision="PATCH_ACTIVE_SLOW_TASK",
+            task_focus="ACTIVE_TASK_PATCH",
+            active_task_id=task_id,
+            turn_committed_event_id=_event_id(confirmation_turn),
+            thinker_frame_event_id=_event_id(confirmation_thinker),
+        )
+        and confirmation_router.get("caused_by_event_id")
+        == _event_id(confirmation_thinker)
+        and focus_event.get("caused_by_event_id")
+        == _event_id(confirmation_router)
+        and focus_event.get("last_focus_event_id")
+        == _event_id(confirmation_router)
+        and _event_matches(
+            confirmation_patch,
+            task_id=task_id,
+            plan_version=plan_version,
+            observed_plan_version=plan_version,
+            turn_id=confirmation_router.get("turn_id")
+            if confirmation_router
+            else None,
+            utterance_id=confirmation_router.get("utterance_id")
+            if confirmation_router
+            else None,
+        )
+        and "confirmation_candidate"
+        in tuple(confirmation_patch.get("candidate_patch_types", ()))
+        and _event_matches(
+            confirmation_interpreted,
+            task_id=task_id,
+            patch_id=confirmation_patch.get("patch_id"),
+            plan_version=plan_version,
+            observed_plan_version=plan_version,
+            interpreted_against_plan_version=plan_version,
+            interpretation_type="confirmation",
+        )
+        and _event_matches(
+            confirmation_received,
+            task_id=task_id,
+            patch_id=confirmation_patch.get("patch_id"),
+            plan_version=plan_version,
+            confirmation_id=confirmation_id,
+            confirmation_signal="accepted",
+        )
+        and _event_matches(
+            accepted,
+            task_id=task_id,
+            plan_version=plan_version,
+            confirmation_id=confirmation_id,
+            accepted_scope="SWITCH_TASK",
+        )
+        and _event_matches(
+            cancel_requested,
+            task_id=task_id,
+            plan_version=plan_version,
+            cancel_reason="switch_task_accepted",
+            source_user_patch_event_id=_event_id(confirmation_patch),
+        )
+        and _event_matches(
+            cancelled,
+            task_id=task_id,
+            plan_version=plan_version,
+            cancel_reason="switch_task_accepted",
+        )
+        and _event_matches(
+            cancelled_state,
+            task_id=task_id,
+            plan_version=plan_version,
+            to_state="CANCELLED",
+            reason="switch_task_accepted",
+        )
+        and _event_seq_strictly_increases(*chain)
+    )
+
+
+def _unique_event_caused_by(
+    events_by_id: Mapping[str, Mapping[str, Any]],
+    *,
+    event_name: str,
+    caused_by_event_id: object,
+) -> Mapping[str, Any] | None:
+    if caused_by_event_id in (None, ""):
+        return None
+    matches = [
+        candidate
+        for candidate in events_by_id.values()
+        if candidate.get("event_name") == event_name
+        and candidate.get("caused_by_event_id") == caused_by_event_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _event_id(event: Mapping[str, Any] | None) -> object | None:
+    return event.get("event_id") if event is not None else None
+
+
 def _validate_router_decision_scope(
     ordered_events: Sequence[Mapping[str, Any]],
     *,
@@ -549,8 +944,10 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
     foreground_candidates_by_id: dict[str, Mapping[str, Any]] = {}
     router_events_by_id: dict[str, Mapping[str, Any]] = {}
     foreground_gate_events_by_id: dict[str, Mapping[str, Any]] = {}
-    committed_foreground_event_ids: set[str] = set()
-    pending_replacement_output_event_ids: list[str] = []
+    committed_foreground_events_by_id: dict[str, Mapping[str, Any]] = {}
+    pending_replacement_outputs: list[
+        tuple[str, str, tuple[str, str]]
+    ] = []
 
     for event in ordered_events:
         event_name = str(event["event_name"])
@@ -652,15 +1049,15 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
             )
             foreground_gate_events_by_id[str(event["event_id"])] = event
         elif event_name == "FOREGROUND_OUTPUT_DISCARDED":
-            replacement_output_event_id = _validate_foreground_discard_replay_chain(
+            replacement_output = _validate_foreground_discard_replay_chain(
                 event=event,
                 foreground_candidates_by_id=foreground_candidates_by_id,
                 router_events_by_id=router_events_by_id,
                 fast_interaction_events_by_id=fast_interaction_events_by_id,
                 foreground_gate_events_by_id=foreground_gate_events_by_id,
             )
-            if replacement_output_event_id is not None:
-                pending_replacement_output_event_ids.append(replacement_output_event_id)
+            if replacement_output is not None:
+                pending_replacement_outputs.append(replacement_output)
         elif event_name == "FOREGROUND_OUTPUT_COMMITTED":
             _validate_foreground_commit_replay_chain(
                 event=event,
@@ -668,13 +1065,24 @@ def _validate_post_commit_understanding_and_router_order(ordered_events: Sequenc
                 foreground_candidates_by_id=foreground_candidates_by_id,
                 foreground_gate_events_by_id=foreground_gate_events_by_id,
             )
-            committed_foreground_event_ids.add(str(event["event_id"]))
+            committed_foreground_events_by_id[str(event["event_id"])] = event
 
-    for replacement_output_event_id in pending_replacement_output_event_ids:
-        if replacement_output_event_id not in committed_foreground_event_ids:
+    for replacement_output_event_id, gate_event_id, turn_key in pending_replacement_outputs:
+        replacement_event = committed_foreground_events_by_id.get(
+            replacement_output_event_id
+        )
+        if replacement_event is None:
             raise ReplayValidationError(
                 "FOREGROUND_OUTPUT_DISCARDED replacement_output_event_id must reference "
                 "a FOREGROUND_OUTPUT_COMMITTED event"
+            )
+        if (
+            replacement_event.get("gate_event_id") != gate_event_id
+            or _turn_key(replacement_event) != turn_key
+        ):
+            raise ReplayValidationError(
+                "FOREGROUND_OUTPUT_DISCARDED replacement_output_event_id must belong "
+                "to the same Gate and turn"
             )
 
 
@@ -790,7 +1198,7 @@ def _validate_foreground_discard_replay_chain(
     router_events_by_id: Mapping[str, Mapping[str, Any]],
     fast_interaction_events_by_id: Mapping[str, Mapping[str, Any]],
     foreground_gate_events_by_id: Mapping[str, Mapping[str, Any]],
-) -> str | None:
+) -> tuple[str, str, tuple[str, str]] | None:
     candidate_event_id = _required_event_ref(
         event,
         "candidate_event_id",
@@ -838,7 +1246,11 @@ def _validate_foreground_discard_replay_chain(
     replacement_output_event_id = event.get("replacement_output_event_id")
     if replacement_output_event_id in (None, ""):
         return None
-    return str(replacement_output_event_id)
+    return (
+        str(replacement_output_event_id),
+        gate_event_id,
+        _turn_key(router_event),
+    )
 
 
 def _validate_foreground_commit_replay_chain(
@@ -884,9 +1296,18 @@ def _validate_foreground_commit_replay_chain(
     if gate_event.get("router_decision_event_id") != router_event_id:
         raise ReplayValidationError("FOREGROUND_OUTPUT_COMMITTED gate must reference committed Router decision")
     output_basis = event.get("output_basis")
+    foreground_act = _required_event_ref(
+        event,
+        "foreground_act",
+        "FOREGROUND_OUTPUT_COMMITTED",
+    )
     if output_basis == "reply_candidate":
         if gate_event.get("event_name") != "FOREGROUND_ACT_GATE_PASSED":
             raise ReplayValidationError("reply_candidate FOREGROUND_OUTPUT_COMMITTED requires gate pass")
+        if foreground_act != "ANSWER":
+            raise ReplayValidationError(
+                "reply_candidate FOREGROUND_OUTPUT_COMMITTED requires foreground_act=ANSWER"
+            )
         candidate_event_id = _required_event_ref(
             gate_event,
             "candidate_event_id",
@@ -906,6 +1327,27 @@ def _validate_foreground_commit_replay_chain(
             raise ReplayValidationError("template FOREGROUND_OUTPUT_COMMITTED requires gate failure")
         if fallback_policy_ref in (None, "") or fallback_reason in (None, ""):
             raise ReplayValidationError("template FOREGROUND_OUTPUT_COMMITTED requires fallback policy and reason")
+        if output_basis != "silence_policy":
+            template = resolve_foreground_template(
+                output_ref=event.get("output_ref"),
+                output_basis=output_basis,
+                fallback_policy_ref=fallback_policy_ref,
+                router_decision=router_event.get("router_decision"),
+            )
+            if template is None:
+                raise ReplayValidationError(
+                    "template FOREGROUND_OUTPUT_COMMITTED must match the exact "
+                    "versioned foreground template catalog"
+                )
+            if foreground_act != template.foreground_act:
+                raise ReplayValidationError(
+                    "template FOREGROUND_OUTPUT_COMMITTED foreground_act must "
+                    "match the versioned foreground template catalog"
+                )
+        elif foreground_act != "SILENCE":
+            raise ReplayValidationError(
+                "silence_policy FOREGROUND_OUTPUT_COMMITTED requires foreground_act=SILENCE"
+            )
     else:
         raise ReplayValidationError("FOREGROUND_OUTPUT_COMMITTED has unsupported output_basis")
 
@@ -3148,6 +3590,56 @@ def _string_set_for_refs(value: object, *, error_prefix: str) -> set[str]:
 
 def _turn_key(event: Mapping[str, Any]) -> tuple[str, str]:
     return str(event["turn_id"]), str(event["utterance_id"])
+
+
+def _stable_foreground_authority(
+    ordered_events: Sequence[Mapping[str, Any]],
+) -> dict[str, list[dict[str, str]]]:
+    routers: list[dict[str, str]] = []
+    terminal_gates: list[dict[str, str]] = []
+    commits: list[dict[str, str]] = []
+    for event in ordered_events:
+        event_name = str(event["event_name"])
+        if event_name == "ROUTER_DECISION_EMITTED":
+            routers.append(
+                {
+                    "turn_id": str(event["turn_id"]),
+                    "utterance_id": str(event["utterance_id"]),
+                    "event_id": str(event["event_id"]),
+                    "router_decision": str(event["router_decision"]),
+                }
+            )
+        elif event_name in {"FOREGROUND_ACT_GATE_PASSED", "FOREGROUND_ACT_GATE_FAILED"}:
+            terminal_gates.append(
+                {
+                    "event_id": str(event["event_id"]),
+                    "gate_decision_id": str(event["gate_decision_id"]),
+                    "router_decision_event_id": str(event["router_decision_event_id"]),
+                    "gate_result": (
+                        "passed"
+                        if event_name == "FOREGROUND_ACT_GATE_PASSED"
+                        else "failed"
+                    ),
+                }
+            )
+        elif event_name == "FOREGROUND_OUTPUT_COMMITTED":
+            commits.append(
+                {
+                    "turn_id": str(event["turn_id"]),
+                    "utterance_id": str(event["utterance_id"]),
+                    "event_id": str(event["event_id"]),
+                    "router_decision_event_id": str(event["router_decision_event_id"]),
+                    "gate_event_id": str(event.get("gate_event_id", "")),
+                    "output_basis": str(event["output_basis"]),
+                    "output_ref": str(event["output_ref"]),
+                    "foreground_act": str(event["foreground_act"]),
+                }
+            )
+    return {
+        "routers": routers,
+        "terminal_gates": terminal_gates,
+        "commits": commits,
+    }
 
 
 def _unavailable_data_plane_refs(event: Mapping[str, Any]) -> list[dict[str, str]]:

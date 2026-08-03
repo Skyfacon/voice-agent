@@ -159,6 +159,53 @@ class MockSlowTaskRuntime:
             produced_events=tuple(produced_events),
         )
 
+    def start_planning(
+        self,
+        *,
+        task_id: str,
+        plan_version: int,
+        caused_by_event_id: str,
+        event_id_prefix: str,
+        created_monotonic_ms: int,
+        created_wall_clock_ms: int,
+        start_task_event_seq: int,
+    ) -> MockSlowTaskRunResult:
+        """Move a newly created mock task into its long-lived planning state."""
+
+        if not task_id or not caused_by_event_id or not event_id_prefix:
+            raise ValueError("task_id, caused_by_event_id, and event_id_prefix are required")
+        if plan_version < INITIAL_PLAN_VERSION or start_task_event_seq < 1:
+            raise ValueError("plan_version and start_task_event_seq must be positive")
+        started = self._append_slowtask_event(
+            event_name="PLANNING_STARTED",
+            event_id=f"{event_id_prefix}_planning_started",
+            caused_by_event_id=caused_by_event_id,
+            created_monotonic_ms=created_monotonic_ms,
+            created_wall_clock_ms=created_wall_clock_ms,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq,
+            planning_reason="initial_goal_accepted",
+        )
+        state_changed = self._append_slowtask_event(
+            event_name="SLOWTASK_STATE_CHANGED",
+            event_id=f"{event_id_prefix}_state_planning",
+            caused_by_event_id=str(started["event_id"]),
+            created_monotonic_ms=created_monotonic_ms + 1,
+            created_wall_clock_ms=created_wall_clock_ms + 1,
+            task_id=task_id,
+            plan_version=plan_version,
+            task_event_seq=start_task_event_seq + 1,
+            from_state="CREATED",
+            to_state="PLANNING",
+            reason="initial_planning_started",
+        )
+        return MockSlowTaskRunResult(
+            task_id=task_id,
+            plan_version=plan_version,
+            produced_events=(started, state_changed),
+        )
+
     def run_planning_completed(
         self,
         *,

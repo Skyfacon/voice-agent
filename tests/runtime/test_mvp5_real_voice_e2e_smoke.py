@@ -45,7 +45,7 @@ def test_single_wav_smoke_outputs_metadata_only_actual_router_outcome(
     assert metadata["run_id"] == "mvp5-goal4-single-fast"
     assert metadata["mode"] == "single"
     assert metadata["status"] == "routed"
-    assert metadata["route_result_kind"] == "direct_answer"
+    assert metadata["route_result_kind"] == "foreground_clarify"
     assert metadata["actual_route"] == "FAST_ONLY"
     assert metadata["router_decision"] == "FAST_ONLY"
     assert metadata["expected_route"] == "FAST_ONLY"
@@ -97,12 +97,16 @@ def test_single_fast_interaction_primary_uses_one_audio_native_provider_call(
     latency_debug = metadata["latency_debug"]
     assert metadata["status"] == "routed"
     assert metadata["actual_route"] == "FAST_ONLY"
-    assert metadata["route_result_kind"] == "direct_answer"
+    assert metadata["route_result_kind"] == "foreground_clarify"
     assert metadata["asr_output_mode"] is None
     assert metadata["thinker_output_mode"] is None
     assert metadata["fast_interaction_output_mode"] == "real"
-    assert metadata["foreground_gate_decision"] == "passed"
-    assert metadata["foreground_output_basis"] == "reply_candidate"
+    assert metadata["foreground_gate_decision"] == "failed"
+    assert metadata["foreground_gate_failure_reason"] == (
+        "candidate_policy_quarantined"
+    )
+    assert metadata["foreground_output_basis"] == "template_clarify"
+    assert metadata["foreground_output_ref"] != metadata["foreground_candidate_ref"]
     assert metadata["evidence_ref_policy"] == "preserve_fast_ref"
     assert metadata["provider_call_used"] is False
     assert metadata["fake_transport_used"] is True
@@ -194,7 +198,7 @@ def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_outpu
                 "active_task_context": {
                     "task_id": "task_mvp5_local_pack_active",
                     "current_plan_version": 1,
-                    "current_task_event_seq": 1,
+                        "current_task_event_seq": 4,
                 },
             },
         ],
@@ -220,7 +224,7 @@ def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_outpu
     assert set(cases_by_id) == {"direct", "spawn", "patch"}
     assert cases_by_id["direct"]["expected_route"] == "FAST_ONLY"
     assert cases_by_id["direct"]["actual_route"] == "FAST_ONLY"
-    assert cases_by_id["direct"]["route_result_kind"] == "direct_answer"
+    assert cases_by_id["direct"]["route_result_kind"] == "foreground_clarify"
     assert cases_by_id["spawn"]["expected_route"] == "SPAWN_SLOW_TASK"
     assert cases_by_id["spawn"]["actual_route"] == "SPAWN_SLOW_TASK"
     assert cases_by_id["spawn"]["route_result_kind"] == "slowtask_spawn"
@@ -229,8 +233,9 @@ def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_outpu
     assert cases_by_id["patch"]["route_result_kind"] == "user_patch"
     assert cases_by_id["patch"]["task_id"] == "task_mvp5_local_pack_active"
     assert cases_by_id["patch"]["user_patch_event_ids"]
-    assert "USER_PATCH_INTERPRETED" not in cases_by_id["patch"]["event_names"]
-    assert "PLAN_VERSION_ADVANCED" not in cases_by_id["patch"]["event_names"]
+    assert "USER_PATCH_INTERPRETED" in cases_by_id["patch"]["event_names"]
+    assert "PLAN_VERSION_ADVANCED" in cases_by_id["patch"]["event_names"]
+    assert "SLOWTASK_STATE_CHANGED" in cases_by_id["patch"]["event_names"]
     assert metadata["raw_audio_included"] is False
     assert metadata["raw_transcript_included"] is False
     assert metadata["raw_provider_body_included"] is False
@@ -424,8 +429,8 @@ def test_main_single_active_task_context_produces_patch_route_in_provider_free_f
             "task_local_active",
             "--active-plan-version",
             "1",
-            "--active-task-event-seq",
-            "1",
+                "--active-task-event-seq",
+                "4",
             "--active-lifecycle-phase",
             "PLANNING",
             "--approval-packet",
@@ -619,7 +624,7 @@ class _FakeFastInteractionTransport:
                     "foreground_act": "ANSWER",
                     "reply_candidate": "A tiny safe spooky story.",
                     "final_fast_evidence": {"label": "single_smoke"},
-                    "risk_tags": ["low_risk", "no_side_effects"],
+                    "risk_tags": ["none"],
                     "risk_class": "LOW",
                     "confidence": 0.91,
                     "output_mode": "real",
