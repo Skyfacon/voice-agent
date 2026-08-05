@@ -1,6 +1,6 @@
 # Voice Agent 项目研发交接
 
-> 现场快照：2026-08-03（Asia/Shanghai）
+> 现场快照：2026-08-05（Asia/Shanghai）
 > 面向对象：第一次接触仓库、准备继续研发或接管交付的工程师
 > 说明：本文是 implementation-facing 导航与现场记录，不替代 `AGENTS.md` 或 accepted ADR。发生冲突时，以 `AGENTS.md`、`stage_b_adr_register.md` 和对应 ADR 正文为准。
 
@@ -12,39 +12,37 @@
 
 1. **系统权威不在模型。** Interaction Controller 决定 turn ingress，Local Router 决定四路路由，SlowTask 持有复杂任务事实，Fast Foreground Gate 决定候选能否展示或播放。
 2. **关键行为必须事件化。** 没有写入 per-session Event Journal、不能 deterministic replay 的关键状态迁移，不算完成。
-3. **当前已提交、可依赖的 accepted 基线止于 ADR-017。** Dirty tree 中的 ADR-018 及 Slice 3B.1 design 自称已 accepted，但当前精确文本仍待用户明确确认；在确认并形成原子治理提交前，不能把它们当作已生效架构授权。
-4. **现场已建立 recovery 分支并落下五个恢复提交，但主体工作仍未交付。** 当前分支是 `codex/adr-018-slice3b1-recovery`，没有配置 upstream；仍有 31 个 tracked modified 文件和 63 个实际 untracked 文件。不要先 pull、rebase、checkout、clean 或 reset，也不要未经确认直接设置 upstream 或 push。
-5. **测试健康，但测试的是 dirty composite tree。** 最近一次完整统一入口得到 `3428 passed in 58.16s`；Cards 01～09 的合并聚焦集合得到 `1323 passed`。这不能证明远端或当前 `HEAD` 已包含并可复现 Slice 3B.1。
-6. **下一步先收口治理和可复现提交，再做 Card 10/11。** P0 是让用户确认 ADR-018 当前精确文本；确认后原子提交治理包，再按依赖和证据拆分提交 Cards 01～09。只有这些前置完成后，才进入 Controller-owned ingress、scenario runner、安全结果 schema、CLI、最小 replay fixtures 和正式 acceptance；不要提前进入 3B.2、Page C 或启用 native PCM。
+3. **当前 accepted 架构基线已经覆盖 ADR-001～ADR-018。** ADR-018 已获用户明确确认，并由 `c600da3` 原子同步 Register、相关 ADR/spec、派生设计和治理测试；这仍不代表真实 Qwen、native PCM 或生产能力已经完成。
+4. **Slice 3B.1 Cards 01～09 已进入可复现 `HEAD`。** 九张卡按依赖顺序提交为 `3bff78a`、`a6bc7cc`、`4bad655`、`5919de8`、`71f4468`、`d3bd201`、`e0aef2f`、`519f2d7`、`3f57a58`，合并聚焦集合为 `1323 passed`。
+5. **当前主线仍是 partial implementation。** Card 10/11、Controller-owned scenario runner、稳定安全结果 schema、CLI、最小 replay fixtures 和正式 acceptance 尚未实现；real provider、native PCM 和 production readiness 也都未完成。
+6. **本地未提交内容已缩小为刻意排除的文档/视觉 WIP。** 只有 `README.md`、`docs/assets/vision/`、2026-06-22 vision design 和 2026-07-25 old governance plan；它们不属于 Cards 01～09，也不要混入后续 Card 10/11 提交。
 
 ## 2. 当前现场快照
 
-以下数据采集于五个 recovery 提交完成后；本文自身已包含在 untracked 统计中。
+以下数据采集于 ADR-018 与 Cards 01～09 全部提交、且最新 `origin/main` 合并完成后。表中的本地 WIP 统计不包含本次对交接文档自身的校准修改。
 
 | 项目 | 当前值 |
 | --- | --- |
 | 仓库 | `/Users/a123/voice-agent` |
 | 当前分支 | `codex/adr-018-slice3b1-recovery` |
-| `HEAD` | `e856fedcc151` — `docs: record Qwen fast-slow experiment milestones` |
+| Cards 01～09 实现基线 | `3f57a58f762d` — `feat: add deterministic ADR-018 parallel replay` |
+| 最新合并检查点 | `81aacd696c63` — 已合并 `origin/main` 的 `d38e48b` |
 | 配置 upstream | 无 |
-| 相对旧远端 `origin/codex/adr-017-fast-interaction-adapter` | ahead 23 / behind 0 |
-| 相对 `origin/main` | origin/main-only 3 / HEAD-only 24 |
-| merge base | `04f0f6e1760ebde1e1bc3003091858e3b0eb5a61` |
+| `origin/main` 集成状态 | `d38e48b` 已合并；无未集成的 remote-main commit |
 | staged | 0 |
-| tracked modified | 31 个文件 |
-| tracked diff | 7,497 additions / 189 deletions |
-| untracked | `git status` 默认折叠为 38 个条目，展开为 63 个文件 |
-| 完整测试（dirty composite tree） | `3428 passed in 58.16s` |
-| Cards 01～09 合并聚焦测试（dirty composite tree） | `1323 passed` |
+| 刻意保留的 tracked WIP | `README.md` 1 个文件 |
+| 刻意保留的 untracked WIP | 7 个文件：5 个 vision SVG + 2 份旧 design/plan |
+| 当前完整回归 | `3428 passed in 60.62s` |
+| Cards 01～09 合并聚焦测试 | `1323 passed` |
 | `git diff --check` | clean |
 | 默认 Python | `/Users/a123/anaconda3/bin/python`，Python 3.11.5 |
 | pytest | 7.4.0 |
 | 浏览器实验依赖 | 当前 Anaconda 环境有 `aiohttp 3.8.5` |
 | CI / lockfile | 未发现远端 CI、依赖 lockfile、tox/nox 或 pre-commit |
 
-### 2.1 已提交的 recovery 批次
+### 2.1 已提交的恢复、治理与 Cards 01～09
 
-当前 recovery 分支已经把五组可以独立保存的历史工作落成提交：
+当前 recovery 分支已经把历史恢复、ADR-018 治理和 Cards 01～09 都落成可审查提交：
 
 | Commit | 边界 |
 | --- | --- |
@@ -53,29 +51,30 @@
 | `b79d1f1` | deterministic audio routing eval |
 | `9e68a5b` | Qwen realtime fast/slow control experiment |
 | `e856fed` | 上述 Qwen fast/slow experiment 的 milestone 文档 |
+| `a7446ff` | 项目交接文档与 ADR traceability 修复 |
+| `c600da3` | 用户确认后的 ADR-018 原子治理同步 |
+| `3bff78a` | Card 01：canonical events、conditional envelopes、safe refs |
+| `a6bc7cc` | Card 02：provider-free capability profiles 与 assembly |
+| `4bad655` | Card 03：Qwen realtime protocol 与 transport contracts |
+| `5919de8` | Card 04：protocol-faithful scripted wire |
+| `71f4468` | Card 05：candidate quarantine 与 ephemeral text store |
+| `d3bd201` | Card 06：Session Pump、readiness 与 generation lifecycle |
+| `e0aef2f` | Card 07：Route Evidence、Router、context 与 orchestration |
+| `519f2d7` | Card 08：fail-closed Gate 与 contract-only release |
+| `3f57a58` | Card 09：ADR-018 reducer、digest 与 deterministic replay |
 
-这些提交让实验、eval 和既有 Fast Foreground 基线进入 `HEAD`，但**不包含**待确认的 ADR-018 治理包，也不包含 Cards 01～09 的主体实现。
+因此，clean checkout 到 `3f57a58` 已包含 ADR-018 accepted contract 和 Cards 01～09 的 provider-free partial implementation。它仍不包含 Card 10/11 或正式 Slice 3B.1 closeout。
 
-### 2.2 为什么仍不能把当前 `HEAD` 当 Slice 3B.1 实现真相
+### 2.2 当前刻意排除的本地 WIP
 
-当前 dirty tree 混合了：
+当前未提交内容只剩：
 
-- 待用户确认的 ADR-018 及其对 ADR-001/002/003/009/011/012/013/015/017 的同步修改；
-- Qwen Realtime provider-free 协议、Session Adapter、Candidate Quarantine；
-- Route Evidence / Candidate Safety contracts 与 fake adapters；
-- Slice 3B.1 context、orchestrator、Gate/release contract、state/replay；
-- Cards 01～09 的 acceptance、design、plan、spec 和测试；
-- README、vision assets 和本文等尚未归档的文档工作。
+- `README.md` 的 vision-facing 重写；
+- `docs/assets/vision/` 下 5 个 SVG；
+- `docs/superpowers/specs/2026-06-22-voice-agent-vision-readme-design.md`；
+- `docs/superpowers/plans/2026-07-25-qwen-single-session-adr018-governance.md`。
 
-干净 checkout 到 `e856fed` 会保留 2.1 的五组恢复提交，但仍会缺少上述内容。`git diff` 也看不到 untracked 文件，现场盘点必须同时运行：
-
-此外，`HEAD` 中已提交的 Task Card audit 会引用当前仍 untracked 的 master plan 和 Cards enforcement paths；因此 clean `HEAD` 不能被当作绿色 Slice 3B.1 package。小提交可先跑边界对应的 focused tests，package full-suite 绿色应在 Cards 01～09 完整集成后重新建立。
-
-```bash
-git status --short --branch
-git diff --stat
-git ls-files --others --exclude-standard
-```
+这些文件是有意从治理和 Cards 01～09 提交中排除的独立 WIP。不要把它们误当作 Slice 3B.1 缺失依赖，也不要顺手夹进 Card 10/11。
 
 ### 2.3 接手后的安全起手式
 
@@ -107,19 +106,12 @@ git ls-files --others --exclude-standard
    - [`AGENTS.md`](../AGENTS.md)
    - [ADR Register](../stage_b_adr_register.md)
 
-2. **已确认的 accepted architecture**
+2. **Accepted architecture**
 
    - [`docs/adr/`](adr/)
-   - 当前 `HEAD` 的 Register 登记 ADR-001～ADR-017 为 `accepted`。
+   - 当前 `HEAD` 的 Register 登记 ADR-001～ADR-018 全部为 `accepted`。
 
-3. **待用户确认的候选治理文本**
-
-   - [ADR-018 dirty draft](<adr/ADR-018 Single-session Qwen Realtime Parallel Route Evidence and Slow-to-Fast Context Projection.md>)
-   - [Slice 3B.1 design dirty draft](superpowers/specs/2026-07-26-qwen-slice3b1-protocol-faithful-fake-design.md)
-
-   这两份 dirty 文本及 dirty Register 都写着 `accepted`，但当前精确文本尚未获得本轮用户明确确认。确认并提交之前，它们是待审治理材料，不是高于 ADR-017 的生效授权。
-
-4. **ADR 派生规格**
+3. **ADR 派生规格**
 
    - [Event Registry](specs/event-registry.md)
    - [State Reducers](specs/state-reducers.md)
@@ -127,22 +119,23 @@ git ls-files --others --exclude-standard
    - [Model Adapter Capabilities](specs/model-adapter-capabilities.md)
    - [Adapter Capability Profiles](specs/adapter-capability-profiles.md)
 
-5. **实施计划与 Task Card 执行面**
+4. **已接受的下层设计与 Task Card 执行面**
 
+   - [Slice 3B.1 accepted design](superpowers/specs/2026-07-26-qwen-slice3b1-protocol-faithful-fake-design.md)
    - [Slice 3B.1 historical master plan](superpowers/plans/2026-07-27-qwen-slice3b1-protocol-faithful-fake.md)
    - [Slice 3B.1 Task Card index](governance/codex-task-cards/slice3b1/index.md)
    - [Slice 3B.1 Work Package](governance/codex-task-cards/slice3b1/WP-S3B1-01.md)
 
-   Task Card index / Work Package 已在 `HEAD`，但其 entry criteria 假设 ADR-018 已 accepted。当前应停在治理确认门前，不能仅因卡片已提交就开始扩大 Slice 3B.1 权限。
+   Task Card index 的状态列仍为 `not-started`，这是治理测试锁定的入口状态，不应修改。当前完成度以提交边界、focused/overlap 证据和 package acceptance 为准。
 
-6. **验收与 closeout**
+5. **验收与 closeout**
 
    - `docs/implementation/*closeout.md`
    - `docs/implementation/*acceptance.md`
 
    它们证明某个时间点、某个 slice 的行为与命令结果，不会创建新的架构权限。
 
-7. **Proposal、研究计划和 experiment 文档**
+6. **Proposal、研究计划和 experiment 文档**
 
    - `docs/adr/proposals/`
    - `docs/research/`
@@ -244,12 +237,11 @@ validate runtime_config_ref
   -> ADAPTER_CAPABILITY_SNAPSHOT_RECORDED
 ```
 
-`HEAD` 中的 `src/voice_agent/runtime/assembly.py` 只支持：
+`HEAD` 中的 `src/voice_agent/runtime/assembly.py` 支持：
 
 - `mvp0_mock`；
-- `mvp3`。
-
-Dirty tree 另行增加了 `slice3b1_mock`，它属于尚未提交的 Cards 01～09 前置实现。
+- `mvp3`；
+- `slice3b1_mock`。
 
 它做 profile validation 和 capability snapshot，不实例化一个完整生产 runtime；不要把它当作完整 DI/composition root。
 
@@ -383,9 +375,9 @@ PATCH_ACTIVE_SLOW_TASK
 
 Commitment 输出必须通过 `CommitmentCoverageCheck`，进度输出必须通过 `ProgressTruthfulnessCheck` 后才能播放。当前 Composer/checker 主要是 mock 和结构化 metadata 检查，不代表真实 Composer LLM 已上线。
 
-## 7. 候选 ADR-018：单 Qwen 会话并行拓扑
+## 7. ADR-018 单 Qwen 会话并行拓扑
 
-以下内容准确概括当前 dirty ADR-018 文本，但该精确文本仍待用户明确确认。若获确认，ADR-018 将在 ADR-017 之外增加 `speculative_candidate_parallel_route`：
+ADR-018 已由用户明确确认并在 `c600da3` 提交。它在 ADR-017 之外增加 `speculative_candidate_parallel_route`：
 
 ```text
 one browser Connect
@@ -414,7 +406,7 @@ recorded evidence join
   -> Talker revalidates before first PCM byte
 ```
 
-### 7.1 若治理文本获确认，必须保持的约束
+### 7.1 必须保持的约束
 
 - 一次 browser Connect 定义 session memory 生命周期；新 Connect 从空状态开始。
 - 同一 generation 只有一个 serialized sender 和一个 receive Pump 可以碰 provider socket。
@@ -430,9 +422,9 @@ recorded evidence join
 - 未听见的 suffix 不能进入 delivered history。
 - Slice 3B 仍只有一个 active SlowTask，没有跨 Connect durable memory。
 
-### 7.2 当前 dirty `src/` 中已经存在什么
+### 7.2 当前 `HEAD` 中已经存在什么
 
-本节列出的 Qwen / Slice 3B.1 文件尚未进入 `HEAD`；它们是 Cards 01～09 的在研实现，不是 clean checkout 可用入口。
+本节列出的 Qwen / Slice 3B.1 文件已由 Cards 01～09 提交，clean checkout 到 `3f57a58` 即可检查和运行其聚焦测试。
 
 - `src/voice_agent/adapters/qwen_realtime/protocol.py`：严格 provider event types 与安全投影。
 - `transport.py`：Fake/Real 共用 Protocol；**当前没有 `src/` 内真实 WebSocket transport 实现**。
@@ -449,7 +441,7 @@ recorded evidence join
 - `state/qwen_parallel_state.py`：ADR-018 reducer state。
 - `replay/runner.py`：ADR-018 event chain 和安全校验。
 
-### 7.3 Dirty Slice 3B.1 默认 Gate 为什么总是失败
+### 7.3 Slice 3B.1 默认 Gate 为什么总是失败
 
 `slice3b1_mock` profile 明确：
 
@@ -529,7 +521,7 @@ FOREGROUND_ACT_GATE_FAILED
 - 可选 `caused_by_event_id` / `supersedes_event_id`；
 - domain-specific fields。
 
-当前 dirty registry 有 108 个 canonical event definition，其中候选 ADR-018 新增 9 个。相关 registry 修改尚未进入 `HEAD`，且必须等待 ADR-018 精确文本获得用户确认后才能作为正式 canonical registry 提交。
+当前 `HEAD` 的 registry 有 108 个 canonical event definition，其中 ADR-018 新增 9 个。Registry 代码按 MVP0、MVP1、MVP2、Fast Foreground、ADR-018 分组。
 
 ### 9.2 Journal 实现边界
 
@@ -631,20 +623,23 @@ Fake transport 验证的是边界和错误处理，不证明真实延迟、音�
 | MVP6.2 | 当前代码中有 provider-free Fast Foreground/Gate 实现与测试 | 设计文档 status 已同步；生产 fast voice |
 | MVP6.3 | 当前分支提交中有 audio-native Fast Interaction、waterfall、debug integration | 完整 closeout、真实产品 SLO |
 | Slice 3A.2.1 | dual-session、provider-audio-disabled recovery hotfix 与部分 live evidence | single-session/native PCM；live verdict 仍 NO_GO |
-| Slice 3B.0 | ADR-018 候选治理文本、同步修改和一致性测试存在于 dirty tree | 已获当前精确文本的用户确认；已形成治理提交；runtime/real/native capability |
-| Slice 3B.1 | Dirty tree 中有大量 Cards 01～09 源码与测试，合并聚焦集 `1323 passed` | 已提交/逐卡 verified；已完成 closeout；可运行 runner/CLI；native PCM |
+| Slice 3B.0 | ADR-018 已获 human acceptance，并由 `c600da3` 同步 Register、权威文档和治理测试 | runtime/real/native capability |
+| Slice 3B.1 | Cards 01～09 已按依赖提交，合并聚焦集 `1323 passed` | Cards 10/11；正式 runner/CLI/fixtures/acceptance；native PCM |
 
 ## 12. Slice 3B.1 当前进度与明确缺口
 
-### 12.1 治理授权、卡片状态与代码状态脱节
+### 12.1 Task Card index 是锁定入口，不是进度看板
 
-[Task Card index](governance/codex-task-cards/slice3b1/index.md) 仍把 11 张卡和 Work Package 全标为 `not-started`，并明确“文件存在不等于完成”。与此同时，当前 dirty tree 已有 Cards 01～09 的大量实现与测试。
+[Task Card index](governance/codex-task-cards/slice3b1/index.md) 仍把 11 张卡和 Work Package 全标为 `not-started`。这是治理测试锁定的入口状态，用于保证 Task Card 包的静态结构和 verify-first 语义，**不要为了同步进度修改它**。
 
-更早形成的 ADR-018、Slice 3B.1 design、Work Package 和卡片文本都写着 `accepted` 或假设 ADR-018 已 accepted；但当前精确 ADR-018 文本仍待用户明确确认。文件里的自述不能替代本轮确认，也不能越过 ADR-first gate。
+实际交付状态应从以下证据判断：
 
-因此正确描述是：
+- ADR-018 accepted governance commit：`c600da3`；
+- Cards 01～09 的九个依赖有序提交：`3bff78a` 至 `3f57a58`；
+- Cards 01～09 合并聚焦集合：`1323 passed`；
+- Card 10/11 所需文件和正式 package acceptance 仍不存在。
 
-> ADR-018 正在等待当前精确文本的用户确认；Cards 01～09 存在较完整的在研实现且合并聚焦测试全绿，但仍在 dirty tree，尚未完成按依赖拆分提交、逐卡 verify-first 证据、状态回填和正式 package acceptance。
+因此正确描述是：Cards 01～09 已提交并通过合并聚焦验证，但 Slice 3B.1 仍是 provider-free partial implementation，尚未完成 Card 10/11 和 package closeout。
 
 ### 12.2 本次已验证的底层范围
 
@@ -667,7 +662,7 @@ Cards 01～09 合并聚焦集合的最近结果：
 1323 passed
 ```
 
-该结果证明当前 dirty composite tree 的对应集合没有观察到回归；它不等于每张卡已 `verified`，也不证明 clean `HEAD` 具备 Slice 3B.1。
+该结果证明当前提交序列的 Cards 01～09 聚焦范围没有观察到回归；它不证明 Card 10/11、正式 acceptance、真实 provider、native PCM 或 production readiness。
 
 ### 12.3 Card 10 缺失
 
@@ -712,14 +707,11 @@ CLI 必须是纯 presentation wrapper，不能包含 provider URL、API key、li
 
 ### 12.5 推荐推进顺序
 
-1. 请用户明确确认或拒绝 ADR-018 当前精确文本；未确认时停在治理门前。
-2. 若确认，原子提交 ADR-018、Register、受影响 ADR/spec、经确认的派生 design 和治理一致性测试；不要夹带 traceability matrix、README 或实现代码。
-3. 单独保存 Slice 3B.1 historical master plan 的 provenance，再按 Task Card DAG 对 Cards 01～09 运行 verify-first、focused 和 overlap commands，并拆分为可审查提交。
-4. 记录每张卡的真实结果；只有依赖、write set 和证据都满足时才把对应 card 标为 `verified`。
-5. 在 01～09 形成可复现基线后，按 Card 10 allowed write set 实现 ingress、result、scenarios 和 runner。
-6. 按 Card 11 实现 presentation CLI、两份最小 fixture 和 acceptance。
-7. 运行 package-level safety scan、完整统一测试和独立 review。
-8. 完成前不要开始 3B.2、Page C、真实 Qwen transport 或 native PCM。
+1. 以 `3f57a58` 和 `1323 passed` 作为 Cards 01～09 的恢复基线；不要修改 Task Card index 的 `not-started` 状态。
+2. 按 Card 10 的 verify-first 和 allowed write set，实现 Controller-owned ingress、stable result、deterministic scenarios 和 runner。
+3. 按 Card 11 实现 presentation-only CLI、两份最小 fixture 和正式 acceptance 文档。
+4. 运行 package-level safety scan、完整统一测试和独立 review，形成 Slice 3B.1 closeout evidence。
+5. 完成前不要开始 3B.2、Page C、真实 Qwen transport 或 native PCM。
 
 ## 13. 开发环境与依赖
 
@@ -783,7 +775,7 @@ VOICE_AGENT_PYTHON=/path/to/python ./scripts/test -q
 
 ### 14.2 当前证据
 
-本次在当前 dirty tree 执行：
+本次在 Cards 01～09 已提交的当前分支执行：
 
 ```bash
 VOICE_AGENT_PYTHON=/Users/a123/anaconda3/bin/python ./scripts/test -q
@@ -792,13 +784,13 @@ VOICE_AGENT_PYTHON=/Users/a123/anaconda3/bin/python ./scripts/test -q
 结果：
 
 ```text
-3428 passed in 58.16s
+3428 passed in 60.62s
 ```
 
 这个结果：
 
-- 证明当前 composite tree 在本机当前环境下没有观察到测试回归；
-- 不证明 `HEAD` 或远端可复现；
+- 证明当前 `HEAD` 所含 Cards 01～09 与既有回归在本机当前环境下没有观察到测试失败；
+- 配合九个提交和 `1323 passed` 聚焦证据，可复现 Cards 01～09 的 provider-free partial implementation；
 - 不证明真实 provider、真实音质、真实延迟或 production readiness。
 
 ## 15. 可运行入口
@@ -874,12 +866,14 @@ Fake enforced 示例：
 
 ### 15.6 当前还没有 Slice 3B.1 主运行入口
 
-Cards 01～09 目前主要通过各 Task Card 的 focused / overlap tests 进入；`scripts/qwen-slice3b1`、`runtime/slice3b1/runner.py` 和稳定的 `Slice3B1RunV1` 尚不存在。接手时应从以下入口恢复上下文：
+Cards 01～09 已在 `HEAD`，目前主要通过各 Task Card 的 focused / overlap tests 进入；`scripts/qwen-slice3b1`、`runtime/slice3b1/runner.py` 和稳定的 `Slice3B1RunV1` 尚不存在。接手时应从以下入口恢复上下文：
 
-- `docs/governance/codex-task-cards/slice3b1/index.md`：依赖 DAG 与状态；
+- `docs/governance/codex-task-cards/slice3b1/index.md`：依赖 DAG 与锁定的入口状态；
 - `docs/governance/codex-task-cards/slice3b1/WP-S3B1-01.md`：package gate；
-- `docs/superpowers/plans/2026-07-27-qwen-slice3b1-protocol-faithful-fake.md`：untracked historical provenance；
-- `tests/qwen_slice3b1_support.py` 与对应 `tests/adapters|events|interaction|router|runtime|replay|state` 文件：当前 dirty test surface。
+- `docs/superpowers/specs/2026-07-26-qwen-slice3b1-protocol-faithful-fake-design.md`：accepted design；
+- `docs/superpowers/plans/2026-07-27-qwen-slice3b1-protocol-faithful-fake.md`：已提交的 historical provenance；
+- `tests/qwen_slice3b1_support.py` 与对应 `tests/adapters|events|interaction|router|runtime|replay|state` 文件：Cards 01～09 已提交 test surface；
+- `c600da3..3f57a58`：从 accepted governance 到 Card 09 replay 的提交序列。
 
 不要为了得到一个可演示命令而提前造临时 runner；正式主入口属于 Card 10/11。
 
@@ -1008,36 +1002,33 @@ accepted ADR-002 update
 
 1. `docs/architecture-book.md` 是 frozen v0.4，只汇编 ADR-001～016 / MVP-0～3；ADR-017/018 必须另读。
 2. `docs/project-overview.md` 与 `docs/planning/execution-roadmap.md` 仍停在较早阶段。
-3. `docs/adr-traceability-matrix.md` 的 dirty 修改仍未完整覆盖 ADR-017/018，且“当前实现观察”仍是早期状态；不要把它夹进 ADR-018 治理提交。
+3. `docs/adr-traceability-matrix.md` 已在 `a7446ff` / `c600da3` 对齐 ADR-017/018 和 Cards 01～09 partial implementation；Card 10/11 完成后仍需继续同步。
 4. `docs/specs/state-reducers.md` 和 `docs/specs/replay-spec.md` 没有完整同步 ADR-017/018，尽管 Python reducer/replay 已有大量实现。
 5. `docs/implementation/mvp6.2-fast-foreground-design.md` 和 `mvp6.3-live-fast-interaction-design.md` header 仍写 `Design document only`，但当前分支 history/代码已有实现。
-6. Slice 3B.1 Task Card index 全是 `not-started`，但 dirty tree 已有 Cards 01～09 的大量实现和绿色合并聚焦测试。
-7. Dirty ADR-018、Slice 3B.1 design 和 Work Package 自述 `accepted`，但当前精确文本仍待用户明确确认；自述状态不能替代治理授权。
-8. 旧 Qwen proposal 与 Slice 1/2/3A experiment 文档是历史拓扑；它们不能覆盖 ADR-017，也不能替代对 ADR-018 当前文本的确认。
+6. Slice 3B.1 Task Card index 全是 `not-started`，这是治理测试锁定的入口状态；Cards 01～09 的真实进度应从提交和 `1323 passed` 判断，不要修改 index。
+7. `docs/superpowers/plans/2026-07-25-qwen-single-session-adr018-governance.md` 是刻意排除的 old governance WIP；accepted 权威来自 ADR-018、Register 和 `c600da3`。
+8. 旧 Qwen proposal 与 Slice 1/2/3A experiment 文档是历史拓扑，不能覆盖 accepted ADR-018。
 
-接手后应把“文档状态同步”作为一个独立治理任务，但不要在未验证 Cards 01～11 前通过改文字提前宣布完成。
+接手后应把“文档状态同步”作为一个独立治理任务，但不要在 Card 10/11 与正式 acceptance 完成前通过改文字提前宣布 Slice 3B.1 closeout。
 
 ## 20. 风险与技术债优先级
 
-### P0：先保护和形成可复现研发基线
+### P0：完成 Slice 3B.1 provider-free 验收闭环
 
-- Recovery 分支及五个恢复提交已建立，但当前分支没有 upstream；
-- ADR-018 当前精确文本尚未获得用户明确确认，不能提交为 accepted 或授权 Cards；
-- Cards 01～09、相关治理同步和 31 modified / 63 untracked 文件仍未完整提交；
-- 远端与 clean `HEAD` 仍无法复现 Slice 3B.1 的 `1323 passed` 或完整 dirty-tree 结果；
-- 提交前仍需按治理、Card DAG、文档/vision 等边界确认所有权和原子分组。
-
-### P1：完成 Slice 3B.1 验收闭环
-
-- ADR-018 获确认后先提交原子治理包；
-- 按依赖拆分提交并逐卡验证 01～09；
-- Card 10 runner/ingress/result；
-- Card 11 CLI/fixtures/acceptance；
+- Card 10 Controller ingress、runner、scenarios 和 safe result；
+- Card 11 presentation CLI、minimal fixtures 和 acceptance evidence；
 - package safety audit 与 full regression。
+- 保持默认 Gate fail-closed，不产生 native-success claim。
+
+### P1：分支交付与 WIP 隔离
+
+- 当前 recovery 分支没有 upstream，push 前先确认目标远端；
+- `README.md`、vision assets、2026-06-22 vision design 和 2026-07-25 old governance plan 继续独立处理；
+- 不把这些 WIP 夹进 Card 10/11 或 package closeout。
 
 ### P1：规格同步
 
-- traceability 补 ADR-017；
+- Card 10/11 后继续同步 traceability；
 - reducer/replay spec 补 ADR-017/018；
 - MVP6.2/6.3 状态与真实 evidence 对齐；
 - 将 historical proposal/experiment 标识得更清楚。
@@ -1070,32 +1061,25 @@ accepted ADR-002 update
 
 ## 21. 推荐的第一周接手计划
 
-### 第 0 天：确认 recovery 现场
+### 第 0 天：确认已提交基线
 
 - 只读 inventory；
-- 确认当前是 `codex/adr-018-slice3b1-recovery` / `e856fed`，且尚无 upstream；
-- 阅读并核对五个 recovery commit 的边界；
-- 与原开发者确认剩余 dirty 文件分组与所有权；
-- 在允许 loopback 的环境重跑完整测试；
+- 确认当前是 `codex/adr-018-slice3b1-recovery` / `3f57a58`，且尚无 upstream；
+- 阅读 `c600da3` 与 Cards 01～09 九个提交的边界；
+- 确认本地只剩四组刻意排除的 README/vision/old-plan WIP；
+- 复核 `1323 passed` 聚焦证据和 `3428 passed` 完整回归；
 - 不 rebase、不清理、不直接 set-upstream/push。
 
-### 第 1 天：关闭 ADR-018 治理门
+### 第 1 天：走通 Cards 01～09
 
 - 阅读 `README.md`、`AGENTS.md`、Register；
-- 读 ADR-001/002/003/006/016/017 和 dirty ADR-018；
-- 请用户明确确认或拒绝 ADR-018 当前精确文本；
-- 若确认，原子提交治理包并跑治理一致性测试；若未确认，不进入 Cards 01～11；
+- 读 ADR-001/002/003/006/016/017/018 和 Slice 3B.1 accepted design；
+- 按九个提交追踪 event -> protocol -> session -> route -> Gate -> replay；
+- 不修改 Task Card index 的锁定 `not-started` 状态；
 - 跑 MVP4 provider-free smoke，并选择一个 replay fixture 从 event 跟踪到 reducer/digest；
 - 跑已提交的 routing audit，理解 oracle/non-model 边界。
 
-### 第 2～3 天：Slice 3B.1 resume audit
-
-- 在 ADR-018 治理提交后，按 Work Package 依赖顺序拆分提交并验证 Cards 01～09；
-- 不以文件存在代替证据；
-- 记录每张卡的 focused/overlap command、结果和 changed paths；
-- 核对已确认 ADR 与 spec/code 是否一致。
-
-### 第 3～4 天：Card 10
+### 第 2～3 天：Card 10
 
 - 严格遵守 allowed write set；
 - 实现 Controller-owned ingress；
@@ -1103,14 +1087,14 @@ accepted ADR-002 update
 - 定义唯一 `Slice3B1RunV1.to_safe_dict()`；
 - 验证 exactly-once、determinism、replay 和 no-release。
 
-### 第 5 天：Card 11 与 package closeout
+### 第 4～5 天：Card 11 与 package closeout
 
 - presentation-only CLI；
 - 两份 minimal canonical fixtures；
 - fixture safety；
 - acceptance evidence；
 - full suite / security scan / independent review；
-- 只在证据充分后更新 card status。
+- 在 acceptance/commit 中记录证据，不修改 Task Card index 的锁定状态。
 
 ### 暂不做
 
@@ -1184,11 +1168,11 @@ accepted ADR-002 update
 7. ADR-005、014
 8. ADR-011、010、015、012
 9. [ADR-017](<adr/ADR-017 Fast Interaction Adapter and Foreground Act Contract.md>)
-10. [ADR-018 dirty draft（待读后由用户确认当前精确文本）](<adr/ADR-018 Single-session Qwen Realtime Parallel Route Evidence and Slow-to-Fast Context Projection.md>)
+10. [ADR-018](<adr/ADR-018 Single-session Qwen Realtime Parallel Route Evidence and Slow-to-Fast Context Projection.md>)
 
 ### 当前主线
 
-1. [Slice 3B.1 dirty design（随 ADR-018 一并等待确认）](superpowers/specs/2026-07-26-qwen-slice3b1-protocol-faithful-fake-design.md)
+1. [Slice 3B.1 accepted design](superpowers/specs/2026-07-26-qwen-slice3b1-protocol-faithful-fake-design.md)
 2. [Task Card index](governance/codex-task-cards/slice3b1/index.md)
 3. [Work Package](governance/codex-task-cards/slice3b1/WP-S3B1-01.md)
 4. [Card 10](governance/codex-task-cards/slice3b1/TC-S3B1-10-scenario-runner.md)
@@ -1201,16 +1185,15 @@ accepted ADR-002 update
 - `docs/implementation/mvp4-closeout.md`；
 - `docs/implementation/mvp5-closeout.md`；
 - `docs/implementation/mvp6-local-debug-console.md`；
-- `docs/implementation/qwen-realtime-fast-slow-slice3a21-acceptance.md`。
-
-`docs/implementation/qwen-single-session-slice3b0-governance-acceptance.md` 当前是 untracked dirty 文档；文件名里的 `acceptance` 不构成 ADR-018 已获本轮确认的证据。
+- `docs/implementation/qwen-realtime-fast-slow-slice3a21-acceptance.md`；
+- `docs/implementation/qwen-single-session-slice3b0-governance-acceptance.md`。
 
 ## 25. 最终交接检查表
 
 接手人开始编码前，应能回答：
 
 - [ ] 当前分支和 dirty 文件是否已安全保全？
-- [ ] 如果工作依赖 ADR-018，用户是否已明确确认当前精确文本，并且治理包是否已经原子提交？
+- [ ] 当前是否基于 `3f57a58` 或之后的可复现提交，而不是混入 README/vision WIP？
 - [ ] 我修改的能力由哪份 accepted ADR 授权？
 - [ ] 哪个模块拥有最终权威？
 - [ ] 是否需要新增 canonical event；如果需要，ADR-002 是否先更新？
@@ -1220,6 +1203,7 @@ accepted ADR-002 update
 - [ ] candidate 是否在 Gate 前保持不可见/不可听？
 - [ ] artifact 是否 synthetic/redacted/minimal？
 - [ ] focused、overlap、full tests 是否都从 `./scripts/test` 运行？
+- [ ] 是否保持 Task Card index 的锁定 `not-started` 状态不变？
 - [ ] 我声明的 mode 是 real、mock、fallback 还是 degraded？
 - [ ] 我是否把 provider-free evidence 误写成 real/live/production claim？
 
