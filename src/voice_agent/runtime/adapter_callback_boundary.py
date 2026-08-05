@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from threading import Lock
 from typing import Any
 
@@ -23,6 +24,8 @@ ADAPTER_CALLBACK_EVENT_NAMES = frozenset(
         "TTS_SYNTHESIS_OUTPUT_EMITTED",
         "FAST_INTERACTION_OUTPUT_EMITTED",
         "FOREGROUND_REPLY_CANDIDATE_EMITTED",
+        "ROUTE_EVIDENCE_OUTPUT_EMITTED",
+        "CANDIDATE_SAFETY_EVIDENCE_OUTPUT_EMITTED",
     }
 )
 
@@ -42,6 +45,33 @@ class AdapterCallbackAppendBoundary:
                         f"Duplicate event_id in session journal: {event_id}"
                     )
                 seen.add(event_id)
+
+    def require_recorded_event(
+        self,
+        event: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(event, Mapping):
+            raise AdapterCallbackBoundaryError(
+                "recorded predecessor must be a mapping"
+            )
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            raise AdapterCallbackBoundaryError(
+                "recorded predecessor requires event_id"
+            )
+        expected = dict(event)
+        with self._lock:
+            for recorded in self._journal.events():
+                if recorded.get("event_id") != event_id:
+                    continue
+                if recorded != expected:
+                    raise AdapterCallbackBoundaryError(
+                        "recorded predecessor fields do not match session journal"
+                    )
+                return recorded
+        raise AdapterCallbackBoundaryError(
+            "recorded predecessor is missing from session journal"
+        )
 
     def append_adapter_event(self, **event_fields: Any) -> dict[str, Any]:
         event_name = event_fields.get("event_name")

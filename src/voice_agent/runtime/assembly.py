@@ -8,8 +8,10 @@ from voice_agent.adapters.capabilities import AdapterCapability
 from voice_agent.adapters.profiles import (
     AdapterProfileValidationError,
     build_capability_snapshot,
+    capability_matrix_digest,
     validate_adapter_profile_set,
     validate_mvp3_adapter_profile_set,
+    validate_slice3b1_adapter_profile_set,
 )
 
 
@@ -41,6 +43,14 @@ def assemble_runtime_adapters(
             matrices = validate_mvp3_adapter_profile_set(capability_tuple)
         elif config.stage == "mvp0_mock":
             matrices = validate_adapter_profile_set(capability_tuple)
+        elif config.stage == "slice3b1_mock":
+            matrices = validate_slice3b1_adapter_profile_set(capability_tuple)
+            capabilities_by_id = {
+                capability.adapter_id: capability for capability in capability_tuple
+            }
+            capability_tuple = tuple(
+                capabilities_by_id[str(matrix["adapter_id"])] for matrix in matrices
+            )
         else:
             raise RuntimeAdapterAssemblyError(f"Unsupported runtime adapter assembly stage: {config.stage!r}")
         snapshot = build_capability_snapshot(
@@ -48,6 +58,8 @@ def assemble_runtime_adapters(
             capability_snapshot_ref=config.capability_snapshot_ref,
             capability_version=config.capability_version,
         )
+        if config.stage == "slice3b1_mock":
+            snapshot["capability_matrix_digest"] = capability_matrix_digest(matrices)
     except AdapterProfileValidationError as exc:
         raise RuntimeAdapterAssemblyError(str(exc)) from exc
 

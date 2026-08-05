@@ -69,6 +69,11 @@ def build_asr_capability_profile(
     supports_streaming_output: bool = False,
     supports_audio_timestamps: bool = False,
     supports_cancellation: bool = False,
+    supports_candidate_output_audio_shadow_verification: bool = False,
+    documentation_support: bool = False,
+    provider_free_test_support: bool = False,
+    real_live_support: bool = False,
+    status: str | None = None,
     health_status: str | None = None,
     capability_version: str | None = None,
     latency_class: str | None = None,
@@ -86,9 +91,16 @@ def build_asr_capability_profile(
     unsupported_capabilities: tuple[str, ...] | None = None,
 ) -> AdapterCapability:
     defaults = AsrProfileDefaults()
-    if output_mode not in ASR_PROFILE_OUTPUT_MODES:
+    provider_free_mock = (
+        output_mode == "mock"
+        and provider_free_test_support is True
+        and mocked is True
+        and real_live_support is False
+    )
+    if output_mode not in ASR_PROFILE_OUTPUT_MODES and not provider_free_mock:
         raise AsrProfileValidationError(
-            f"ASR profile output_mode must be one of {sorted(ASR_PROFILE_OUTPUT_MODES)}"
+            "ASR profile output_mode must be real, fallback, degraded, or an "
+            "explicit provider-free mock"
         )
     if output_mode == "real":
         _reject_mock_only_real_readiness(
@@ -112,6 +124,7 @@ def build_asr_capability_profile(
         "error_model": error_model or defaults.error_model,
         "timeout_policy": timeout_policy or defaults.timeout_policy,
         "retry_policy": retry_policy or defaults.retry_policy,
+        "status": status or output_mode,
         "output_mode": output_mode,
         "config_ref": config_ref,
         "role_contract": "",
@@ -144,6 +157,12 @@ def build_asr_capability_profile(
         "supports_asr_text_fallback": False,
         "supports_provider_stream_timing": False,
         "supports_ttft_observation": False,
+        "supports_candidate_output_audio_shadow_verification": (
+            supports_candidate_output_audio_shadow_verification
+        ),
+        "documentation_support": documentation_support,
+        "provider_free_test_support": provider_free_test_support,
+        "real_live_support": real_live_support,
         "max_audio_seconds": max_audio_seconds,
         "max_context_tokens": max_context_tokens,
         "max_output_tokens": max_output_tokens,
