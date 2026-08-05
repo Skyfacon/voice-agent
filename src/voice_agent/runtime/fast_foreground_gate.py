@@ -312,6 +312,10 @@ def run_fast_foreground_gate(
     _require_canonical_journal_event(journal, fast_interaction_output_event)
     _require_canonical_journal_event(journal, router_decision_event)
     event_id_prefix = _require_safe_token(event_id_prefix, "event_id_prefix")
+    _require_legacy_gate_topology(
+        candidate_event=candidate_event,
+        fast_interaction_output_event=fast_interaction_output_event,
+    )
     _validate_candidate_provenance(
         candidate_event=candidate_event,
         fast_interaction_output_event=fast_interaction_output_event,
@@ -904,6 +908,30 @@ def _validate_candidate_provenance(
         str(event_id) for event_id in source_event_ids
     }:
         raise FastForegroundGateError("candidate source_event_ids must include Fast Interaction output")
+
+
+def _require_legacy_gate_topology(
+    *,
+    candidate_event: Mapping[str, Any],
+    fast_interaction_output_event: Mapping[str, Any],
+) -> None:
+    atomic_topology = "atomic_single_call"
+    candidate_topology = candidate_event.get(
+        "fast_interaction_topology", atomic_topology
+    )
+    output_topology = fast_interaction_output_event.get(
+        "fast_interaction_topology", atomic_topology
+    )
+    if candidate_topology != output_topology:
+        raise FastForegroundGateError(
+            "candidate fast_interaction_topology must match Fast Interaction output"
+        )
+    if output_topology == "speculative_candidate_parallel_route":
+        raise FastForegroundGateError(
+            "parallel Fast Interaction topology requires run_parallel_fast_foreground_gate"
+        )
+    if output_topology != atomic_topology:
+        raise FastForegroundGateError("Fast Interaction topology is invalid")
 
 
 def _elapsed_ms(started: float) -> int:
