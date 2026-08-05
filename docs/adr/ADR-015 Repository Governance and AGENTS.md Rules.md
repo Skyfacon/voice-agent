@@ -186,3 +186,17 @@ Reject or flag any change that:
 - local trace / raw audio / replay cache 是否需要支持配置化 override，默认目录已由 AGENTS.md / `.gitignore` 固定。
 - ADR register 是否只记录 accepted ADR，还是也记录 rejected / superseded？
 - AGENTS.md 是否需要中文为主，还是中英双语？
+
+## ADR-018 Repository Review Addendum
+
+Reject or flag any change that:
+
+- lets Route Evidence act as Router authority;
+- treats provider context as authoritative memory;
+- emits audible PCM before Gate;
+- adds per-turn independent PCM back-transcription on the low-latency path;
+- releases native PCM without a promoted profile and exact online
+  correlation/digests;
+- injects stale, raw, or untrusted SlowTask material into Qwen;
+- retains an undelivered assistant suffix as delivered history; or
+- introduces cross-session durable memory in Slice 3B.

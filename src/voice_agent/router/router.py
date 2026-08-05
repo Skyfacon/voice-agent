@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from voice_agent.adapters.qwen_realtime.profile import (
+    build_qwen_realtime_asr_fake_profile,
+)
 from voice_agent.events.journal import InMemoryEventJournal
 
 
@@ -43,6 +47,49 @@ MVP1_ACTIVE_TASK_REQUIRED_FOCUS_VALUES = frozenset(
     }
 )
 TERMINAL_SLOWTASK_PHASES = frozenset({"COMPLETED", "CANCELLED", "FAILED"})
+ROUTE_EVIDENCE_OUTPUT_MODES = frozenset({"real", "mock", "fallback", "degraded"})
+ROUTE_EVIDENCE_SCHEMA_NAME = "voice_agent.route_evidence.output.v1"
+PROVIDER_FREE_QWEN_ASR_ADAPTER_ID = (
+    build_qwen_realtime_asr_fake_profile().adapter_id
+)
+ROUTE_EVIDENCE_ALLOWED_FIELDS = frozenset(
+    {
+        "event_name",
+        "event_id",
+        "event_seq",
+        "event_schema_version",
+        "session_id",
+        "conversation_id",
+        "source_module",
+        "created_monotonic_ms",
+        "created_wall_clock_ms",
+        "caused_by_event_id",
+        "supersedes_event_id",
+        "trace_redaction_level",
+        "redaction_metadata",
+        "adapter_id",
+        "adapter_type",
+        "adapter_request_id",
+        "adapter_callback_seq",
+        "turn_id",
+        "utterance_id",
+        "final_asr_event_id",
+        "context_projection_event_id",
+        "context_snapshot_id",
+        "provider_session_generation",
+        "route_hint",
+        "task_focus_hint",
+        "foreground_act_hint",
+        "ack_kind",
+        "risk_class",
+        "risk_tags",
+        "evidence_uncertainty",
+        "confidence",
+        "schema_name",
+        "normalization_status",
+        "output_mode",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -181,8 +228,10 @@ class MVP1Router:
         self,
         *,
         turn_committed_event: Mapping[str, Any],
-        asr_frame_event: Mapping[str, Any],
-        thinker_frame_event: Mapping[str, Any],
+        asr_frame_event: Mapping[str, Any] | None = None,
+        thinker_frame_event: Mapping[str, Any] | None = None,
+        fast_interaction_output_event: Mapping[str, Any] | None = None,
+        route_evidence_output_event: Mapping[str, Any] | None = None,
         router_context: RouterContext,
         event_id: str,
         task_focus_state_event_id: str,
@@ -190,29 +239,111 @@ class MVP1Router:
         created_wall_clock_ms: int,
     ) -> MVP1RouterDecisionResult:
         _validate_turn_committed_event(turn_committed_event)
-        _validate_mock_frame(
-            asr_frame_event,
-            expected_event_names=("MOCK_ASR_FRAME_EMITTED", "ASR_TRANSCRIPT_OUTPUT_EMITTED"),
-            turn_committed_event=turn_committed_event,
-        )
-        _validate_mock_frame(
-            thinker_frame_event,
-            expected_event_names=("MOCK_THINKER_FRAME_EMITTED", "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED"),
-            turn_committed_event=turn_committed_event,
-        )
+        if route_evidence_output_event is not None and (
+            thinker_frame_event is not None
+            or fast_interaction_output_event is not None
+        ):
+            raise ValueError(
+                "Route Evidence is mutually exclusive with Thinker and "
+                "Fast Interaction route evidence"
+            )
+        if route_evidence_output_event is not None:
+            if asr_frame_event is None:
+                raise ValueError("Route Evidence requires matching canonical final ASR evidence")
+            _validate_route_evidence_output(
+                route_evidence_output_event,
+                turn_committed_event=turn_committed_event,
+                asr_frame_event=asr_frame_event,
+            )
+            if (
+                asr_frame_event.get("output_mode") == "mock"
+                and route_evidence_output_event.get("output_mode") != "mock"
+            ):
+                raise ValueError(
+                    "Provider-free Qwen ASR output_mode=mock requires "
+                    "Route Evidence output_mode=mock"
+                )
+        if asr_frame_event is not None:
+            _validate_mock_frame(
+                asr_frame_event,
+                expected_event_names=(
+                    ("ASR_TRANSCRIPT_OUTPUT_EMITTED",)
+                    if route_evidence_output_event is not None
+                    else ("MOCK_ASR_FRAME_EMITTED", "ASR_TRANSCRIPT_OUTPUT_EMITTED")
+                ),
+                turn_committed_event=turn_committed_event,
+                allow_provider_free_qwen_mock=(
+                    route_evidence_output_event is not None
+                    and route_evidence_output_event.get("output_mode") == "mock"
+                ),
+            )
+        if route_evidence_output_event is not None:
+            assert asr_frame_event is not None
+            _validate_exact_journaled_event(
+                self._journal,
+                asr_frame_event,
+                event_label="final ASR",
+            )
+            _validate_exact_journaled_event(
+                self._journal,
+                route_evidence_output_event,
+                event_label="Route Evidence",
+            )
+            _validate_route_evidence_journal_chain(
+                self._journal,
+                asr_frame_event=asr_frame_event,
+                route_evidence_output_event=route_evidence_output_event,
+            )
+        if thinker_frame_event is not None:
+            _validate_mock_frame(
+                thinker_frame_event,
+                expected_event_names=(
+                    "MOCK_THINKER_FRAME_EMITTED",
+                    "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
+                ),
+                turn_committed_event=turn_committed_event,
+            )
+        if fast_interaction_output_event is not None:
+            _validate_fast_interaction_output(
+                fast_interaction_output_event,
+                turn_committed_event=turn_committed_event,
+                asr_frame_event=asr_frame_event,
+            )
+        if (
+            thinker_frame_event is None
+            and fast_interaction_output_event is None
+            and route_evidence_output_event is None
+        ):
+            raise ValueError(
+                "MVP1Router requires Thinker, Fast Interaction, or Route Evidence"
+            )
+        if thinker_frame_event is not None and asr_frame_event is None:
+            raise ValueError("MVP1Router requires ASR evidence with Thinker route evidence")
 
-        task_focus = _infer_mvp1_task_focus(
-            turn_committed_event=turn_committed_event,
+        route_evidence_events = _route_evidence_events(
             asr_frame_event=asr_frame_event,
             thinker_frame_event=thinker_frame_event,
+            fast_interaction_output_event=fast_interaction_output_event,
+            route_evidence_output_event=route_evidence_output_event,
+        )
+        task_focus = _infer_mvp1_task_focus(
+            turn_committed_event=turn_committed_event,
+            route_evidence_events=route_evidence_events,
             router_context=router_context,
         )
         router_decision = _router_decision_for_focus(
             task_focus=task_focus,
             router_context=router_context,
         )
-        confidence = _focus_confidence(asr_frame_event, thinker_frame_event)
-        evidence_uncertainty = _evidence_uncertainty(asr_frame_event, thinker_frame_event)
+        if (
+            route_evidence_output_event is not None
+            and route_evidence_output_event.get("route_hint") != router_decision
+        ):
+            raise ValueError(
+                "Route Evidence route_hint must match the local Router decision"
+            )
+        confidence = _focus_confidence(*route_evidence_events)
+        evidence_uncertainty = _evidence_uncertainty(*route_evidence_events)
         active_task_id = _active_task_id(router_context.task_focus_snapshot)
 
         router_fields: dict[str, Any] = {
@@ -223,10 +354,28 @@ class MVP1Router:
             "confidence": confidence,
             "evidence_uncertainty": evidence_uncertainty,
             "turn_committed_event_id": str(turn_committed_event["event_id"]),
-            "asr_frame_event_id": str(asr_frame_event["event_id"]),
-            "thinker_frame_event_id": str(thinker_frame_event["event_id"]),
-            "evidence_ref_policy": "preserve_both_refs",
+            "evidence_ref_policy": _evidence_ref_policy(
+                asr_frame_event=asr_frame_event,
+                thinker_frame_event=thinker_frame_event,
+                fast_interaction_output_event=fast_interaction_output_event,
+                route_evidence_output_event=route_evidence_output_event,
+            ),
         }
+        if asr_frame_event is not None:
+            router_fields["asr_frame_event_id"] = str(asr_frame_event["event_id"])
+        if thinker_frame_event is not None:
+            router_fields["thinker_frame_event_id"] = str(thinker_frame_event["event_id"])
+        if fast_interaction_output_event is not None:
+            router_fields["fast_interaction_output_event_id"] = str(
+                fast_interaction_output_event["event_id"]
+            )
+            route_decision_hint = fast_interaction_output_event.get("route_decision_hint")
+            if route_decision_hint not in (None, ""):
+                router_fields["route_decision_hint"] = str(route_decision_hint)
+        if route_evidence_output_event is not None:
+            router_fields["route_evidence_event_id"] = str(
+                route_evidence_output_event["event_id"]
+            )
         if active_task_id is not None:
             router_fields["active_task_id"] = active_task_id
 
@@ -234,7 +383,11 @@ class MVP1Router:
             event_name="ROUTER_DECISION_EMITTED",
             event_id=event_id,
             source_module="router",
-            caused_by_event_id=str(thinker_frame_event["event_id"]),
+            caused_by_event_id=_route_decision_caused_by_event_id(
+                thinker_frame_event=thinker_frame_event,
+                fast_interaction_output_event=fast_interaction_output_event,
+                route_evidence_output_event=route_evidence_output_event,
+            ),
             created_monotonic_ms=created_monotonic_ms,
             created_wall_clock_ms=created_wall_clock_ms,
             trace_redaction_level="metadata_only",
@@ -274,18 +427,138 @@ def _validate_turn_committed_event(event: Mapping[str, Any]) -> None:
         raise ValueError("MVP0Router requires a TURN_INGRESS_COMMITTED event")
 
 
+def _validate_exact_journaled_event(
+    journal: InMemoryEventJournal,
+    event: Mapping[str, Any],
+    *,
+    event_label: str,
+) -> None:
+    event_id = event.get("event_id")
+    journaled_event = next(
+        (
+            candidate
+            for candidate in journal.events()
+            if candidate.get("event_id") == event_id
+        ),
+        None,
+    )
+    if journaled_event is None or journaled_event != dict(event):
+        raise ValueError(
+            f"{event_label} mapping must exactly match an event in the Router journal"
+        )
+
+
+def _validate_route_evidence_journal_chain(
+    journal: InMemoryEventJournal,
+    *,
+    asr_frame_event: Mapping[str, Any],
+    route_evidence_output_event: Mapping[str, Any],
+) -> None:
+    if int(asr_frame_event["event_seq"]) >= int(
+        route_evidence_output_event["event_seq"]
+    ):
+        raise ValueError("final ASR must precede Route Evidence in the Router journal")
+
+    context_projection_event_id = route_evidence_output_event.get(
+        "context_projection_event_id"
+    )
+    context_projection_event = next(
+        (
+            candidate
+            for candidate in journal.events()
+            if candidate.get("event_id") == context_projection_event_id
+        ),
+        None,
+    )
+    if (
+        context_projection_event is None
+        or context_projection_event.get("event_name")
+        != "MODEL_CONTEXT_PROJECTION_EMITTED"
+        or context_projection_event.get("target_role") != "route_evidence"
+    ):
+        raise ValueError(
+            "Route Evidence context_projection_event_id must name a journaled "
+            "MODEL_CONTEXT_PROJECTION_EMITTED for route_evidence"
+        )
+    if (
+        route_evidence_output_event.get("context_snapshot_id") is not None
+        and route_evidence_output_event.get("context_snapshot_id")
+        != context_projection_event.get("context_snapshot_id")
+    ):
+        raise ValueError(
+            "Route Evidence context_snapshot_id must match its context projection"
+        )
+    if (
+        route_evidence_output_event.get("provider_session_generation") is not None
+        and route_evidence_output_event.get("provider_session_generation")
+        != context_projection_event.get("provider_session_generation")
+    ):
+        raise ValueError(
+            "Route Evidence provider_session_generation must match its "
+            "context projection"
+        )
+    if (
+        asr_frame_event.get("provider_session_generation") is not None
+        and route_evidence_output_event.get("provider_session_generation")
+        != asr_frame_event.get("provider_session_generation")
+    ):
+        raise ValueError(
+            "Route Evidence provider_session_generation must match final ASR"
+        )
+    if asr_frame_event.get("event_id") not in tuple(
+        context_projection_event.get("source_event_ids", ())
+    ):
+        raise ValueError(
+            "Route Evidence context projection source_event_ids must include "
+            "the final ASR event"
+        )
+    projection_source_event_seq = context_projection_event.get("source_event_seq")
+    if (
+        isinstance(projection_source_event_seq, bool)
+        or not isinstance(projection_source_event_seq, int)
+        or projection_source_event_seq < int(asr_frame_event["event_seq"])
+        or projection_source_event_seq
+        >= int(context_projection_event["event_seq"])
+    ):
+        raise ValueError(
+            "Route Evidence context projection source_event_seq must include "
+            "the final ASR journal state"
+        )
+    if not (
+        int(asr_frame_event["event_seq"])
+        < int(context_projection_event["event_seq"])
+        < int(route_evidence_output_event["event_seq"])
+    ):
+        raise ValueError(
+            "final ASR must precede the context projection and Route Evidence "
+            "in the Router journal"
+        )
+    if (
+        route_evidence_output_event.get("caused_by_event_id")
+        != context_projection_event.get("event_id")
+    ):
+        raise ValueError(
+            "Route Evidence caused_by_event_id must name its context projection"
+        )
+
+
 def _validate_mock_frame(
     event: Mapping[str, Any],
     *,
     expected_event_name: str | None = None,
     expected_event_names: tuple[str, ...] | None = None,
     turn_committed_event: Mapping[str, Any],
+    allow_provider_free_qwen_mock: bool = False,
 ) -> None:
     allowed_names = expected_event_names or (str(expected_event_name),)
     event_name = str(event.get("event_name"))
     if event_name not in allowed_names:
         raise ValueError(f"MVP0Router requires one of {allowed_names} event")
-    _validate_understanding_output_mode(event, event_name=event_name)
+    _validate_understanding_output_mode(
+        event,
+        event_name=event_name,
+        allow_provider_free_qwen_mock=allow_provider_free_qwen_mock,
+    )
     for field in ("turn_id", "utterance_id"):
         if event.get(field) != turn_committed_event.get(field):
             raise ValueError(f"{event_name} must match committed turn {field}")
@@ -293,7 +566,113 @@ def _validate_mock_frame(
         raise ValueError(f"{event_name} must be caused by TURN_INGRESS_COMMITTED")
 
 
-def _validate_understanding_output_mode(event: Mapping[str, Any], *, event_name: str) -> None:
+def _validate_route_evidence_output(
+    event: Mapping[str, Any],
+    *,
+    turn_committed_event: Mapping[str, Any],
+    asr_frame_event: Mapping[str, Any],
+) -> None:
+    event_name = str(event.get("event_name"))
+    unsupported_fields = sorted(set(event) - ROUTE_EVIDENCE_ALLOWED_FIELDS)
+    if unsupported_fields:
+        raise ValueError(
+            f"{event_name} contains unsupported field; candidate fields are "
+            f"forbidden: {unsupported_fields[0]}"
+        )
+    if event_name != "ROUTE_EVIDENCE_OUTPUT_EMITTED":
+        raise ValueError(
+            "MVP1Router requires ROUTE_EVIDENCE_OUTPUT_EMITTED route evidence"
+        )
+    for field in ("turn_id", "utterance_id"):
+        if event.get(field) != turn_committed_event.get(field):
+            raise ValueError(f"{event_name} must match committed turn {field}")
+    if event.get("final_asr_event_id") != asr_frame_event.get("event_id"):
+        raise ValueError(f"{event_name} final_asr_event_id must name the ASR event")
+    if event.get("adapter_type") != "route_evidence":
+        raise ValueError(f"{event_name} must use adapter_type=route_evidence")
+    if event.get("normalization_status") != "normalized":
+        raise ValueError(f"{event_name} must be normalized before Router use")
+    if event.get("schema_name") != ROUTE_EVIDENCE_SCHEMA_NAME:
+        raise ValueError(
+            f"{event_name} must use schema_name={ROUTE_EVIDENCE_SCHEMA_NAME}"
+        )
+    if event.get("output_mode") not in ROUTE_EVIDENCE_OUTPUT_MODES:
+        raise ValueError(f"{event_name} must use a supported output_mode")
+    adapter_callback_seq = event.get("adapter_callback_seq")
+    if adapter_callback_seq is not None and (
+        isinstance(adapter_callback_seq, bool)
+        or not isinstance(adapter_callback_seq, int)
+        or adapter_callback_seq < 1
+    ):
+        raise ValueError(f"{event_name} adapter_callback_seq must be a positive integer")
+    context_snapshot_id = event.get("context_snapshot_id")
+    if context_snapshot_id is not None and (
+        not isinstance(context_snapshot_id, str) or not context_snapshot_id
+    ):
+        raise ValueError(f"{event_name} context_snapshot_id must be a non-empty string")
+    provider_session_generation = event.get("provider_session_generation")
+    if provider_session_generation is not None and (
+        isinstance(provider_session_generation, bool)
+        or not isinstance(provider_session_generation, int)
+        or provider_session_generation < 1
+    ):
+        raise ValueError(
+            f"{event_name} provider_session_generation must be a positive integer"
+        )
+
+    route_hint = event.get("route_hint")
+    if route_hint not in MVP1_ROUTER_DECISIONS:
+        raise ValueError(f"{event_name} route_hint must be an MVP-1 router decision")
+    task_focus_hint = event.get("task_focus_hint")
+    if task_focus_hint not in MVP1_TASK_FOCUS_VALUES:
+        raise ValueError(f"{event_name} task_focus_hint must be an ADR-006 focus value")
+
+
+def _validate_fast_interaction_output(
+    event: Mapping[str, Any],
+    *,
+    turn_committed_event: Mapping[str, Any],
+    asr_frame_event: Mapping[str, Any] | None,
+) -> None:
+    event_name = str(event.get("event_name"))
+    if event_name != "FAST_INTERACTION_OUTPUT_EMITTED":
+        raise ValueError("MVP1Router requires FAST_INTERACTION_OUTPUT_EMITTED fast evidence")
+    for field in ("turn_id", "utterance_id"):
+        if event.get(field) != turn_committed_event.get(field):
+            raise ValueError(f"{event_name} must match committed turn {field}")
+    input_mode = event.get("input_mode") or event.get("fast_interaction_input_mode")
+    if input_mode == "audio_native":
+        if event.get("caused_by_event_id") != turn_committed_event.get("event_id"):
+            raise ValueError(f"{event_name} audio_native must be caused by TURN_INGRESS_COMMITTED")
+    elif input_mode == "asr_text_fallback":
+        if asr_frame_event is None:
+            raise ValueError(f"{event_name} asr_text_fallback requires ASR evidence")
+        if event.get("caused_by_event_id") != asr_frame_event.get("event_id"):
+            raise ValueError(
+                f"{event_name} asr_text_fallback must be caused by ASR_TRANSCRIPT_OUTPUT_EMITTED"
+            )
+    else:
+        raise ValueError(f"{event_name} input_mode must be audio_native or asr_text_fallback")
+    if event.get("adapter_type") != "fast_interaction":
+        raise ValueError(f"{event_name} must use adapter_type=fast_interaction")
+    if event.get("normalization_status") != "normalized":
+        raise ValueError(f"{event_name} must be normalized before Router use")
+    if event.get("output_mode") not in {"real", "fallback", "degraded", "mock"}:
+        raise ValueError(f"{event_name} must use a supported output_mode")
+    task_focus_hint = event.get("task_focus_hint")
+    if task_focus_hint not in (None, "") and task_focus_hint not in MVP1_TASK_FOCUS_VALUES:
+        raise ValueError(f"{event_name} task_focus_hint must be an ADR-006 focus value")
+    route_decision_hint = event.get("route_decision_hint")
+    if route_decision_hint not in (None, "") and route_decision_hint not in MVP1_ROUTER_DECISIONS:
+        raise ValueError(f"{event_name} route_decision_hint must be an MVP-1 router decision")
+
+
+def _validate_understanding_output_mode(
+    event: Mapping[str, Any],
+    *,
+    event_name: str,
+    allow_provider_free_qwen_mock: bool = False,
+) -> None:
     output_mode = event.get("output_mode")
     if event_name in {"MOCK_ASR_FRAME_EMITTED", "MOCK_THINKER_FRAME_EMITTED"}:
         if output_mode != "mock":
@@ -308,7 +687,13 @@ def _validate_understanding_output_mode(event: Mapping[str, Any], *, event_name:
             raise ValueError(f"{event_name} must use the SemanticFrame-compatible schema")
         return
     if event_name == "ASR_TRANSCRIPT_OUTPUT_EMITTED":
-        if output_mode not in {"real", "fallback", "degraded"}:
+        if output_mode == "mock":
+            if not allow_provider_free_qwen_mock:
+                raise ValueError(
+                    f"{event_name} must use output_mode=real, fallback, or degraded"
+                )
+            _validate_provider_free_qwen_mock_asr(event, event_name=event_name)
+        elif output_mode not in {"real", "fallback", "degraded"}:
             raise ValueError(f"{event_name} must use output_mode=real, fallback, or degraded")
         if event.get("transcript_finality") != "final":
             raise ValueError(f"{event_name} must be final before Router use")
@@ -317,30 +702,76 @@ def _validate_understanding_output_mode(event: Mapping[str, Any], *, event_name:
                 raise ValueError(f"{event_name} requires {field}")
         timestamp_status = event.get("timestamp_status")
         streaming_status = event.get("streaming_status")
-        if timestamp_status not in {"available", "unavailable"}:
+        allowed_timestamp_statuses = {"available", "unavailable"}
+        allowed_streaming_statuses = {"supported", "unsupported_final_only"}
+        if output_mode == "mock":
+            allowed_timestamp_statuses.add("provider_correlated")
+            allowed_streaming_statuses.add("complete")
+        if timestamp_status not in allowed_timestamp_statuses:
             raise ValueError(f"{event_name} has invalid timestamp_status")
-        if streaming_status not in {"supported", "unsupported_final_only"}:
+        if streaming_status not in allowed_streaming_statuses:
             raise ValueError(f"{event_name} has invalid streaming_status")
         if (
             (timestamp_status == "unavailable" or streaming_status == "unsupported_final_only")
-            and output_mode != "degraded"
+            and output_mode not in {"degraded", "mock"}
         ):
             raise ValueError(f"{event_name} must be degraded when ASR metadata is unavailable")
         return
     raise ValueError(f"Unsupported understanding event: {event_name}")
 
 
+def _validate_provider_free_qwen_mock_asr(
+    event: Mapping[str, Any],
+    *,
+    event_name: str,
+) -> None:
+    if event.get("adapter_id") != PROVIDER_FREE_QWEN_ASR_ADAPTER_ID:
+        raise ValueError(
+            f"{event_name} output_mode=mock requires the assembled "
+            "provider-free Qwen ASR profile"
+        )
+    if event.get("adapter_type") != "asr":
+        raise ValueError(f"{event_name} output_mode=mock requires adapter_type=asr")
+    for field in (
+        "provider_session_generation",
+        "qwen_input_item_ref",
+        "qwen_input_content_index",
+    ):
+        if field not in event or event.get(field) in (None, ""):
+            raise ValueError(f"{event_name} output_mode=mock requires {field}")
+    provider_session_generation = event["provider_session_generation"]
+    if (
+        isinstance(provider_session_generation, bool)
+        or not isinstance(provider_session_generation, int)
+        or provider_session_generation < 1
+    ):
+        raise ValueError(
+            f"{event_name} provider_session_generation must be a positive integer"
+        )
+    qwen_input_item_ref = event["qwen_input_item_ref"]
+    if not isinstance(qwen_input_item_ref, str) or not qwen_input_item_ref:
+        raise ValueError(f"{event_name} qwen_input_item_ref must be a non-empty string")
+    qwen_input_content_index = event["qwen_input_content_index"]
+    if (
+        isinstance(qwen_input_content_index, bool)
+        or not isinstance(qwen_input_content_index, int)
+        or qwen_input_content_index < 0
+    ):
+        raise ValueError(
+            f"{event_name} qwen_input_content_index must be a non-negative integer"
+        )
+
+
 def _infer_mvp1_task_focus(
     *,
     turn_committed_event: Mapping[str, Any],
-    asr_frame_event: Mapping[str, Any],
-    thinker_frame_event: Mapping[str, Any],
+    route_evidence_events: Sequence[Mapping[str, Any]],
     router_context: RouterContext,
 ) -> str:
     if turn_committed_event.get("directedness") == "NOT_DIRECTED":
         return "NON_ASSISTANT"
 
-    explicit_focus_values = _task_focus_hints(asr_frame_event, thinker_frame_event)
+    explicit_focus_values = _task_focus_hints(*route_evidence_events)
     if len(set(explicit_focus_values)) > 1:
         return "AMBIGUOUS"
 
@@ -356,12 +787,12 @@ def _infer_mvp1_task_focus(
         return explicit_focus
 
     has_active_task = router_context.task_focus_snapshot.has_active_non_terminal_task
-    task_like = _task_like(asr_frame_event, thinker_frame_event)
+    task_like = _task_like(*route_evidence_events)
     if not has_active_task:
         return "NEW_TASK_CANDIDATE" if task_like else "FOREGROUND_CHAT"
     if task_like:
         return "NEW_TASK_CANDIDATE"
-    if _evidence_uncertainty(asr_frame_event, thinker_frame_event) == "high":
+    if _evidence_uncertainty(*route_evidence_events) == "high":
         return "AMBIGUOUS"
     return "FOREGROUND_CHAT"
 
@@ -454,3 +885,58 @@ def _default_patch_policy(router_context: RouterContext, active_task_id: str | N
     if active_task_id is None:
         return "NO_ACTIVE_TASK"
     return "ACTIVE_TASK_PATCH_ONLY"
+
+
+def _route_evidence_events(
+    *,
+    asr_frame_event: Mapping[str, Any] | None,
+    thinker_frame_event: Mapping[str, Any] | None,
+    fast_interaction_output_event: Mapping[str, Any] | None,
+    route_evidence_output_event: Mapping[str, Any] | None,
+) -> tuple[Mapping[str, Any], ...]:
+    if route_evidence_output_event is not None:
+        return (route_evidence_output_event,)
+    events: list[Mapping[str, Any]] = []
+    if asr_frame_event is not None:
+        events.append(asr_frame_event)
+    if thinker_frame_event is not None:
+        events.append(thinker_frame_event)
+    if fast_interaction_output_event is not None:
+        events.append(fast_interaction_output_event)
+    return tuple(events)
+
+
+def _route_decision_caused_by_event_id(
+    *,
+    thinker_frame_event: Mapping[str, Any] | None,
+    fast_interaction_output_event: Mapping[str, Any] | None,
+    route_evidence_output_event: Mapping[str, Any] | None,
+) -> str:
+    if route_evidence_output_event is not None:
+        return str(route_evidence_output_event["event_id"])
+    if fast_interaction_output_event is not None:
+        return str(fast_interaction_output_event["event_id"])
+    assert thinker_frame_event is not None
+    return str(thinker_frame_event["event_id"])
+
+
+def _evidence_ref_policy(
+    *,
+    asr_frame_event: Mapping[str, Any] | None,
+    thinker_frame_event: Mapping[str, Any] | None,
+    fast_interaction_output_event: Mapping[str, Any] | None,
+    route_evidence_output_event: Mapping[str, Any] | None,
+) -> str:
+    if route_evidence_output_event is not None:
+        return "preserve_asr_and_route_evidence_refs"
+    if (
+        asr_frame_event is not None
+        and thinker_frame_event is not None
+        and fast_interaction_output_event is not None
+    ):
+        return "preserve_asr_thinker_and_fast_refs"
+    if asr_frame_event is not None and fast_interaction_output_event is not None:
+        return "preserve_asr_and_fast_refs"
+    if fast_interaction_output_event is not None:
+        return "preserve_fast_ref"
+    return "preserve_both_refs"

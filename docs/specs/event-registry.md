@@ -4,7 +4,7 @@ Source of truth: frozen ADR Baseline v0.4。本文件承载 P1-B-001，是从 AD
 
 ADR-002 是 MVP event names 的 canonical source。实现新增 MVP-relevant event 前，必须先更新 ADR-002，并同步本文件。
 
-MVP-1 SlowTask / UserPatch / stale-result required field refinements come from ADR-004 and ADR-016. Where this derived registry requires additional binding fields beyond the ADR-002 canonical table, the refinement narrows the schema for implementation validation without creating a new journal event name.
+MVP-1 SlowTask / UserPatch / stale-result required field refinements come from ADR-004 and ADR-016. ADR-017 adds the fast foreground event names already accepted into ADR-002. Where this derived registry requires additional binding fields beyond the ADR-002 canonical table, the refinement narrows the schema for implementation validation without creating a new journal event name.
 
 ## 1. Event Envelope Schema
 
@@ -152,6 +152,19 @@ Context binding fields 按事件需要出现：
 | `SLOW_LLM_STRUCTURED_OUTPUT_EMITTED` | Model adapter events | Slow LLM Adapter | Slow LLM Adapter | `adapter_id`, `adapter_type=slow_llm`, `adapter_request_id`, `task_id`, `plan_version`, `task_event_seq`, `schema_name=voice_agent.slowtask.structured_output.v1`, `normalization_status=normalized`, `slow_llm_output_ref`, `structured_output_ref`, `validation_result_ref`, `output_mode=real/fallback/degraded` | `resolved_arguments_ref`, `provenance_ref` | current SlowTask event that requested structured model output; invalid output remains `ADAPTER_OUTPUT_VALIDATION_FAILED` | AdapterHealthState | false | true | refs only; no provider schema or raw payload |
 | `TTS_SYNTHESIS_OUTPUT_EMITTED` | Model adapter events | TTS Adapter | TTS Adapter | `adapter_id`, `adapter_type=tts`, `adapter_request_id`, `spoken_plan_id`, `approved_check_event_id`, `normalization_status=normalized`, `audio_ref` or `tts_stream_ref`, `audio_format_ref`, `synthesis_result_ref`, `truncate_status=supported/unsupported_blocked`, `output_mode=real/fallback/degraded` | `task_id`, `plan_version` | passed SpokenPlan check that approved playback; MVP-3 playback links by `tts_output_event_id` or unique safe ref match; unsupported truncate pairs with `ADAPTER_OUTPUT_DEGRADED` and blocks target validation | AdapterHealthState | false | true | safe refs only, including decoded refs; no raw audio bytes, provider payload, or provider schema |
 
+### Fast foreground events
+
+ADR-017 foreground events are canonical ADR-002 journal events. They record adapter output, gated candidates, deterministic gate decisions, and final foreground commit/discard facts for replay; this section does not implement runtime emitters, adapters, router logic, gate policy, UI, or Talker behavior.
+
+| event_name | event_family | source_module | payload_owner | required_fields | optional_fields | causal_links | state_reducer_target | required_in_mvp0 | replay_required | privacy_redaction_notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `FAST_INTERACTION_OUTPUT_EMITTED` | Fast foreground events | Fast Interaction Adapter | Fast Interaction Adapter | `adapter_id`, `adapter_type=fast_interaction`, `adapter_request_id`, `turn_id`, `utterance_id`, `route_hint_ref`, `route_prelude_ref`, `foreground_act`, `final_fast_evidence_ref`, `schema_name`, `normalization_status=normalized`, `output_mode=real/mock/fallback/degraded`, `input_mode`, `fast_interaction_input_mode`, `source_event_ids` | `input_modality`, `risk_tags`, `confidence`, `capability_snapshot_ref`, safe `fast_interaction_*` timing metadata from `AdapterTimingSnapshot.to_prefixed_metadata("fast_interaction")` only: `fast_interaction_adapter_start_offset_ms`, `fast_interaction_provider_request_start_offset_ms`, `fast_interaction_provider_first_chunk_offset_ms`, `fast_interaction_provider_full_response_offset_ms`, `fast_interaction_adapter_event_emit_offset_ms`, `fast_interaction_provider_ttft_ms`, `fast_interaction_provider_full_response_ms`, `fast_interaction_provider_generation_ms`, `fast_interaction_stream_decode_ms`, `fast_interaction_parse_validate_emit_ms`, `fast_interaction_total_ms`, `fast_interaction_timing_mode`, `fast_interaction_ttft_available`, `fast_interaction_ttft_source` | `TURN_INGRESS_COMMITTED` and available ASR / Thinker evidence | FastForegroundState, AdapterHealthState | false | true | refs and scalar timing metadata only; no raw prompt, provider body, raw audio, secrets, local paths, diagnostics, traces, or unredacted real user input |
+| `FOREGROUND_REPLY_CANDIDATE_EMITTED` | Fast foreground events | Fast Interaction Adapter / Foreground Buffer | Foreground Buffer | `candidate_id`, `fast_interaction_output_event_id`, `turn_id`, `utterance_id`, `candidate_ref` or `reply_delta_stream_ref`, `candidate_status`, `input_mode`, `fast_interaction_input_mode`, `source_event_ids`, `risk_tags`, `confidence`, `trace_redaction_level` | - | `FAST_INTERACTION_OUTPUT_EMITTED` | FastForegroundState | false | true | candidate refs are not user-facing until gate pass and output commit |
+| `FOREGROUND_ACT_GATE_PASSED` | Fast foreground events | Fast Foreground Gate | Fast Foreground Gate | `gate_decision_id`, `candidate_event_id`, `router_decision_event_id`, `foreground_act=ANSWER`, `risk_class=LOW`, `confidence`, `policy_version`, `pass_reason` | - | `ROUTER_DECISION_EMITTED` plus fast interaction output / candidate | FastForegroundState | false | true | metadata only; pass means candidate may be displayed, not that user heard or confirmed it |
+| `FOREGROUND_ACT_GATE_FAILED` | Fast foreground events | Fast Foreground Gate | Fast Foreground Gate | `gate_decision_id`, `router_decision_event_id`, `foreground_act`, `risk_class`, `confidence`, `policy_version`, `failure_reason` | `candidate_event_id`, `downgrade_policy` | `ROUTER_DECISION_EMITTED` plus fast interaction output / candidate | FastForegroundState | false | true | metadata only; blocks candidate answer and may trigger template fallback, clarification, or silence |
+| `FOREGROUND_OUTPUT_COMMITTED` | Fast foreground events | Fast Foreground Gate / Foreground Output Runtime | Foreground Output Runtime | `foreground_output_id`, `turn_id`, `utterance_id`, `output_ref`, `output_basis`, `gate_event_id` or (`fallback_policy_ref` and `fallback_reason`), `router_decision_event_id`, `user_visible_channel` | - | gate pass or gate-failed fallback policy | FastForegroundState | false | true | selected user-facing foreground output ref only; fallback commits must explain the fallback reason; no raw prompt, provider body, raw audio, or secrets |
+| `FOREGROUND_OUTPUT_DISCARDED` | Fast foreground events | Fast Foreground Gate / Foreground Buffer | Foreground Buffer | `discard_id`, `candidate_event_id`, `fast_interaction_output_event_id`, `router_decision_event_id`, `discard_reason` | `replacement_output_event_id` | gate failure, non-FAST route, non-ANSWER act, stale buffer, ignore, or ambiguity | FastForegroundState | false | true | explains generated candidate or buffer discard without exporting raw sensitive content |
+
 ### SlowTask events
 
 | event_name | event_family | source_module | payload_owner | required_fields | optional_fields | causal_links | state_reducer_target | required_in_mvp0 | replay_required | privacy_redaction_notes |
@@ -257,3 +270,52 @@ Context binding fields 按事件需要出现：
 | `SPOKEN_PLAN_CREATED` | `SPOKEN_PLAN_EMITTED` | 非 canonical label，映射到 canonical composer event。 |
 
 如果 `*_CREATED` 或 `STALE_TOOL_RESULT_RECORDED` 必须成为 journal event name，必须先更新 ADR-002。
+
+## 8. ADR-018 Canonical Events
+
+These nine accepted events use the common event envelope and remain
+metadata/ref-only:
+
+| event_name | payload_owner | required_fields | causal_links | replay meaning | raw-content exclusion |
+| --- | --- | --- | --- | --- | --- |
+| `ROUTE_EVIDENCE_OUTPUT_EMITTED` | Route Evidence Adapter | adapter/request IDs, committed turn/utterance IDs, final ASR ref, context projection ref, route/task-focus/foreground-act/ACK hints, risk, confidence, schema, normalization, output mode | final ASR and route context projection after the same committed turn; precedes Router decision | replays non-authoritative route evidence without rerunning a model | no raw prompt, transcript, PCM, provider body, secret, or credential |
+| `CANDIDATE_SAFETY_EVIDENCE_OUTPUT_EMITTED` | Route Evidence Adapter | adapter/request IDs, turn/utterance/response IDs, transcript digest, context projection ref, `SAFE|UNSAFE|UNCERTAIN`, categories, prohibited flags, confidence, schema, normalization, output mode | complete correlated candidate transcript and candidate-safety context projection; precedes Gate | replays independent safety evidence without replacing Gate authority | no candidate text, raw PCM, prompt, provider body, secret, credential, or raw task state |
+| `MODEL_CONTEXT_PROJECTION_EMITTED` | Context Assembler | projection/role/source IDs, context snapshot, source sequence, provider generation, bounded projection ref, policy version, redaction status, output mode | current reducer/journal snapshot ending at source sequence | replays the immutable bounded projection and stale-snapshot boundary | no raw prompt, provider payload, PCM, secret, credential, tool output, private reasoning, or unredacted real-user text |
+| `SLOW_TO_FAST_HANDOFF_EMITTED` | Slow-to-Fast Bridge | handoff kind/mode, task/plan/sequence IDs, source IDs, fact/must-say/forbidden refs, priority, expiry, redaction status | canonical current-plan progress, clarification, confirmation, commitment, degraded, or failure events | replays the current-plan fact boundary without rerunning SlowTask or Composer | no raw Slow LLM reasoning, tool output, web evidence, provider body, secret, credential, or stale evidence |
+| `SLOW_TO_FAST_HANDOFF_DISPOSITIONED` | Response Arbiter / Slow-to-Fast Bridge | handoff ID, disposition, optional arbitration/replacement IDs, current task/plan/sequence, reason | handoff emission; selection also follows arbitration | replays queue/coalesce/select/stale/expire/cancel/discard; only selected may reach Composer | no handoff facts, raw text, PCM, provider body, secret, credential, or task/tool content |
+| `RESPONSE_ARBITRATION_DECIDED` | Per-session Response Arbiter | arbitration ID, selected source type/ref, superseded refs, provider generation, playback epoch, interaction-state version, reason | candidate/handoff/interrupt/delivery condition requiring a user-facing choice | replays the selected and superseded user-facing sources | no response text, raw audio, provider payload, secret, credential, or task/tool content |
+| `PROVIDER_CONTEXT_STATE_CHANGED` | Qwen Realtime Adapter / Session Runtime | adapter ID, provider generation, from/to state, reason, source refs, bounded cleanup/delete/drop metadata, output mode | cleanup ack/failure, correlation/shadow failure, rebuild, or Connect close | replays readiness, frame-drop window, cleanup, rebuild, and provider generation | no microphone frames, raw PCM, deleted content, provider body, session secret, credential, or authorization header |
+| `CANDIDATE_AUDIO_SHADOW_VERIFICATION_EMITTED` | Independent ASR Adapter / Candidate Audio Verifier | adapter/request and turn/utterance/response IDs, transcript and PCM-manifest digests, audio format/duration refs, independent transcript ref/digest, equivalence metadata, output mode | complete PCM manifest and candidate transcript; live shadow follows release and never gates that turn | replays qualification or non-blocking shadow outcome and later-turn disablement | digests/refs only; `CANDIDATE_AUDIO_SHADOW_VERIFICATION_EMITTED` never contains PCM |
+| `ASSISTANT_DELIVERY_DISPOSITIONED` | Delivery Reconciler / Talker Runtime | assistant/output/token/span refs, `PENDING` to `FULL|TRUNCATED|NOT_STARTED`, actual stop offset status, cleanup status, source refs | finish/commit, truncate, start failure, arbitration, epoch, rebuild, or interruption | replays exactly one terminal delivery outcome and the history boundary | refs/metadata only; `ASSISTANT_DELIVERY_DISPOSITIONED` never contains provider payloads |
+
+Compatibility rule:
+
+```text
+missing fast_interaction_topology => atomic_single_call
+fast_interaction_topology=speculative_candidate_parallel_route
+  => separate Qwen, route-evidence, candidate-safety, context-snapshot,
+     provider-generation, transcript-digest, and PCM-manifest provenance
+```
+
+## 9. ADR-018 Existing-Event Amendments
+
+These fields are conditional and additive. Historical events without
+`fast_interaction_topology` retain ADR-017 `atomic_single_call` meaning.
+
+| existing event | conditional parallel-topology amendment |
+| --- | --- |
+| `ASR_TRANSCRIPT_OUTPUT_EMITTED` | Qwen-backed turns add `provider_session_generation`, opaque `qwen_input_item_ref`, and `qwen_input_content_index`; the event is emitted only after local `TURN_INGRESS_COMMITTED` and the correlated provider transcription final have both occurred. |
+| `FAST_INTERACTION_OUTPUT_EMITTED` | With `fast_interaction_topology=speculative_candidate_parallel_route`, `source_module` and `payload_owner` are the local Fast Interaction Orchestrator. Add separate Qwen candidate adapter/request refs, route-evidence event/request refs, candidate-safety event/request refs, optional audio-shadow ref, `context_snapshot_id`, `provider_session_generation`, and normalization status. |
+| `FOREGROUND_REPLY_CANDIDATE_EMITTED` | Add topology, exact `qwen_response_id`, `qwen_output_item_id`, `qwen_output_index`, `qwen_content_index`, provider generation, context snapshot, `candidate_transcript_digest`, `candidate_pcm_manifest_digest`, audio format/duration, and optional shadow-event ref. |
+| `FOREGROUND_ACT_GATE_PASSED` | Add topology, candidate-check policy and individual results, provider generation, context snapshot, route/candidate-safety refs, exact correlation/digest results, and immutable `release_token_ref`. |
+| `FOREGROUND_ACT_GATE_FAILED` | Add the same topology, policy/check, generation, snapshot, evidence, correlation/digest, and optional release-token metadata needed to replay the fail-closed reason. |
+| `FOREGROUND_OUTPUT_COMMITTED` | Add topology and unchanged `release_token_ref`; provider-native PCM uses `user_visible_channel=audio_pending`. |
+| `PLAYBACK_SPAN_STARTED` | For provider-native PCM add unchanged `release_token_ref`, provider generation, response/output-item/output-index/content-index correlation, and playback epoch before first-byte delivery. |
+| `PLAYBACK_COMMITTED`, `PLAYBACK_FINISHED` | Add unchanged `release_token_ref` and preserve the actual delivery-offset chain used by `FULL` or `TRUNCATED` reconciliation. |
+| `TTS_TRUNCATED` | Add optional release-token and delivery-reconciliation refs plus causal linkage to terminal delivery disposition and provider cleanup. |
+
+Raw Qwen WebSocket events are adapter-local protocol messages. Do not register
+provider-specific names such as `QWEN_RESPONSE_CREATED`,
+`QWEN_AUDIO_DELTA_RECEIVED`, or `QWEN_ITEM_DELETED`; normalize only material
+control, evidence, cleanup, Gate, and delivery facts into the canonical events
+above.

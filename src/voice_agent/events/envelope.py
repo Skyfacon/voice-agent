@@ -56,8 +56,58 @@ def validate_event_envelope(event: Mapping[str, Any]) -> dict[str, Any]:
         if actual != expected:
             raise EventValidationError(f"{literal_field}={expected} required, got {actual!r}")
 
+    for enum_field, allowed_values in definition.enum_fields.items():
+        if enum_field not in normalized:
+            continue
+        actual = normalized[enum_field]
+        if not any(actual == allowed for allowed in allowed_values):
+            raise EventValidationError(f"{enum_field} has an unsupported value")
+
+    for conditional in definition.conditional_required_fields:
+        if (
+            normalized.get(conditional.when_field) == conditional.when_value
+            and all(
+                normalized.get(field) == expected
+                for field, expected in conditional.and_conditions
+            )
+        ):
+            for field in conditional.required_fields:
+                _require_present(normalized, field)
+
+    for all_or_none in definition.all_or_none_fields:
+        present_fields = [
+            field for field in all_or_none.fields if _has_value(normalized, field)
+        ]
+        if present_fields and len(present_fields) != len(all_or_none.fields):
+            for field in all_or_none.fields:
+                _require_present(normalized, field)
+
+    if (
+        normalized["event_name"] == "PLAYBACK_SPAN_STARTED"
+        and _has_value(normalized, "release_token_ref")
+    ):
+        for field in (
+            "provider_session_generation",
+            "qwen_response_id",
+            "qwen_output_item_id",
+            "qwen_output_index",
+            "qwen_content_index",
+            "playback_epoch",
+        ):
+            _require_present(normalized, field)
+
     for alternatives in definition.one_of_fields:
         if not any(_has_value(normalized, field) for field in alternatives):
+            raise EventValidationError(f"One of {' or '.join(alternatives)} is required")
+
+    for alternative_field_set in definition.any_of_field_sets:
+        if all(_has_value(normalized, field) for field in alternative_field_set):
+            break
+    else:
+        if definition.any_of_field_sets:
+            alternatives = [
+                " and ".join(alternative_field_set) for alternative_field_set in definition.any_of_field_sets
+            ]
             raise EventValidationError(f"One of {' or '.join(alternatives)} is required")
 
     return normalized

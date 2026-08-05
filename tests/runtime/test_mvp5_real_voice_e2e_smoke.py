@@ -9,6 +9,8 @@ import pytest
 
 from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
 from voice_agent.adapters.asr_live_transport import AsrLiveProviderCallMetadata
+from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
+from voice_agent.adapters.fast_interaction_live_transport import FastInteractionProviderCompletion
 from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_MODEL_ALIAS
 import voice_agent.runtime.mvp5_live_voice_evidence as live_voice_evidence_module
 from voice_agent.runtime.mvp5_real_voice_e2e_smoke import (
@@ -43,7 +45,7 @@ def test_single_wav_smoke_outputs_metadata_only_actual_router_outcome(
     assert metadata["run_id"] == "mvp5-goal4-single-fast"
     assert metadata["mode"] == "single"
     assert metadata["status"] == "routed"
-    assert metadata["route_result_kind"] == "direct_answer"
+    assert metadata["route_result_kind"] == "foreground_clarify"
     assert metadata["actual_route"] == "FAST_ONLY"
     assert metadata["router_decision"] == "FAST_ONLY"
     assert metadata["expected_route"] == "FAST_ONLY"
@@ -67,6 +69,103 @@ def test_single_wav_smoke_outputs_metadata_only_actual_router_outcome(
     assert wav_path.name not in rendered
     assert "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK" not in rendered
     assert base64.b64encode(wav_bytes).decode("ascii") not in rendered
+
+
+def test_single_fast_interaction_primary_uses_one_audio_native_provider_call(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "private-fast-interaction-input.wav"
+    wav_bytes = _write_wav_file(wav_path)
+    fast_transport = _FakeFastInteractionTransport()
+
+    metadata = run_mvp5_real_voice_e2e_single(
+        local_wav=wav_path,
+        live_provider=True,
+        allow_local_wav=True,
+        approval_packet=_fast_approval_packet(max_provider_calls=1),
+        expected_route="FAST_ONLY",
+        run_id="mvp63-goal4-single-fast-interaction",
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_ExplodingAsrTransport(),
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport,
+        fast_interaction_enabled=True,
+        audio_native_thinker_enabled=False,
+    )
+
+    rendered = json.dumps(metadata, sort_keys=True)
+    latency_debug = metadata["latency_debug"]
+    assert metadata["status"] == "routed"
+    assert metadata["actual_route"] == "FAST_ONLY"
+    assert metadata["route_result_kind"] == "foreground_clarify"
+    assert metadata["asr_output_mode"] is None
+    assert metadata["thinker_output_mode"] is None
+    assert metadata["fast_interaction_output_mode"] == "real"
+    assert metadata["foreground_gate_decision"] == "failed"
+    assert metadata["foreground_gate_failure_reason"] == (
+        "candidate_policy_quarantined"
+    )
+    assert metadata["foreground_output_basis"] == "template_clarify"
+    assert metadata["foreground_output_ref"] != metadata["foreground_candidate_ref"]
+    assert metadata["evidence_ref_policy"] == "preserve_fast_ref"
+    assert metadata["provider_call_used"] is False
+    assert metadata["fake_transport_used"] is True
+    assert latency_debug["fast_interaction_input_mode"] == "audio_native"
+    assert latency_debug["fast_interaction_provider_ttft_ms"] == 20
+    assert latency_debug["fast_interaction_total_ms"] >= 0
+    assert fast_transport.call_count == 1
+    assert fast_transport.input_mode_seen == "audio_native"
+    assert str(wav_path) not in rendered
+    assert wav_path.name not in rendered
+    assert "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK" not in rendered
+    assert "A tiny safe spooky story." not in rendered
+    assert base64.b64encode(wav_bytes).decode("ascii") not in rendered
+
+
+def test_single_fast_qa_runs_asr_observation_without_delaying_fast_gate(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "private-fast-qa-input.wav"
+    _write_wav_file(wav_path)
+    fast_transport = _FakeFastInteractionTransport()
+
+    metadata = run_mvp5_real_voice_e2e_single(
+        local_wav=wav_path,
+        live_provider=True,
+        allow_local_wav=True,
+        approval_packet=_fast_approval_packet(
+            max_provider_calls=2,
+            asr_observation=True,
+        ),
+        expected_route="FAST_ONLY",
+        run_id="mvp63-goal4-single-fast-qa",
+        env={"MVP63_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL_THAT_MUST_NOT_LEAK"},
+        asr_transport=_fake_asr_transport("mvp63-fast-qa"),
+        thinker_transport=_ExplodingThinkerTransport(),
+        fast_interaction_transport=fast_transport,
+        fast_interaction_enabled=True,
+        audio_native_thinker_enabled=False,
+        asr_observation_enabled=True,
+    )
+
+    event_names = metadata["event_names"]
+    latency_debug = metadata["latency_debug"]
+    assert metadata["status"] == "routed"
+    assert metadata["actual_route"] == "FAST_ONLY"
+    assert metadata["asr_output_mode"] == "real"
+    assert metadata["asr_observation_enabled"] is True
+    assert metadata["asr_observation_status"] == "completed"
+    assert metadata["asr_observation_event_id"] == metadata["question_event_id"]
+    assert str(metadata["question_text_ref"]).startswith("text://synthetic/")
+    assert metadata["fast_interaction_output_mode"] == "real"
+    assert metadata["evidence_ref_policy"] == "preserve_fast_ref"
+    assert event_names.index("FOREGROUND_OUTPUT_COMMITTED") < event_names.index(
+        "ASR_TRANSCRIPT_OUTPUT_EMITTED"
+    )
+    assert latency_debug["provider_calls_parallel"] is True
+    assert latency_debug["fast_answer_ready_offset_ms"] <= latency_debug[
+        "qa_pair_ready_offset_ms"
+    ]
 
 
 def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_output(
@@ -99,7 +198,7 @@ def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_outpu
                 "active_task_context": {
                     "task_id": "task_mvp5_local_pack_active",
                     "current_plan_version": 1,
-                    "current_task_event_seq": 1,
+                        "current_task_event_seq": 4,
                 },
             },
         ],
@@ -125,7 +224,7 @@ def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_outpu
     assert set(cases_by_id) == {"direct", "spawn", "patch"}
     assert cases_by_id["direct"]["expected_route"] == "FAST_ONLY"
     assert cases_by_id["direct"]["actual_route"] == "FAST_ONLY"
-    assert cases_by_id["direct"]["route_result_kind"] == "direct_answer"
+    assert cases_by_id["direct"]["route_result_kind"] == "foreground_clarify"
     assert cases_by_id["spawn"]["expected_route"] == "SPAWN_SLOW_TASK"
     assert cases_by_id["spawn"]["actual_route"] == "SPAWN_SLOW_TASK"
     assert cases_by_id["spawn"]["route_result_kind"] == "slowtask_spawn"
@@ -134,8 +233,9 @@ def test_three_route_pack_reports_case_ids_actual_routes_and_metadata_only_outpu
     assert cases_by_id["patch"]["route_result_kind"] == "user_patch"
     assert cases_by_id["patch"]["task_id"] == "task_mvp5_local_pack_active"
     assert cases_by_id["patch"]["user_patch_event_ids"]
-    assert "USER_PATCH_INTERPRETED" not in cases_by_id["patch"]["event_names"]
-    assert "PLAN_VERSION_ADVANCED" not in cases_by_id["patch"]["event_names"]
+    assert "USER_PATCH_INTERPRETED" in cases_by_id["patch"]["event_names"]
+    assert "PLAN_VERSION_ADVANCED" in cases_by_id["patch"]["event_names"]
+    assert "SLOWTASK_STATE_CHANGED" in cases_by_id["patch"]["event_names"]
     assert metadata["raw_audio_included"] is False
     assert metadata["raw_transcript_included"] is False
     assert metadata["raw_provider_body_included"] is False
@@ -329,8 +429,8 @@ def test_main_single_active_task_context_produces_patch_route_in_provider_free_f
             "task_local_active",
             "--active-plan-version",
             "1",
-            "--active-task-event-seq",
-            "1",
+                "--active-task-event-seq",
+                "4",
             "--active-lifecycle-phase",
             "PLANNING",
             "--approval-packet",
@@ -486,6 +586,74 @@ def _fake_asr_transport(route_slug: str) -> FakeAsrTransport:
     )
 
 
+class _FakeFastInteractionTransport:
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.input_mode_seen: str | None = None
+
+    def complete_audio_with_timing(
+        self,
+        *,
+        request_payload: dict[str, object],
+        audio_bytes: bytes,
+        audio_format: str,
+        credential_handle: object,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+        turn_ingress_monotonic_ms: int,
+    ) -> FastInteractionProviderCompletion:
+        self.call_count += 1
+        self.input_mode_seen = str(request_payload["input_mode"])
+        assert self.input_mode_seen == "audio_native"
+        assert audio_bytes
+        assert audio_format == "wav"
+        assert credential_value.startswith("DUMMY_TEST_CREDENTIAL")
+        assert adapter_request_id.startswith("adapter-request-mvp63-fast-interaction-")
+        assert timeout_ms == 1_500
+        assert model_alias == "qwen3.5-omni-flash"
+        assert turn_ingress_monotonic_ms > 0
+        assert "secret_materialized=False" in repr(credential_handle)
+        return FastInteractionProviderCompletion(
+            provider_text=json.dumps(
+                {
+                    "schema_name": "voice_agent.fast_interaction.output.v1",
+                    "route_hint": {"router_decision_candidate": "FAST_ONLY"},
+                    "route_prelude": {"summary": "single smoke fast interaction"},
+                    "foreground_act": "ANSWER",
+                    "reply_candidate": "A tiny safe spooky story.",
+                    "final_fast_evidence": {"label": "single_smoke"},
+                    "risk_tags": ["none"],
+                    "risk_class": "LOW",
+                    "confidence": 0.91,
+                    "output_mode": "real",
+                    "boundary_assertions": {
+                        "candidate_is_not_semantic_commitment": True,
+                        "may_authorize_tools": False,
+                        "may_execute_tools": False,
+                        "may_accept_confirmation": False,
+                        "may_mutate_slowtask_facts": False,
+                        "runtime_gate_owns_display": True,
+                    },
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            timing=_fast_timing_snapshot(),
+        )
+
+
+class _ExplodingAsrTransport:
+    def transcribe(self, **_kwargs: object) -> object:
+        raise AssertionError("ASR must not run in MVP6.3 audio-native fast primary path")
+
+
+class _ExplodingThinkerTransport:
+    def complete_audio(self, **_kwargs: object) -> str:
+        raise AssertionError("audio-native Thinker must not run in MVP6.3 fast primary path")
+
+
 class _FakeThinkerAudioTransport:
     def __init__(self, *, fake_route: str) -> None:
         self.fake_route = fake_route
@@ -559,6 +727,47 @@ def _approval_packet(*, max_provider_calls: int = 2) -> dict[str, object]:
         "timeout_ms": 30_000,
         "safe_output_ref": "summary://mvp5/goal4/real-voice-e2e-test",
     }
+
+
+def _fast_approval_packet(
+    *,
+    max_provider_calls: int = 1,
+    asr_observation: bool = False,
+) -> dict[str, object]:
+    adapter_ids = ["mvp63_fast_interaction_runtime"]
+    if asr_observation:
+        adapter_ids = ["mvp5_asr_adapter", "mvp63_fast_interaction_runtime"]
+    return {
+        "approval_id": "mvp63-live-smoke-fast-interaction-test",
+        "live_provider_opt_in": True,
+        "local_wav_opt_in": True,
+        "metadata_only_output": True,
+        "replay_reruns_provider": False,
+        "provider_adapter_ids": adapter_ids,
+        "credential_env_var_name": "MVP63_TEST_PROVIDER_KEY",
+        "max_provider_calls": max_provider_calls,
+        "timeout_ms": 1_500,
+        "safe_output_ref": "summary://mvp63/goal4/fast-interaction-e2e-test",
+    }
+
+
+def _fast_timing_snapshot() -> AdapterTimingSnapshot:
+    return AdapterTimingSnapshot(
+        adapter_start_offset_ms=0,
+        provider_request_start_offset_ms=5,
+        provider_first_chunk_offset_ms=25,
+        provider_full_response_offset_ms=65,
+        adapter_event_emit_offset_ms=70,
+        provider_ttft_ms=20,
+        provider_full_response_ms=60,
+        provider_generation_ms=40,
+        stream_decode_ms=0,
+        parse_validate_emit_ms=0,
+        total_ms=70,
+        timing_mode="streaming",
+        ttft_available=True,
+        ttft_source="provider_stream_chunk",
+    )
 
 
 class _ConstructedRealAsrTransport:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -13,9 +13,15 @@ from typing import Any
 from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
 from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_MODEL_ALIAS
 from voice_agent.router.router import MVP1_ROUTER_DECISIONS
+from voice_agent.events.journal import InMemoryEventJournal
+from voice_agent.runtime.fast_foreground_gate import (
+    CandidatePolicyDecision,
+    FastForegroundGateContext,
+)
 from voice_agent.runtime.mvp5_live_router_runner import (
     MVP5ActiveSlowTaskContext,
     MVP5LiveRouterConfig,
+    MVP5LiveRouteResult,
     run_mvp5_live_router_runner,
 )
 from voice_agent.runtime.mvp5_live_voice_evidence import (
@@ -118,8 +124,14 @@ def run_mvp5_real_voice_e2e_single(
     env: Mapping[str, str] | None = None,
     asr_transport: object | None = None,
     thinker_transport: object | None = None,
+    fast_interaction_transport: object | None = None,
+    fast_interaction_enabled: bool = False,
+    audio_native_thinker_enabled: bool = True,
+    asr_observation_enabled: bool = False,
+    allow_fast_interaction_asr_text_fallback: bool = False,
     active_task_context: MVP5ActiveSlowTaskContext | None = None,
 ) -> dict[str, Any]:
+    run_started = time.monotonic()
     run_id = _require_safe_token(run_id, "run_id")
     approval_packet = _require_mapping(approval_packet, "approval_packet")
     expected_route = _normalize_expected_route(expected_route, allow_auto=True)
@@ -127,7 +139,49 @@ def run_mvp5_real_voice_e2e_single(
         raise MVP5RealVoiceE2ESmokeError(
             "PATCH_ACTIVE_SLOW_TASK expected route requires active task context"
         )
+    if active_task_context is not None and not any(
+        transport is not None
+        for transport in (
+            asr_transport,
+            thinker_transport,
+            fast_interaction_transport,
+        )
+    ):
+        raise MVP5RealVoiceE2ESmokeError(
+            "real-provider active task authority requires a canonical session journal"
+        )
     credential_env_var_name = _credential_env_var_name(approval_packet)
+
+    router_config = MVP5LiveRouterConfig(
+        run_id=run_id,
+        expected_route=expected_route,
+        active_task_context=active_task_context,
+        fast_foreground_gate_context=_live_fast_gate_context(
+            active_task_context=active_task_context
+        ),
+    )
+    fast_path_latency: dict[str, int] = {}
+
+    def on_fast_evidence_ready(
+        partial_evidence: Any,
+        journal: InMemoryEventJournal,
+    ) -> MVP5LiveRouteResult:
+        _append_smoke_active_task_authority(journal, active_task_context)
+        result = run_mvp5_live_router_runner(
+            partial_evidence,
+            config=router_config,
+            journal=journal,
+        )
+        if result.router_ms is not None:
+            fast_path_latency["router_ms"] = result.router_ms
+        if result.foreground_gate_ms is not None:
+            fast_path_latency["foreground_gate_ms"] = result.foreground_gate_ms
+        if result.foreground_output_finalize_ms is not None:
+            fast_path_latency["foreground_output_finalize_ms"] = (
+                result.foreground_output_finalize_ms
+            )
+        fast_path_latency["fast_answer_ready_offset_ms"] = _elapsed_ms(run_started)
+        return result
 
     evidence = run_mvp5_live_voice_evidence(
         local_wav=local_wav,
@@ -137,19 +191,37 @@ def run_mvp5_real_voice_e2e_single(
             allow_local_wav=allow_local_wav,
             approval_packet=approval_packet,
             credential_env_var_name=credential_env_var_name,
-            requested_provider_calls=_REQUESTS_PER_CASE,
+            requested_provider_calls=_single_run_provider_call_budget(
+                fast_interaction_enabled=fast_interaction_enabled,
+                asr_observation_enabled=asr_observation_enabled,
+                allow_fast_interaction_asr_text_fallback=allow_fast_interaction_asr_text_fallback,
+            ),
             max_provider_calls=_positive_int(
                 approval_packet.get("max_provider_calls"),
                 "max_provider_calls",
             ),
+            timeout_ms=_positive_int(approval_packet.get("timeout_ms"), "timeout_ms"),
+            fast_interaction_enabled=fast_interaction_enabled,
+            audio_native_thinker_enabled=audio_native_thinker_enabled,
+            asr_observation_enabled=asr_observation_enabled,
+            allow_fast_interaction_asr_text_fallback=allow_fast_interaction_asr_text_fallback,
         ),
         env={} if env is None else env,
         asr_transport=asr_transport,
         thinker_transport=thinker_transport,
+        fast_interaction_transport=fast_interaction_transport,
+        on_fast_evidence_ready=(
+            on_fast_evidence_ready
+            if fast_interaction_enabled and asr_observation_enabled
+            else None
+        ),
     )
     evidence_latency_debug = _normalize_latency_debug(
         getattr(evidence, "latency_debug", {}),
     )
+    evidence_latency_debug.update(fast_path_latency)
+    if asr_observation_enabled:
+        evidence_latency_debug["qa_pair_ready_offset_ms"] = _elapsed_ms(run_started)
     thinker_transient_asr_text_used = bool(
         getattr(evidence, "thinker_transient_asr_text_used", False)
     )
@@ -161,19 +233,42 @@ def run_mvp5_real_voice_e2e_single(
         )
         metadata["latency_debug"] = evidence_latency_debug
         metadata["thinker_transient_asr_text_used"] = thinker_transient_asr_text_used
+        metadata["fast_interaction_enabled"] = fast_interaction_enabled
+        metadata["fast_interaction_status"] = (
+            "completed"
+            if getattr(evidence, "fast_interaction_output_mode", None)
+            else "failed"
+            if fast_interaction_enabled
+            else "not_run"
+        )
         _validate_smoke_metadata(metadata)
         return metadata
 
-    router_started = time.monotonic()
-    route_result = run_mvp5_live_router_runner(
-        evidence,
-        config=MVP5LiveRouterConfig(
-            run_id=run_id,
-            expected_route=expected_route,
-            active_task_context=active_task_context,
-        ),
-    )
-    evidence_latency_debug["router_ms"] = _elapsed_ms(router_started)
+    precomputed_route_result = getattr(evidence, "fast_path_result", None)
+    if isinstance(precomputed_route_result, MVP5LiveRouteResult):
+        route_result = replace(
+            precomputed_route_result,
+            events=tuple(evidence.events),
+        )
+    else:
+        route_journal = _journal_from_smoke_evidence(evidence.events)
+        _append_smoke_active_task_authority(
+            route_journal,
+            active_task_context,
+        )
+        route_result = run_mvp5_live_router_runner(
+            evidence,
+            config=router_config,
+            journal=route_journal,
+        )
+        if route_result.router_ms is not None:
+            evidence_latency_debug["router_ms"] = route_result.router_ms
+        if route_result.foreground_gate_ms is not None:
+            evidence_latency_debug["foreground_gate_ms"] = route_result.foreground_gate_ms
+        if route_result.foreground_output_finalize_ms is not None:
+            evidence_latency_debug["foreground_output_finalize_ms"] = (
+                route_result.foreground_output_finalize_ms
+            )
 
     metadata = route_result.to_metadata()
     metadata.update(
@@ -183,19 +278,195 @@ def run_mvp5_real_voice_e2e_single(
             "input_source": "local_wav_opt_in",
             "asr_output_mode": evidence.asr_output_mode,
             "thinker_output_mode": evidence.thinker_output_mode,
+            "fast_interaction_output_mode": getattr(
+                evidence,
+                "fast_interaction_output_mode",
+                None,
+            ),
+            "fast_interaction_enabled": fast_interaction_enabled,
+            "fast_interaction_status": (
+                "completed"
+                if getattr(evidence, "fast_interaction_output_mode", None)
+                else "failed"
+                if fast_interaction_enabled
+                else "not_run"
+            ),
             "local_wav_opt_in_used": evidence.local_wav_opt_in_used,
             "live_provider_approval_used": evidence.live_provider_approval_used,
             "provider_headers_included": False,
             "local_pack_path_included": False,
             "approval_packet_path_included": False,
             "thinker_transient_asr_text_used": thinker_transient_asr_text_used,
+            "asr_observation_enabled": getattr(
+                evidence,
+                "asr_observation_enabled",
+                False,
+            ),
+            "asr_observation_status": getattr(
+                evidence,
+                "asr_observation_status",
+                "not_run",
+            ),
+            "asr_observation_event_id": (
+                evidence.asr_event_id
+                if getattr(evidence, "asr_observation_enabled", False)
+                else None
+            ),
             "latency_debug": evidence_latency_debug,
         }
     )
     if evidence.safe_refs:
         metadata["safe_refs"] = list(evidence.safe_refs)
+    metadata.update(_asr_question_projection(evidence))
+    metadata.update(_fast_interaction_projection(evidence))
     _validate_smoke_metadata(metadata)
     return metadata
+
+
+def _live_fast_gate_context(
+    *, active_task_context: MVP5ActiveSlowTaskContext | None
+) -> FastForegroundGateContext:
+    """Bind the live smoke to fail-closed provider candidate provenance.
+
+    Interaction and task-focus values are replaced from canonical journal
+    events by the live Router runner.  The remaining fields are locally owned
+    execution/capability facts; none are accepted from provider payloads.
+    """
+
+    pending = bool(
+        active_task_context is not None
+        and active_task_context.pending_confirmation_scope is not None
+    )
+    return FastForegroundGateContext(
+        authority_mode="live_runtime",
+        authority_binding_status="bound",
+        interaction_state=None,
+        interaction_state_ref=None,
+        task_focus=None,
+        task_focus_snapshot_ref=None,
+        has_active_slowtask=active_task_context is not None,
+        active_task_id=(active_task_context.task_id if active_task_context else None),
+        active_slowtask_lifecycle=(
+            active_task_context.lifecycle_phase if active_task_context else None
+        ),
+        pending_confirmation=pending,
+        pending_confirmation_id=(
+            active_task_context.pending_confirmation_id if pending else None
+        ),
+        pending_confirmation_scope=(
+            active_task_context.pending_confirmation_scope if pending else None
+        ),
+        capability_snapshot_ref="capability://mvp5/live-voice-evidence/provider-free",
+        capability_health_status="ready",
+        capability_output_mode="real",
+        capability_verification_status="provider_free_verified",
+        candidate_policy_decision=CandidatePolicyDecision.quarantined_provider(),
+        schema_valid=True,
+        confidence_threshold=0.8,
+    )
+
+
+def _journal_from_smoke_evidence(
+    events: Sequence[Mapping[str, Any]],
+) -> InMemoryEventJournal:
+    if not events:
+        raise MVP5RealVoiceE2ESmokeError("evidence events are required")
+    journal = InMemoryEventJournal(
+        session_id=str(events[0]["session_id"]),
+        conversation_id=str(events[0]["conversation_id"]),
+    )
+    for event in events:
+        journal._append_validated_event(dict(event))
+    return journal
+
+
+def _append_smoke_active_task_authority(
+    journal: InMemoryEventJournal,
+    active_task_context: MVP5ActiveSlowTaskContext | None,
+) -> None:
+    """Append the local smoke fixture's canonical current SlowTask state."""
+
+    if active_task_context is None:
+        return
+    if (
+        active_task_context.current_plan_version != 1
+        or active_task_context.current_task_event_seq != 4
+        or active_task_context.lifecycle_phase != "PLANNING"
+        or active_task_context.terminal_status is not None
+        or active_task_context.pending_confirmation_id is not None
+        or active_task_context.pending_confirmation_scope is not None
+    ):
+        raise MVP5RealVoiceE2ESmokeError(
+            "smoke active task authority must be canonical PLANNING plan 1 sequence 4"
+        )
+    if any(
+        event.get("event_name") == "SLOWTASK_CREATED"
+        and event.get("task_id") == active_task_context.task_id
+        for event in journal.events()
+    ):
+        return
+
+    last = journal.events()[-1]
+    monotonic_ms = int(last["created_monotonic_ms"])
+    wall_clock_ms = int(last["created_wall_clock_ms"])
+    task_id = active_task_context.task_id
+    safe_task_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", task_id).strip("-")
+    created = journal.append(
+        event_name="SLOWTASK_CREATED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_created",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(last["event_id"]),
+        created_monotonic_ms=monotonic_ms + 1,
+        created_wall_clock_ms=wall_clock_ms + 1,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=1,
+        initial_goal_ref=f"goal://synthetic/mvp5/{safe_task_id}",
+    )
+    created_state = journal.append(
+        event_name="SLOWTASK_STATE_CHANGED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_created_state",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(created["event_id"]),
+        created_monotonic_ms=monotonic_ms + 2,
+        created_wall_clock_ms=wall_clock_ms + 2,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=2,
+        from_state="CREATED",
+        to_state="CREATED",
+        reason="trusted_synthetic_smoke_authority",
+    )
+    planning = journal.append(
+        event_name="PLANNING_STARTED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_planning",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(created_state["event_id"]),
+        created_monotonic_ms=monotonic_ms + 3,
+        created_wall_clock_ms=wall_clock_ms + 3,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=3,
+        planning_reason="trusted_synthetic_smoke_authority",
+    )
+    journal.append(
+        event_name="SLOWTASK_STATE_CHANGED",
+        event_id=f"evt_smoke_{safe_task_id}_authority_planning_state",
+        source_module="slowtask_runtime",
+        caused_by_event_id=str(planning["event_id"]),
+        created_monotonic_ms=monotonic_ms + 4,
+        created_wall_clock_ms=wall_clock_ms + 4,
+        trace_redaction_level="metadata_only",
+        task_id=task_id,
+        plan_version=1,
+        task_event_seq=4,
+        from_state="CREATED",
+        to_state="PLANNING",
+        reason="trusted_synthetic_smoke_authority",
+    )
 
 
 def _incomplete_evidence_metadata(
@@ -217,6 +488,11 @@ def _incomplete_evidence_metadata(
             "expected_route_matched": False,
             "asr_output_mode": evidence.asr_output_mode,
             "thinker_output_mode": evidence.thinker_output_mode,
+            "fast_interaction_output_mode": getattr(
+                evidence,
+                "fast_interaction_output_mode",
+                None,
+            ),
             "local_wav_opt_in_used": evidence.local_wav_opt_in_used,
             "live_provider_approval_used": evidence.live_provider_approval_used,
             "provider_headers_included": False,
@@ -224,7 +500,47 @@ def _incomplete_evidence_metadata(
             "approval_packet_path_included": False,
         }
     )
+    metadata.update(_asr_question_projection(evidence))
+    metadata.update(_fast_interaction_projection(evidence))
     return metadata
+
+
+def _asr_question_projection(evidence: Any) -> dict[str, str]:
+    asr_event_id = getattr(evidence, "asr_event_id", None)
+    if not isinstance(asr_event_id, str) or asr_event_id == "":
+        return {}
+    for event in getattr(evidence, "events", ()):
+        if event.get("event_id") != asr_event_id:
+            continue
+        if event.get("event_name") not in {
+            "ASR_TRANSCRIPT_OUTPUT_EMITTED",
+            "MOCK_ASR_FRAME_EMITTED",
+        }:
+            return {}
+        text_ref = event.get("text_ref")
+        if not isinstance(text_ref, str) or text_ref == "":
+            return {}
+        return {
+            "question_event_id": asr_event_id,
+            "question_text_ref": text_ref,
+        }
+    return {}
+
+
+def _fast_interaction_projection(evidence: Any) -> dict[str, str]:
+    fast_event_id = getattr(evidence, "fast_interaction_event_id", None)
+    if not isinstance(fast_event_id, str) or fast_event_id == "":
+        return {}
+    for event in getattr(evidence, "events", ()):
+        if event.get("event_id") != fast_event_id:
+            continue
+        if event.get("event_name") != "FAST_INTERACTION_OUTPUT_EMITTED":
+            return {}
+        adapter_request_id = event.get("adapter_request_id")
+        if not isinstance(adapter_request_id, str) or adapter_request_id == "":
+            return {}
+        return {"fast_interaction_adapter_request_id": adapter_request_id}
+    return {}
 
 
 def run_mvp5_real_voice_e2e_pack(
@@ -675,6 +991,19 @@ def _validate_pack_budget(
         raise MVP5RealVoiceE2ESmokeError("pack request budget exceeds approval packet")
 
 
+def _single_run_provider_call_budget(
+    *,
+    fast_interaction_enabled: bool,
+    asr_observation_enabled: bool,
+    allow_fast_interaction_asr_text_fallback: bool,
+) -> int:
+    if fast_interaction_enabled:
+        if asr_observation_enabled or allow_fast_interaction_asr_text_fallback:
+            return 2
+        return 1
+    return _REQUESTS_PER_CASE
+
+
 def _pack_case_summary(*, case_id: str, metadata: Mapping[str, Any]) -> dict[str, Any]:
     keys = (
         "run_id",
@@ -740,21 +1069,71 @@ def _normalize_latency_debug(value: object) -> dict[str, Any]:
         "asr_provider_http_ms",
         "asr_normalize_emit_ms",
         "thinker_provider_http_ms",
+        "thinker_adapter_start_offset_ms",
+        "thinker_provider_request_start_offset_ms",
+        "thinker_provider_first_chunk_offset_ms",
+        "thinker_provider_full_response_offset_ms",
+        "thinker_adapter_event_emit_offset_ms",
+        "thinker_provider_ttft_ms",
+        "thinker_provider_full_response_ms",
+        "thinker_provider_generation_ms",
+        "thinker_stream_decode_ms",
         "thinker_parse_validate_emit_ms",
+        "fast_interaction_provider_http_ms",
+        "fast_interaction_adapter_start_offset_ms",
+        "fast_interaction_provider_request_start_offset_ms",
+        "fast_interaction_provider_first_chunk_offset_ms",
+        "fast_interaction_provider_full_response_offset_ms",
+        "fast_interaction_adapter_event_emit_offset_ms",
+        "fast_interaction_provider_ttft_ms",
+        "fast_interaction_provider_full_response_ms",
+        "fast_interaction_provider_generation_ms",
+        "fast_interaction_stream_decode_ms",
+        "fast_interaction_parse_validate_emit_ms",
+        "fast_interaction_total_ms",
+        "fast_interaction_timeout_ms",
+        "fast_answer_ready_offset_ms",
+        "qa_pair_ready_offset_ms",
+        "foreground_gate_ms",
+        "foreground_output_finalize_ms",
         "router_ms",
         "qa_history_ms",
     )
     bool_fields = (
         "provider_calls_parallel",
+        "provider_calls_overlapped",
         "asr_started_before_thinker_finished",
         "thinker_started_before_asr_finished",
+        "thinker_ttft_available",
+        "fast_interaction_timed_out",
+        "fast_interaction_ttft_available",
+        "asr_started_before_fast_interaction_finished",
+        "fast_interaction_started_before_asr_finished",
+    )
+    string_fields = (
+        "thinker_ttft_source",
+        "fast_interaction_input_mode",
+        "fast_interaction_timing_mode",
+        "fast_interaction_ttft_source",
+        "fast_interaction_failure_category",
     )
     source = value if isinstance(value, Mapping) else {}
     latency_debug: dict[str, Any] = {}
     for field in fields:
-        latency_debug[field] = _non_negative_int(source.get(field, 0), field)
+        raw_value = source.get(field)
+        latency_debug[field] = (
+            None if raw_value is None else _non_negative_int(raw_value, field)
+        )
     for field in bool_fields:
         latency_debug[field] = bool(source.get(field, False))
+    for field in string_fields:
+        raw_value = source.get(field, "")
+        if raw_value is None:
+            latency_debug[field] = ""
+        elif isinstance(raw_value, str):
+            latency_debug[field] = _require_safe_token(raw_value, field) if raw_value else ""
+        else:
+            raise MVP5RealVoiceE2ESmokeError(f"{field} must be a string")
     return latency_debug
 
 

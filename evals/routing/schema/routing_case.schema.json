@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voice-agent.local/schemas/voice_agent.routing_eval.case.v1.json",
+  "title": "voice_agent.routing_eval.case.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "case_id",
+    "scenario_family_id",
+    "split",
+    "input",
+    "context",
+    "gold",
+    "tags",
+    "criticality",
+    "annotation_status"
+  ],
+  "properties": {
+    "schema_name": {"const": "voice_agent.routing_eval.case.v1"},
+    "case_id": {"$ref": "#/$defs/safeToken"},
+    "scenario_family_id": {"$ref": "#/$defs/safeToken"},
+    "split": {"enum": ["prompt_dev", "validation", "locked_test"]},
+    "input": {"$ref": "#/$defs/input"},
+    "context": {"$ref": "#/$defs/context"},
+    "gold": {"$ref": "#/$defs/gold"},
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"}
+    },
+    "criticality": {"enum": ["low", "medium", "high"]},
+    "annotation_status": {"enum": ["draft", "human_reviewed", "adjudicated"]}
+  },
+  "$defs": {
+    "safeToken": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "input": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["modality", "locale", "utterance_text"],
+          "properties": {
+            "modality": {"const": "text"},
+            "locale": {"type": "string", "pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$"},
+            "utterance_text": {"type": "string", "minLength": 1, "maxLength": 2000}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["modality", "locale", "audio_ref"],
+          "properties": {
+            "modality": {"const": "audio"},
+            "locale": {"type": "string", "pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$"},
+            "audio_ref": {
+              "type": "string",
+              "pattern": "^audio-eval://(synthetic|local|locked)/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+            }
+          }
+        }
+      ]
+    },
+    "activeTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "task_type", "summary", "lifecycle_phase", "plan_version"],
+      "properties": {
+        "task_id": {"$ref": "#/$defs/safeToken"},
+        "task_type": {"$ref": "#/$defs/safeToken"},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "lifecycle_phase": {
+          "enum": [
+            "CREATED",
+            "PLANNING",
+            "WAITING_FOR_SLOT",
+            "EXECUTING",
+            "WAITING_FOR_USER_CONFIRMATION",
+            "COMPLETED",
+            "CANCELLED",
+            "FAILED"
+          ]
+        },
+        "plan_version": {"type": "integer", "minimum": 1},
+        "pending_confirmation_scope": {
+          "enum": [
+            "DEMO_DESTRUCTIVE_ACTION",
+            "TASK_CANCEL",
+            "SWITCH_TASK",
+            "RISK_ACKNOWLEDGEMENT",
+            "FINAL_ARGUMENT_CONFIRMATION"
+          ]
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template"],
+      "properties": {
+        "template": {
+          "enum": [
+            "NO_ACTIVE_TASK",
+            "ACTIVE_TASK_PLANNING",
+            "ACTIVE_TASK_WAITING_TOOL",
+            "ACTIVE_TASK_WAITING_CONFIRMATION",
+            "ACTIVE_TASK_WAITING_SLOT",
+            "ACTIVE_TASK_FINALIZING",
+            "TERMINAL_TASK",
+            "NON_ASSISTANT_BACKGROUND"
+          ]
+        },
+        "active_task": {"$ref": "#/$defs/activeTask"}
+      }
+    },
+    "gold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_focus_allowed",
+        "router_decisions_allowed",
+        "router_decisions_forbidden",
+        "foreground_policy",
+        "side_effect_expectations"
+      ],
+      "properties": {
+        "task_focus_allowed": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/taskFocus"}
+        },
+        "router_decisions_allowed": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/routerDecision"}
+        },
+        "router_decisions_forbidden": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/routerDecision"}
+        },
+        "foreground_policy": {
+          "enum": ["ANSWER", "ACK_SLOW", "ACK_PATCH", "SILENCE", "CLARIFY"]
+        },
+        "side_effect_expectations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["slow_task_created", "user_patch_emitted", "external_side_effects"],
+          "properties": {
+            "slow_task_created": {"type": "boolean"},
+            "user_patch_emitted": {"type": "boolean"},
+            "external_side_effects": {"const": "FORBIDDEN"}
+          }
+        }
+      }
+    },
+    "taskFocus": {
+      "enum": [
+        "ACTIVE_TASK_PATCH",
+        "FOREGROUND_CHAT",
+        "NEW_TASK_CANDIDATE",
+        "CANCEL_OR_PAUSE_CANDIDATE",
+        "NON_ASSISTANT",
+        "AMBIGUOUS"
+      ]
+    },
+    "routerDecision": {
+      "enum": ["FAST_ONLY", "SPAWN_SLOW_TASK", "PATCH_ACTIVE_SLOW_TASK", "IGNORE"]
+    }
+  }
+}

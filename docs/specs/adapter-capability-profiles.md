@@ -171,3 +171,64 @@ This spec implements `MVP3-ADAPTER-PROFILE-001` from
 It intentionally does not implement Slice 2 adapter health/error/degraded event
 harness behavior, Slice 3 session startup events, or any real ASR, Thinker,
 Slow LLM, or TTS provider behavior.
+
+## ADR-018 Post-ADR-017 / MVP6.x Slice 3B Profile Extension
+
+This accepted extension is not MVP-3. It defines
+`adapter_type=route_evidence` with exactly:
+
+```text
+supports_route_schema
+supports_task_focus
+supports_foreground_act_hint
+supports_ack_kind
+supports_candidate_safety_schema
+supports_prohibited_claim_detection
+supports_strict_json_validation
+supports_risk_tags
+supports_confidence
+```
+
+The ASR profile extension adds:
+
+```text
+supports_candidate_output_audio_shadow_verification
+```
+
+Qwen role/session profiles declare:
+
+```text
+supports_smart_turn
+supports_streaming_asr
+supports_provider_response_cancellation
+supports_provider_item_create
+supports_provider_item_delete_ack
+supports_manual_response_while_idle
+supports_text_only_response_override
+supports_candidate_quarantine
+supports_provider_native_audio_release
+supports_provider_context_readiness
+supports_context_rebuild
+```
+
+Every Slice 3B profile keeps `documentation_support`,
+`provider_free_test_support`, `real_live_support`, and
+`status=real|mock|fallback|degraded` as separate fields.
+
+Slice 3B.1 uses this explicit provider-free profile boundary:
+
+```text
+status=mock
+output_mode=mock
+provider_free_test_support=true
+real_live_support=false
+supports_smart_turn=true
+supports_streaming_asr=true
+supports_candidate_quarantine=true
+supports_provider_native_audio_release=false
+```
+
+Fake protocol support never implies real-live support. Slice 3B.2 must replace
+the Fake transport and produce separate live evidence before any real
+capability can be promoted. The Slice 3B.1 runtime separately enforces
+`native_pcm_enabled=false`.

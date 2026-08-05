@@ -7,8 +7,14 @@ from typing import Any
 import pytest
 
 from tests.runtime.test_asr_runtime_integration import _approved_packet
+from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
+from voice_agent.adapters.lalm_thinker_audio_native_runtime import (
+    emit_lalm_thinker_audio_native_evidence_for_turn,
+)
 from voice_agent.replay.runner import run_replay_fixture
 from voice_agent.runtime import mvp4_voice_e2e_orchestrator as mvp4
+from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
+from voice_agent.events.journal import InMemoryEventJournal
 
 
 def test_real_evidence_paths_emit_metadata_only_refs_and_router_ready_event_ids(
@@ -171,6 +177,106 @@ def test_real_evidence_replay_uses_recorded_refs_without_rerunning_adapters(
     assert asr_transport.call_count == 1
 
 
+def test_audio_native_runtime_preserves_timing_metadata_on_success() -> None:
+    journal = InMemoryEventJournal(
+        session_id="sess_audio_native_timing_success",
+        conversation_id="conv_audio_native_timing",
+    )
+    transport = _TimingMVP4ThinkerAudioTransport(mode="valid")
+    turn_event = _append_audio_turn(journal, "success")
+
+    result = emit_lalm_thinker_audio_native_evidence_for_turn(
+        boundary=AdapterCallbackAppendBoundary(journal),
+        turn_committed_event=turn_event,
+        case_id="timing-success",
+        transport=transport,
+        audio_payload=b"RIFF0000WAVE",
+        audio_format="wav",
+        credential_value="synthetic-credential-value",
+        created_monotonic_ms=400,
+        created_wall_clock_ms=1700000000400,
+    )
+
+    metadata = result.to_metadata()
+    assert result.success is True
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert metadata["thinker_provider_full_response_ms"] == 80
+    assert metadata["thinker_provider_generation_ms"] == 55
+    assert metadata["thinker_ttft_available"] is True
+    assert metadata["raw_audio_included"] is False
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert "provider_text" not in repr(metadata)
+    assert "synthetic-credential-value" not in repr(metadata)
+
+
+def test_audio_native_runtime_preserves_timing_metadata_on_validation_failure() -> None:
+    journal = InMemoryEventJournal(
+        session_id="sess_audio_native_timing_validation_failure",
+        conversation_id="conv_audio_native_timing",
+    )
+    transport = _TimingMVP4ThinkerAudioTransport(mode="invalid")
+    turn_event = _append_audio_turn(journal, "validation-failure")
+
+    result = emit_lalm_thinker_audio_native_evidence_for_turn(
+        boundary=AdapterCallbackAppendBoundary(journal),
+        turn_committed_event=turn_event,
+        case_id="timing-validation-failure",
+        transport=transport,
+        audio_payload=b"RIFF0000WAVE",
+        audio_format="wav",
+        credential_value="synthetic-credential-value",
+        created_monotonic_ms=400,
+        created_wall_clock_ms=1700000000400,
+    )
+
+    metadata = result.to_metadata()
+    assert result.success is False
+    assert result.validation_failed_event is not None
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert metadata["thinker_provider_full_response_ms"] == 80
+    assert metadata["thinker_provider_generation_ms"] == 55
+    assert metadata["thinker_ttft_available"] is True
+    assert metadata["raw_audio_included"] is False
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert "provider_text" not in repr(metadata)
+    assert "{bad}" not in repr(metadata)
+    assert "synthetic-credential-value" not in repr(metadata)
+
+
+def test_audio_native_runtime_sanitizes_malicious_timing_metadata() -> None:
+    journal = InMemoryEventJournal(
+        session_id="sess_audio_native_malicious_timing",
+        conversation_id="conv_audio_native_timing",
+    )
+    transport = _TimingMVP4ThinkerAudioTransport(mode="malicious_timing")
+    turn_event = _append_audio_turn(journal, "malicious-timing")
+
+    result = emit_lalm_thinker_audio_native_evidence_for_turn(
+        boundary=AdapterCallbackAppendBoundary(journal),
+        turn_committed_event=turn_event,
+        case_id="timing-malicious",
+        transport=transport,
+        audio_payload=b"RIFF0000WAVE",
+        audio_format="wav",
+        credential_value="synthetic-credential-value",
+        created_monotonic_ms=400,
+        created_wall_clock_ms=1700000000400,
+    )
+
+    metadata = result.to_metadata()
+    rendered = repr(metadata)
+    assert result.success is True
+    assert metadata["thinker_provider_ttft_ms"] == 25
+    assert metadata["raw_audio_included"] is False
+    assert metadata["raw_provider_request_included"] is False
+    assert metadata["raw_provider_response_included"] is False
+    assert metadata["secret_included"] is False
+    assert "token=synthetic-leak" not in rendered
+    assert "raw_provider_body" not in rendered
+
+
 class _FakeMVP4ThinkerAudioTransport:
     def __init__(self) -> None:
         self.call_count = 0
@@ -217,6 +323,51 @@ class _FakeMVP4ThinkerAudioTransport:
             "evidence_uncertainty": "low",
         }
         return json.dumps(skeleton, separators=(",", ":"), sort_keys=True)
+
+
+class _TimingMVP4ThinkerAudioTransport(_FakeMVP4ThinkerAudioTransport):
+    def __init__(self, *, mode: str) -> None:
+        super().__init__()
+        self.mode = mode
+
+    def complete_audio_with_timing(
+        self,
+        *,
+        request_payload: object,
+        audio_bytes: bytes,
+        audio_format: str,
+        credential_handle: object,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+        turn_ingress_monotonic_ms: int,
+    ) -> object:
+        assert turn_ingress_monotonic_ms == 400
+        if self.mode == "invalid":
+            provider_text = "{bad}"
+            self.call_count += 1
+            self.audio_bytes_seen = audio_bytes
+            self.audio_format_seen = audio_format
+        else:
+            provider_text = self.complete_audio(
+                request_payload=request_payload,
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
+                credential_handle=credential_handle,
+                credential_value=credential_value,
+                adapter_request_id=adapter_request_id,
+                timeout_ms=timeout_ms,
+                model_alias=model_alias,
+            )
+        timing: object = _MaliciousTiming() if self.mode == "malicious_timing" else _timing_snapshot()
+        return _TimingCompletion(provider_text=provider_text, timing=timing)
+
+
+class _TimingCompletion:
+    def __init__(self, *, provider_text: str, timing: object) -> None:
+        self.provider_text = provider_text
+        self.timing = timing
 
 
 class _FakeMVP4AsrTransport:
@@ -268,4 +419,82 @@ class _FakeMVP4AsrMetadata:
             "headers_included": False,
             "authorization_header_included": False,
             "secret_included": False,
+        }
+
+
+def _audio_turn_event(suffix: str) -> dict[str, object]:
+    safe_suffix = suffix.replace("-", "_")
+    return {
+        "event_name": "TURN_INGRESS_COMMITTED",
+        "event_id": f"evt_audio_native_timing_{safe_suffix}",
+        "turn_id": f"turn_audio_native_timing_{safe_suffix}",
+        "utterance_id": f"utt_audio_native_timing_{safe_suffix}",
+        "input_modality": "audio",
+        "audio_span_id": f"audio_audio_native_timing_{safe_suffix}",
+        "audio_input_ref": f"audio://synthetic/audio-native-timing/{suffix}",
+    }
+
+
+def _append_audio_turn(journal: InMemoryEventJournal, suffix: str) -> dict[str, object]:
+    event = _audio_turn_event(suffix)
+    session = journal.append(
+        event_name="SESSION_STARTED",
+        event_id=f"evt_audio_native_timing_session_{suffix.replace('-', '_')}",
+        source_module="session_runtime",
+        created_monotonic_ms=100,
+        created_wall_clock_ms=1700000000100,
+        trace_redaction_level="metadata_only",
+        runtime_config_ref="config://synthetic/audio-native-timing",
+        capability_snapshot_ref="capability://synthetic/audio-native-timing",
+    )
+    return journal.append(
+        event_name=str(event["event_name"]),
+        event_id=str(event["event_id"]),
+        source_module="interaction_controller",
+        caused_by_event_id=str(session["event_id"]),
+        created_monotonic_ms=190,
+        created_wall_clock_ms=1700000000190,
+        trace_redaction_level="metadata_only",
+        turn_id=str(event["turn_id"]),
+        utterance_id=str(event["utterance_id"]),
+        input_modality=str(event["input_modality"]),
+        audio_span_id=str(event["audio_span_id"]),
+        audio_input_ref=str(event["audio_input_ref"]),
+        directedness="ASSUMED_DIRECTED",
+        semantic_close="ASSUMED_CLOSED",
+        ingress_outcome="COMMITTED",
+    )
+
+
+def _timing_snapshot() -> AdapterTimingSnapshot:
+    return AdapterTimingSnapshot(
+        adapter_start_offset_ms=0,
+        provider_request_start_offset_ms=0,
+        provider_first_chunk_offset_ms=25,
+        provider_full_response_offset_ms=80,
+        adapter_event_emit_offset_ms=85,
+        provider_ttft_ms=25,
+        provider_full_response_ms=80,
+        provider_generation_ms=55,
+        stream_decode_ms=0,
+        parse_validate_emit_ms=0,
+        total_ms=85,
+        timing_mode="streaming",
+        ttft_available=True,
+        ttft_source="provider_stream_chunk",
+    )
+
+
+class _MaliciousTiming:
+    def to_prefixed_metadata(self, prefix: str) -> dict[str, object]:
+        assert prefix == "thinker"
+        return {
+            "thinker_provider_ttft_ms": 25,
+            "thinker_provider_full_response_ms": 80,
+            "thinker_provider_generation_ms": 55,
+            "thinker_ttft_available": True,
+            "thinker_ttft_source": "provider_stream_chunk",
+            "raw_provider_response_included": True,
+            "secret_included": True,
+            "raw_provider_body": "token=synthetic-leak",
         }

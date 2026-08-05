@@ -45,6 +45,14 @@ GITHUB_SAFE_AUTHORIZATION_REF_PREFIXES = (
     "authorization://redacted/",
     "authorization://minimal/",
 )
+SAFE_RELEASE_TOKEN_ID_PATTERN = re.compile(
+    r"\Arelease_token_[0-9a-f]{32}\Z"
+)
+SAFE_RELEASE_TOKEN_REF_PATTERN = re.compile(
+    r"\Arelease-token://"
+    r"(?P<domain>synthetic|redacted|minimal|local)/"
+    r"(?P<token_id>release_token_[0-9a-f]{32})\Z"
+)
 
 
 def sanitize_event_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -69,6 +77,35 @@ def is_safe_authorization_ref(value: str, *, allow_local: bool = True) -> bool:
     return True
 
 
+def is_safe_release_token_id(value: str) -> bool:
+    if not SAFE_RELEASE_TOKEN_ID_PATTERN.fullmatch(value):
+        return False
+    return all(
+        not SECRET_VALUE_PATTERN.search(candidate)
+        and not LOCAL_ONLY_PATH_PATTERN.search(candidate)
+        and not AUTHORIZATION_REF_CREDENTIAL_COMPONENT_PATTERN.search(candidate)
+        for candidate in _authorization_ref_safety_variants(value)
+    )
+
+
+def is_safe_release_token_ref(value: str, *, allow_local: bool = True) -> bool:
+    variants = _authorization_ref_safety_variants(value)
+    if len(variants) != 1:
+        return False
+    match = SAFE_RELEASE_TOKEN_REF_PATTERN.fullmatch(value)
+    if match is None:
+        return False
+    if match.group("domain") == "local" and not allow_local:
+        return False
+    return (
+        is_safe_release_token_id(match.group("token_id"))
+        and not SECRET_VALUE_PATTERN.search(value)
+        and not LOCAL_ONLY_PATH_PATTERN.search(value)
+        and not AUTHORIZATION_REF_QUERY_OR_FRAGMENT_PATTERN.search(value)
+        and not AUTHORIZATION_REF_CREDENTIAL_COMPONENT_PATTERN.search(value)
+    )
+
+
 def _authorization_ref_safety_variants(value: str) -> tuple[str, ...]:
     variants = [value]
     decoded = value
@@ -91,6 +128,12 @@ def _sanitize_mapping(value: dict[str, Any], path: tuple[str, ...], redacted_fie
         if str(key) == "authorization_ref":
             sanitized[key] = _sanitize_authorization_ref(child, key_path)
             continue
+        if str(key) == "release_token_id":
+            sanitized[key] = _sanitize_release_token_id(child, key_path)
+            continue
+        if str(key) == "release_token_ref":
+            sanitized[key] = _sanitize_release_token_ref(child, key_path)
+            continue
         if str(key) in ALLOWED_SECRET_METADATA_FIELDS:
             sanitized[key] = _sanitize_value(child, key_path, redacted_fields)
             continue
@@ -106,6 +149,20 @@ def _sanitize_authorization_ref(value: Any, path: tuple[str, ...]) -> str:
     key_path_label = ".".join(path)
     if not isinstance(value, str) or not is_safe_authorization_ref(value):
         raise PayloadBlockedError(f"Blocked unsafe authorization_ref at: {key_path_label}")
+    return value
+
+
+def _sanitize_release_token_id(value: Any, path: tuple[str, ...]) -> str:
+    key_path_label = ".".join(path)
+    if not isinstance(value, str) or not is_safe_release_token_id(value):
+        raise PayloadBlockedError(f"Blocked unsafe release_token_id at: {key_path_label}")
+    return value
+
+
+def _sanitize_release_token_ref(value: Any, path: tuple[str, ...]) -> str:
+    key_path_label = ".".join(path)
+    if not isinstance(value, str) or not is_safe_release_token_ref(value):
+        raise PayloadBlockedError(f"Blocked unsafe release_token_ref at: {key_path_label}")
     return value
 
 

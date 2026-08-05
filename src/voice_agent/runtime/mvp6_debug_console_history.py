@@ -4,11 +4,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
+from threading import Lock
 from typing import Any
+
+from voice_agent.runtime.local_debug_text_safety import contains_likely_credential
 
 
 class MVP6QAHistoryError(ValueError):
     """Raised when MVP-6 QA history would persist unsafe debug data."""
+
+
+_HISTORY_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -25,8 +31,23 @@ class MVP6QAHistoryEntry:
     route_result_kind: str | None
     asr_output_mode: str | None
     thinker_output_mode: str | None
-    provider_call_used: bool
-    fake_transport_used: bool
+    qa_status: str | None = None
+    question_status: str | None = None
+    question_event_id: str | None = None
+    question_text_ref: str | None = None
+    answer_status: str | None = None
+    answer_source: str | None = None
+    credential_redaction_applied: bool = False
+    asr_observation_enabled: bool = False
+    asr_observation_status: str | None = None
+    asr_observation_event_id: str | None = None
+    fast_interaction_output_mode: str | None = None
+    foreground_gate_decision: str | None = None
+    foreground_output_basis: str | None = None
+    foreground_gate_failure_reason: str | None = None
+    latency_debug: Mapping[str, Any] = field(default_factory=dict)
+    provider_call_used: bool = False
+    fake_transport_used: bool = False
     event_ids: tuple[str, ...] = field(default_factory=tuple)
     safe_refs: tuple[str, ...] = field(default_factory=tuple)
 
@@ -98,11 +119,12 @@ def append_mvp6_qa_history(path: str | Path, entry: MVP6QAHistoryEntry) -> dict[
     history_path = Path(path)
     record = _record_from_entry(entry)
     validate_mvp6_history_record(record)
-    history_path.parent.mkdir(parents=True, exist_ok=True)
     rendered_record = json.dumps(record, separators=(",", ":"), sort_keys=True)
-    with history_path.open("a", encoding="utf-8") as history_file:
-        history_file.write(rendered_record)
-        history_file.write("\n")
+    with _HISTORY_LOCK:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        with history_path.open("a", encoding="utf-8") as history_file:
+            history_file.write(rendered_record)
+            history_file.write("\n")
     persisted_record = json.loads(rendered_record)
     if not isinstance(persisted_record, dict):
         raise MVP6QAHistoryError("persisted QA history record must be an object")
@@ -111,13 +133,15 @@ def append_mvp6_qa_history(path: str | Path, entry: MVP6QAHistoryEntry) -> dict[
 
 def read_mvp6_qa_history(path: str | Path, limit: int = 20) -> list[dict[str, Any]]:
     history_path = Path(path)
-    if not history_path.exists():
-        return []
     if limit <= 0:
         return []
 
     records: list[dict[str, Any]] = []
-    for line_number, line in enumerate(history_path.read_text(encoding="utf-8").splitlines(), 1):
+    with _HISTORY_LOCK:
+        if not history_path.exists():
+            return []
+        lines = history_path.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, 1):
         if not line.strip():
             continue
         try:
@@ -134,8 +158,9 @@ def read_mvp6_qa_history(path: str | Path, limit: int = 20) -> list[dict[str, An
 
 def clear_mvp6_qa_history(path: str | Path) -> None:
     history_path = Path(path)
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    history_path.write_text("", encoding="utf-8")
+    with _HISTORY_LOCK:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text("", encoding="utf-8")
 
 
 def validate_mvp6_history_record(record: Mapping[str, Any]) -> None:
@@ -167,6 +192,8 @@ def _validate_no_unsafe_content(value: Any) -> None:
         raise MVP6QAHistoryError("unsafe QA history bytes")
 
     if isinstance(value, str):
+        if contains_likely_credential(value):
+            raise MVP6QAHistoryError("likely credential rejected from QA history")
         value_lower = value.lower()
         for marker in _UNSAFE_STRING_MARKERS:
             if marker in value_lower:

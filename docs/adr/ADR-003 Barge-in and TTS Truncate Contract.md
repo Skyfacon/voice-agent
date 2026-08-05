@@ -124,3 +124,11 @@ MVP-0 必须验证：
 - Talker truncate 后是否需要返回“实际停止 offset”，用于修正 `PLAYBACK_COMMITTED`？
 - 用户打断后，Composer 是否必须知道上一段 assistant audio 已播到哪个文本/token 位置？
 - echo_likelihood 的 MVP mock 默认值如何设定，才能避免误导 eval？
+
+## ADR-018 Accepted Addendum
+
+`ForegroundReleaseTokenV1` binds provider generation, context snapshot, turn,
+utterance, response, output item, transcript digest, PCM manifest digest, and
+playback epoch. `FULL` requires playback finish/commit. `TRUNCATED` uses actual
+stop offset. `NOT_STARTED` deletes the unheard provider item. Undelivered
+suffixes never become shared conversational facts.

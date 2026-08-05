@@ -8,11 +8,30 @@ class EventRegistryError(ValueError):
 
 
 @dataclass(frozen=True)
+class ConditionalRequiredFields:
+    when_field: str
+    when_value: object
+    required_fields: tuple[str, ...]
+    and_conditions: tuple[tuple[str, object], ...] = ()
+
+
+@dataclass(frozen=True)
+class AllOrNoneFields:
+    fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class EventDefinition:
     event_name: str
     required_fields: tuple[str, ...]
     one_of_fields: tuple[tuple[str, ...], ...] = ()
+    any_of_field_sets: tuple[tuple[str, ...], ...] = ()
     literal_fields: dict[str, object] = field(default_factory=dict)
+    enum_fields: dict[str, frozenset[object]] = field(default_factory=dict)
+    conditional_required_fields: tuple[ConditionalRequiredFields, ...] = ()
+    all_or_none_fields: tuple[AllOrNoneFields, ...] = ()
+    domain: str | None = None
+    category: str | None = None
     is_root: bool = False
     caused_by_event_required: bool = True
 
@@ -22,7 +41,13 @@ def _definition(
     *,
     required_fields: tuple[str, ...] = (),
     one_of_fields: tuple[tuple[str, ...], ...] = (),
+    any_of_field_sets: tuple[tuple[str, ...], ...] = (),
     literal_fields: dict[str, object] | None = None,
+    enum_fields: dict[str, frozenset[object]] | None = None,
+    conditional_required_fields: tuple[ConditionalRequiredFields, ...] = (),
+    all_or_none_fields: tuple[AllOrNoneFields, ...] = (),
+    domain: str | None = None,
+    category: str | None = None,
     is_root: bool = False,
     caused_by_event_required: bool = True,
 ) -> EventDefinition:
@@ -30,7 +55,13 @@ def _definition(
         event_name=event_name,
         required_fields=required_fields,
         one_of_fields=one_of_fields,
+        any_of_field_sets=any_of_field_sets,
         literal_fields=literal_fields or {},
+        enum_fields=enum_fields or {},
+        conditional_required_fields=conditional_required_fields,
+        all_or_none_fields=all_or_none_fields,
+        domain=domain,
+        category=category,
         is_root=is_root,
         caused_by_event_required=caused_by_event_required,
     )
@@ -108,6 +139,15 @@ MVP0_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
             "input_modality": "audio",
             "transcript_finality": "final",
         },
+        all_or_none_fields=(
+            AllOrNoneFields(
+                fields=(
+                    "provider_session_generation",
+                    "qwen_input_item_ref",
+                    "qwen_input_content_index",
+                )
+            ),
+        ),
     ),
     "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED": _definition(
         "THINKER_SEMANTIC_FRAME_OUTPUT_EMITTED",
@@ -807,10 +847,499 @@ MVP2_EVENT_NAMES = frozenset(MVP2_EVENT_DEFINITIONS) | {
     "TOOL_CALL_STARTED",
     "TOOL_RESULT_RECEIVED",
 }
+
+PARALLEL_FAST_OUTPUT_FIELDS = (
+    "qwen_candidate_adapter_id",
+    "qwen_candidate_adapter_request_id",
+    "route_evidence_event_id",
+    "route_evidence_adapter_request_id",
+    "candidate_safety_evidence_event_id",
+    "candidate_safety_adapter_request_id",
+    "context_snapshot_id",
+    "provider_session_generation",
+)
+PARALLEL_CANDIDATE_FIELDS = (
+    "qwen_response_id",
+    "qwen_output_item_id",
+    "qwen_output_index",
+    "qwen_content_index",
+    "candidate_transcript_digest",
+    "candidate_pcm_manifest_digest",
+    "candidate_audio_format_ref",
+    "candidate_audio_duration_ms",
+    "provider_session_generation",
+    "context_snapshot_id",
+)
+PARALLEL_GATE_FIELDS = (
+    "candidate_check_policy_version",
+    "candidate_length_check",
+    "candidate_duration_check",
+    "candidate_terminal_check",
+    "native_pcm_capability_check",
+    "generation_check",
+    "context_snapshot_check",
+    "route_evidence_check",
+    "candidate_safety_check",
+    "transcript_digest_check",
+    "pcm_manifest_check",
+    "correlation_check",
+    "provider_session_generation",
+    "context_snapshot_id",
+    "route_evidence_event_id",
+    "candidate_safety_evidence_event_id",
+)
+FAST_INTERACTION_TOPOLOGIES = frozenset(
+    {"atomic_single_call", "speculative_candidate_parallel_route"}
+)
+
+FAST_FOREGROUND_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
+    "FAST_INTERACTION_OUTPUT_EMITTED": _definition(
+        "FAST_INTERACTION_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "turn_id",
+            "utterance_id",
+            "route_hint_ref",
+            "route_prelude_ref",
+            "foreground_act",
+            "final_fast_evidence_ref",
+            "schema_name",
+            "normalization_status",
+            "output_mode",
+            "input_mode",
+            "fast_interaction_input_mode",
+            "source_event_ids",
+        ),
+        literal_fields={
+            "adapter_type": "fast_interaction",
+            "normalization_status": "normalized",
+        },
+        enum_fields={
+            "fast_interaction_topology": FAST_INTERACTION_TOPOLOGIES,
+        },
+        conditional_required_fields=(
+            ConditionalRequiredFields(
+                when_field="fast_interaction_topology",
+                when_value="speculative_candidate_parallel_route",
+                required_fields=PARALLEL_FAST_OUTPUT_FIELDS,
+            ),
+        ),
+        domain="fast_foreground",
+        category="adapter_output",
+    ),
+    "FOREGROUND_REPLY_CANDIDATE_EMITTED": _definition(
+        "FOREGROUND_REPLY_CANDIDATE_EMITTED",
+        required_fields=(
+            "candidate_id",
+            "fast_interaction_output_event_id",
+            "turn_id",
+            "utterance_id",
+            "candidate_status",
+            "input_mode",
+            "fast_interaction_input_mode",
+            "source_event_ids",
+            "risk_tags",
+            "confidence",
+            "trace_redaction_level",
+        ),
+        one_of_fields=(("candidate_ref", "reply_delta_stream_ref"),),
+        enum_fields={
+            "fast_interaction_topology": FAST_INTERACTION_TOPOLOGIES,
+        },
+        conditional_required_fields=(
+            ConditionalRequiredFields(
+                when_field="fast_interaction_topology",
+                when_value="speculative_candidate_parallel_route",
+                required_fields=PARALLEL_CANDIDATE_FIELDS,
+            ),
+        ),
+        domain="fast_foreground",
+        category="reply_candidate",
+    ),
+    "FOREGROUND_ACT_GATE_PASSED": _definition(
+        "FOREGROUND_ACT_GATE_PASSED",
+        required_fields=(
+            "gate_decision_id",
+            "candidate_event_id",
+            "router_decision_event_id",
+            "foreground_act",
+            "risk_class",
+            "confidence",
+            "policy_version",
+            "pass_reason",
+        ),
+        literal_fields={
+            "foreground_act": "ANSWER",
+            "risk_class": "LOW",
+        },
+        enum_fields={
+            "fast_interaction_topology": FAST_INTERACTION_TOPOLOGIES,
+        },
+        conditional_required_fields=(
+            ConditionalRequiredFields(
+                when_field="fast_interaction_topology",
+                when_value="speculative_candidate_parallel_route",
+                required_fields=(*PARALLEL_GATE_FIELDS, "release_token_ref"),
+            ),
+        ),
+        domain="fast_foreground",
+        category="gate_decision",
+    ),
+    "FOREGROUND_ACT_GATE_FAILED": _definition(
+        "FOREGROUND_ACT_GATE_FAILED",
+        required_fields=(
+            "gate_decision_id",
+            "router_decision_event_id",
+            "foreground_act",
+            "risk_class",
+            "confidence",
+            "policy_version",
+            "failure_reason",
+        ),
+        enum_fields={
+            "fast_interaction_topology": FAST_INTERACTION_TOPOLOGIES,
+        },
+        conditional_required_fields=(
+            ConditionalRequiredFields(
+                when_field="fast_interaction_topology",
+                when_value="speculative_candidate_parallel_route",
+                required_fields=PARALLEL_GATE_FIELDS,
+            ),
+        ),
+        domain="fast_foreground",
+        category="gate_decision",
+    ),
+    "FOREGROUND_OUTPUT_COMMITTED": _definition(
+        "FOREGROUND_OUTPUT_COMMITTED",
+        required_fields=(
+            "foreground_output_id",
+            "turn_id",
+            "utterance_id",
+            "output_ref",
+            "output_basis",
+            "router_decision_event_id",
+            "user_visible_channel",
+        ),
+        any_of_field_sets=(("gate_event_id",), ("fallback_policy_ref", "fallback_reason")),
+        enum_fields={
+            "fast_interaction_topology": FAST_INTERACTION_TOPOLOGIES,
+        },
+        conditional_required_fields=(
+            ConditionalRequiredFields(
+                when_field="fast_interaction_topology",
+                when_value="speculative_candidate_parallel_route",
+                required_fields=("release_token_ref",),
+                and_conditions=(("user_visible_channel", "audio_pending"),),
+            ),
+        ),
+        domain="fast_foreground",
+        category="foreground_output",
+    ),
+    "FOREGROUND_OUTPUT_DISCARDED": _definition(
+        "FOREGROUND_OUTPUT_DISCARDED",
+        required_fields=(
+            "discard_id",
+            "candidate_event_id",
+            "fast_interaction_output_event_id",
+            "router_decision_event_id",
+            "discard_reason",
+        ),
+        domain="fast_foreground",
+        category="foreground_output",
+    ),
+}
+FAST_FOREGROUND_EVENT_NAMES = frozenset(FAST_FOREGROUND_EVENT_DEFINITIONS)
+
+ADR018_EVENT_DEFINITIONS: dict[str, EventDefinition] = {
+    "ROUTE_EVIDENCE_OUTPUT_EMITTED": _definition(
+        "ROUTE_EVIDENCE_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "turn_id",
+            "utterance_id",
+            "final_asr_event_id",
+            "context_projection_event_id",
+            "route_hint",
+            "task_focus_hint",
+            "foreground_act_hint",
+            "ack_kind",
+            "risk_class",
+            "risk_tags",
+            "evidence_uncertainty",
+            "confidence",
+            "schema_name",
+            "normalization_status",
+            "output_mode",
+        ),
+        literal_fields={
+            "adapter_type": "route_evidence",
+            "schema_name": "voice_agent.route_evidence.output.v1",
+            "normalization_status": "normalized",
+        },
+        enum_fields={
+            "route_hint": frozenset(
+                {"FAST_ONLY", "SPAWN_SLOW_TASK", "PATCH_ACTIVE_SLOW_TASK", "IGNORE"}
+            ),
+            "task_focus_hint": frozenset(
+                {
+                    "ACTIVE_TASK_PATCH",
+                    "FOREGROUND_CHAT",
+                    "NEW_TASK_CANDIDATE",
+                    "CANCEL_OR_PAUSE_CANDIDATE",
+                    "NON_ASSISTANT",
+                    "AMBIGUOUS",
+                }
+            ),
+            "foreground_act_hint": frozenset(
+                {"ANSWER", "ACK_SLOW", "ACK_PATCH", "SILENCE", "CLARIFY"}
+            ),
+            "ack_kind": frozenset(
+                {
+                    "CHAT",
+                    "SEARCH_ACCEPTED",
+                    "COMPARE_ACCEPTED",
+                    "PLAN_ACCEPTED",
+                    "PATCH_RECEIVED",
+                    "CLARIFY_NEEDED",
+                    "WAITING_CONFIRMATION",
+                    "SILENCE",
+                }
+            ),
+            "risk_class": frozenset({"LOW", "MEDIUM", "HIGH", "UNKNOWN"}),
+            "evidence_uncertainty": frozenset({"LOW", "MEDIUM", "HIGH"}),
+        },
+        domain="route_evidence",
+        category="adapter_output",
+    ),
+    "CANDIDATE_SAFETY_EVIDENCE_OUTPUT_EMITTED": _definition(
+        "CANDIDATE_SAFETY_EVIDENCE_OUTPUT_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "turn_id",
+            "utterance_id",
+            "qwen_response_id",
+            "candidate_transcript_digest",
+            "context_projection_event_id",
+            "decision",
+            "semantic_categories",
+            "prohibited_flags",
+            "confidence",
+            "schema_name",
+            "normalization_status",
+            "output_mode",
+        ),
+        literal_fields={
+            "adapter_type": "route_evidence",
+            "schema_name": "voice_agent.candidate_safety.output.v1",
+            "normalization_status": "normalized",
+        },
+        enum_fields={
+            "decision": frozenset({"SAFE", "UNSAFE", "UNCERTAIN"}),
+        },
+        domain="route_evidence",
+        category="adapter_output",
+    ),
+    "MODEL_CONTEXT_PROJECTION_EMITTED": _definition(
+        "MODEL_CONTEXT_PROJECTION_EMITTED",
+        required_fields=(
+            "projection_id",
+            "target_role",
+            "source_event_ids",
+            "context_snapshot_id",
+            "source_event_seq",
+            "provider_session_generation",
+            "projection_ref",
+            "policy_version",
+            "redaction_status",
+            "output_mode",
+        ),
+        enum_fields={
+            "target_role": frozenset(
+                {
+                    "route_evidence",
+                    "candidate_safety",
+                    "fast_candidate",
+                    "composer",
+                }
+            ),
+        },
+        domain="context_projection",
+        category="projection",
+    ),
+    "SLOW_TO_FAST_HANDOFF_EMITTED": _definition(
+        "SLOW_TO_FAST_HANDOFF_EMITTED",
+        required_fields=(
+            "handoff_id",
+            "kind",
+            "delivery_mode",
+            "task_id",
+            "plan_version",
+            "task_event_seq",
+            "source_event_ids",
+            "facts_ref",
+            "must_say_fields_ref",
+            "forbidden_claims_ref",
+            "priority",
+            "expiry_status",
+            "redaction_status",
+        ),
+        enum_fields={
+            "kind": frozenset(
+                {
+                    "PROGRESS",
+                    "CLARIFICATION",
+                    "CONFIRMATION",
+                    "FINAL",
+                    "DEGRADED",
+                    "FAILED",
+                }
+            ),
+            "delivery_mode": frozenset({"CONTEXT_ONLY", "SPEAK_WHEN_IDLE"}),
+            "expiry_status": frozenset({"CURRENT", "EXPIRED"}),
+        },
+        domain="slow_to_fast",
+        category="handoff",
+    ),
+    "SLOW_TO_FAST_HANDOFF_DISPOSITIONED": _definition(
+        "SLOW_TO_FAST_HANDOFF_DISPOSITIONED",
+        required_fields=("handoff_id", "disposition", "reason"),
+        enum_fields={
+            "disposition": frozenset(
+                {
+                    "QUEUED",
+                    "COALESCED",
+                    "SELECTED",
+                    "STALE",
+                    "EXPIRED",
+                    "CANCELLED",
+                    "DISCARDED",
+                }
+            ),
+        },
+        domain="slow_to_fast",
+        category="handoff_disposition",
+    ),
+    "RESPONSE_ARBITRATION_DECIDED": _definition(
+        "RESPONSE_ARBITRATION_DECIDED",
+        required_fields=(
+            "arbitration_id",
+            "selected_source_type",
+            "superseded_source_event_ids",
+            "provider_session_generation",
+            "playback_epoch",
+            "interaction_state_version",
+            "decision_reason",
+        ),
+        enum_fields={
+            "selected_source_type": frozenset(
+                {
+                    "user_fast",
+                    "confirmation",
+                    "clarification",
+                    "progress",
+                    "final",
+                    "none",
+                }
+            ),
+        },
+        domain="response_arbitration",
+        category="decision",
+    ),
+    "PROVIDER_CONTEXT_STATE_CHANGED": _definition(
+        "PROVIDER_CONTEXT_STATE_CHANGED",
+        required_fields=(
+            "adapter_id",
+            "provider_session_generation",
+            "from_state",
+            "to_state",
+            "reason",
+            "source_event_ids",
+            "output_mode",
+        ),
+        enum_fields={
+            "from_state": frozenset(
+                {"CLEAN", "CLEANUP_PENDING", "TAINTED", "REBUILDING", "CLOSED"}
+            ),
+            "to_state": frozenset(
+                {"CLEAN", "CLEANUP_PENDING", "TAINTED", "REBUILDING", "CLOSED"}
+            ),
+        },
+        conditional_required_fields=(
+            ConditionalRequiredFields(
+                when_field="to_state",
+                when_value="REBUILDING",
+                required_fields=("playback_epoch", "interaction_state_version"),
+            ),
+        ),
+        domain="provider_context",
+        category="state_change",
+    ),
+    "CANDIDATE_AUDIO_SHADOW_VERIFICATION_EMITTED": _definition(
+        "CANDIDATE_AUDIO_SHADOW_VERIFICATION_EMITTED",
+        required_fields=(
+            "adapter_id",
+            "adapter_type",
+            "adapter_request_id",
+            "turn_id",
+            "utterance_id",
+            "qwen_response_id",
+            "candidate_transcript_digest",
+            "candidate_pcm_manifest_digest",
+            "audio_format_ref",
+            "decoded_duration_ms",
+            "independent_transcript_ref",
+            "normalized_transcript_digest",
+            "exact_numbers_entities_units_match",
+            "equivalence",
+            "output_mode",
+        ),
+        literal_fields={"adapter_type": "asr"},
+        enum_fields={
+            "equivalence": frozenset({"MATCH", "MISMATCH", "UNCERTAIN"}),
+        },
+        domain="candidate_audio_shadow",
+        category="adapter_output",
+    ),
+    "ASSISTANT_DELIVERY_DISPOSITIONED": _definition(
+        "ASSISTANT_DELIVERY_DISPOSITIONED",
+        required_fields=(
+            "assistant_item_ref",
+            "source_output_event_id",
+            "from_status",
+            "to_status",
+            "delivery_offset_status",
+            "provider_item_cleanup_status",
+            "source_event_ids",
+        ),
+        literal_fields={"from_status": "PENDING"},
+        enum_fields={
+            "from_status": frozenset({"PENDING"}),
+            "to_status": frozenset({"FULL", "TRUNCATED", "NOT_STARTED"}),
+            "delivery_offset_status": frozenset(
+                {"KNOWN", "UNKNOWN", "NOT_APPLICABLE"}
+            ),
+            "provider_item_cleanup_status": frozenset(
+                {"NOT_REQUIRED", "ACKNOWLEDGED", "TAINTED"}
+            ),
+        },
+        domain="assistant_delivery",
+        category="disposition",
+    ),
+}
+ADR018_EVENT_NAMES = frozenset(ADR018_EVENT_DEFINITIONS)
+
 EVENT_DEFINITIONS: dict[str, EventDefinition] = {
     **MVP0_EVENT_DEFINITIONS,
     **MVP1_EVENT_DEFINITIONS,
     **MVP2_EVENT_DEFINITIONS,
+    **FAST_FOREGROUND_EVENT_DEFINITIONS,
+    **ADR018_EVENT_DEFINITIONS,
 }
 
 

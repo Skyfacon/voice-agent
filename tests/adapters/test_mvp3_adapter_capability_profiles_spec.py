@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from voice_agent.adapters.capabilities import (
-    BOOLEAN_CAPABILITY_FIELDS,
+    ALL_BOOLEAN_CAPABILITY_FIELDS,
     CapabilityValidationError,
     validate_capability_matrix,
 )
@@ -23,7 +23,7 @@ SPEC_PATH = Path("docs/specs/adapter-capability-profiles.md")
 
 
 def unsupported_capabilities(profile: dict[str, object]) -> tuple[str, ...]:
-    return tuple(field for field in BOOLEAN_CAPABILITY_FIELDS if profile[field] is False)
+    return tuple(field for field in ALL_BOOLEAN_CAPABILITY_FIELDS if profile[field] is False)
 
 
 def mvp3_profile(
@@ -46,6 +46,8 @@ def mvp3_profile(
         "retry_policy": "retry-policy://synthetic/mvp3/profile",
         "output_mode": output_mode,
         "config_ref": f"config://synthetic/mvp3/{adapter_type}/{output_mode}",
+        "role_contract": "",
+        "prompt_profile": "",
         "supports_streaming_input": False,
         "supports_streaming_output": False,
         "supports_audio_input": False,
@@ -61,11 +63,27 @@ def mvp3_profile(
         "supports_tts_pause_resume": False,
         "supports_semantic_close": False,
         "supports_assistant_directedness": False,
+        "supports_fast_interaction_output": False,
+        "supports_route_hint": False,
+        "supports_route_prelude": False,
+        "supports_foreground_act": False,
+        "supports_reply_candidate": False,
+        "supports_reply_delta_streaming": False,
+        "supports_final_fast_evidence": False,
+        "supports_schema_validation": False,
+        "supports_risk_tags": False,
+        "supports_confidence": False,
+        "supports_asr_text_fallback": False,
+        "supports_provider_stream_timing": False,
+        "supports_ttft_observation": False,
         "max_audio_seconds": None,
         "max_context_tokens": 4096,
         "max_output_tokens": 1024,
         "expected_first_token_latency_ms": 600,
         "expected_first_audio_latency_ms": None,
+        "max_reply_candidate_tokens": None,
+        "expected_first_candidate_latency_ms": None,
+        "expected_final_gate_ready_latency_ms": None,
         "mocked": False,
         "mock_profile_ref": "",
         "target_architecture_validation": True,
@@ -78,7 +96,7 @@ def mvp3_profile(
             max_output_tokens=256,
         )
     elif adapter_type in {"thinker", "slow_llm"}:
-        profile.update(supports_structured_json=True)
+        profile.update(supports_structured_json=True, supports_schema_validation=True)
     elif adapter_type == "tts":
         profile.update(
             supports_audio_output=True,

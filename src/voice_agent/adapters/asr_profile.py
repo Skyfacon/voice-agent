@@ -27,6 +27,16 @@ ASR_FORBIDDEN_OWNERSHIP_CAPABILITIES = frozenset(
         "supports_tts_pause_resume",
         "supports_semantic_close",
         "supports_assistant_directedness",
+        "supports_fast_interaction_output",
+        "supports_route_hint",
+        "supports_route_prelude",
+        "supports_foreground_act",
+        "supports_reply_candidate",
+        "supports_reply_delta_streaming",
+        "supports_final_fast_evidence",
+        "supports_risk_tags",
+        "supports_confidence",
+        "supports_asr_text_fallback",
     }
 )
 
@@ -59,6 +69,11 @@ def build_asr_capability_profile(
     supports_streaming_output: bool = False,
     supports_audio_timestamps: bool = False,
     supports_cancellation: bool = False,
+    supports_candidate_output_audio_shadow_verification: bool = False,
+    documentation_support: bool = False,
+    provider_free_test_support: bool = False,
+    real_live_support: bool = False,
+    status: str | None = None,
     health_status: str | None = None,
     capability_version: str | None = None,
     latency_class: str | None = None,
@@ -76,9 +91,16 @@ def build_asr_capability_profile(
     unsupported_capabilities: tuple[str, ...] | None = None,
 ) -> AdapterCapability:
     defaults = AsrProfileDefaults()
-    if output_mode not in ASR_PROFILE_OUTPUT_MODES:
+    provider_free_mock = (
+        output_mode == "mock"
+        and provider_free_test_support is True
+        and mocked is True
+        and real_live_support is False
+    )
+    if output_mode not in ASR_PROFILE_OUTPUT_MODES and not provider_free_mock:
         raise AsrProfileValidationError(
-            f"ASR profile output_mode must be one of {sorted(ASR_PROFILE_OUTPUT_MODES)}"
+            "ASR profile output_mode must be real, fallback, degraded, or an "
+            "explicit provider-free mock"
         )
     if output_mode == "real":
         _reject_mock_only_real_readiness(
@@ -102,8 +124,11 @@ def build_asr_capability_profile(
         "error_model": error_model or defaults.error_model,
         "timeout_policy": timeout_policy or defaults.timeout_policy,
         "retry_policy": retry_policy or defaults.retry_policy,
+        "status": status or output_mode,
         "output_mode": output_mode,
         "config_ref": config_ref,
+        "role_contract": "",
+        "prompt_profile": "",
         "supports_streaming_input": supports_streaming_input,
         "supports_streaming_output": supports_streaming_output,
         "supports_audio_input": True,
@@ -119,11 +144,33 @@ def build_asr_capability_profile(
         "supports_tts_pause_resume": False,
         "supports_semantic_close": False,
         "supports_assistant_directedness": False,
+        "supports_fast_interaction_output": False,
+        "supports_route_hint": False,
+        "supports_route_prelude": False,
+        "supports_foreground_act": False,
+        "supports_reply_candidate": False,
+        "supports_reply_delta_streaming": False,
+        "supports_final_fast_evidence": False,
+        "supports_schema_validation": True,
+        "supports_risk_tags": False,
+        "supports_confidence": False,
+        "supports_asr_text_fallback": False,
+        "supports_provider_stream_timing": False,
+        "supports_ttft_observation": False,
+        "supports_candidate_output_audio_shadow_verification": (
+            supports_candidate_output_audio_shadow_verification
+        ),
+        "documentation_support": documentation_support,
+        "provider_free_test_support": provider_free_test_support,
+        "real_live_support": real_live_support,
         "max_audio_seconds": max_audio_seconds,
         "max_context_tokens": max_context_tokens,
         "max_output_tokens": max_output_tokens,
         "expected_first_token_latency_ms": expected_first_token_latency_ms,
         "expected_first_audio_latency_ms": expected_first_audio_latency_ms,
+        "max_reply_candidate_tokens": None,
+        "expected_first_candidate_latency_ms": None,
+        "expected_final_gate_ready_latency_ms": None,
         "mocked": mocked,
         "mock_profile_ref": mock_profile_ref,
         "target_architecture_validation": target_architecture_validation,

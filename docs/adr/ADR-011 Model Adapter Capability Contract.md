@@ -225,3 +225,47 @@ MVP-0 / API Integration Phase 必须验证：
 - Thinker-as-Fast-System、Fast Interaction Adapter 和 Thinker-as-Composer 是否共用 provider，但使用不同 adapter method / prompt profile？
 - latency_class 是否先用枚举，还是直接记录 measured latency histogram？
 - self-hosted A100 阶段是否需要 adapter compatibility test suite？
+
+## ADR-018 Capability Addendum
+
+Post-ADR-017 / MVP6.x Slice 3B adds `adapter_type=route_evidence` with exactly
+these route/candidate-safety capability terms:
+
+```text
+supports_route_schema
+supports_task_focus
+supports_foreground_act_hint
+supports_ack_kind
+supports_candidate_safety_schema
+supports_prohibited_claim_detection
+supports_strict_json_validation
+supports_risk_tags
+supports_confidence
+```
+
+The ASR matrix adds:
+
+```text
+supports_candidate_output_audio_shadow_verification
+```
+
+Qwen role/session profiles declare independently:
+
+```text
+supports_smart_turn
+supports_streaming_asr
+supports_provider_response_cancellation
+supports_provider_item_create
+supports_provider_item_delete_ack
+supports_manual_response_while_idle
+supports_text_only_response_override
+supports_candidate_quarantine
+supports_provider_native_audio_release
+supports_provider_context_readiness
+supports_context_rebuild
+```
+
+`documentation_support`, `provider_free_test_support`,
+`real_live_support`, and `status=real|mock|fallback|degraded` are separate
+fields. Documentation or provider-free evidence never implies real-live
+support, and status never substitutes for any support field.

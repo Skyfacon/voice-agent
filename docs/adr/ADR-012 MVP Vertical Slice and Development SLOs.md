@@ -244,3 +244,8 @@ MVP-3 完成条件：
 - SLO 是否在本地 Mac 上计算，还是只记录指标不设硬 gate？
 - MVP-3 是否必须包含 Qwen3-Omni 和 GLM5.1，还是允许先接更易用的替代 endpoint？
 - 每个 MVP slice 是否需要单独 demo script / replay fixture？
+
+## ADR-018 Slice Classification
+
+ADR-018 work is **Post-ADR-017 / MVP6.x Slice 3B**. It is **not MVP-3**.
+Slice 3A.2.1 remains dual-session and provider-audio-disabled.

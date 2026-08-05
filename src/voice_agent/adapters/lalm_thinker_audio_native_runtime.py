@@ -18,6 +18,9 @@ from voice_agent.adapters.lalm_thinker_skeleton import (
     emit_lalm_thinker_provider_text_result,
     emit_lalm_thinker_request_failed,
 )
+from voice_agent.adapters.lalm_thinker_timing_metadata import (
+    sanitize_thinker_provider_timing_metadata,
+)
 from voice_agent.adapters.thinker_contract import ThinkerSemanticFrameEmission
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 
@@ -34,6 +37,7 @@ class LALMThinkerAudioNativeEvidenceResult:
     validation_failed_event: dict[str, Any] | None = None
     request_failed_event: dict[str, Any] | None = None
     failure_category: str | None = None
+    thinker_latency_metadata: dict[str, Any] | None = None
 
     def to_metadata(self) -> dict[str, Any]:
         metadata: dict[str, Any] = {
@@ -59,6 +63,8 @@ class LALMThinkerAudioNativeEvidenceResult:
             metadata["request_failed_event_id"] = self.request_failed_event["event_id"]
         if self.failure_category is not None:
             metadata["failure_category"] = self.failure_category
+        if self.thinker_latency_metadata is not None:
+            metadata.update(self.thinker_latency_metadata)
         return metadata
 
 
@@ -97,21 +103,40 @@ def emit_lalm_thinker_audio_native_evidence_for_turn(
         expected_turn_committed_event_id=str(turn_committed_event["event_id"]),
     )
     request_payload = build_lalm_thinker_live_request_payload(binding=binding)
+    complete_audio_with_timing = getattr(transport, "complete_audio_with_timing", None)
     complete_audio = getattr(transport, "complete_audio", None)
-    if not callable(complete_audio):
+    if not callable(complete_audio_with_timing) and not callable(complete_audio):
         raise ValueError("transport must provide complete_audio")
 
     try:
-        provider_text = complete_audio(
-            request_payload=request_payload,
-            audio_bytes=audio_payload,
-            audio_format=audio_format,
-            credential_handle=LALMThinkerCredentialHandle(credential_ref=credential_ref),
-            credential_value=credential_value,
-            adapter_request_id=adapter_request_id,
-            timeout_ms=timeout_ms,
-            model_alias=model_alias,
-        )
+        thinker_latency_metadata: dict[str, Any] | None = None
+        if callable(complete_audio_with_timing):
+            completion = complete_audio_with_timing(
+                request_payload=request_payload,
+                audio_bytes=audio_payload,
+                audio_format=audio_format,
+                credential_handle=LALMThinkerCredentialHandle(credential_ref=credential_ref),
+                credential_value=credential_value,
+                adapter_request_id=adapter_request_id,
+                timeout_ms=timeout_ms,
+                model_alias=model_alias,
+                turn_ingress_monotonic_ms=created_monotonic_ms,
+            )
+            provider_text = getattr(completion, "provider_text", None)
+            timing = getattr(completion, "timing", None)
+            if timing is not None:
+                thinker_latency_metadata = sanitize_thinker_provider_timing_metadata(timing)
+        else:
+            provider_text = complete_audio(
+                request_payload=request_payload,
+                audio_bytes=audio_payload,
+                audio_format=audio_format,
+                credential_handle=LALMThinkerCredentialHandle(credential_ref=credential_ref),
+                credential_value=credential_value,
+                adapter_request_id=adapter_request_id,
+                timeout_ms=timeout_ms,
+                model_alias=model_alias,
+            )
     except LALMThinkerLiveTransportError as exc:
         request_failed = emit_lalm_thinker_request_failed(
             boundary=boundary,
@@ -130,6 +155,7 @@ def emit_lalm_thinker_audio_native_evidence_for_turn(
             adapter_request_id=adapter_request_id,
             request_failed_event=request_failed,
             failure_category=str(request_failed["failure_reason"]),
+            thinker_latency_metadata=thinker_latency_metadata,
         )
 
     if not isinstance(provider_text, str):
@@ -150,6 +176,7 @@ def emit_lalm_thinker_audio_native_evidence_for_turn(
             adapter_request_id=adapter_request_id,
             request_failed_event=request_failed,
             failure_category=str(request_failed["failure_reason"]),
+            thinker_latency_metadata=thinker_latency_metadata,
         )
 
     provider_result = emit_lalm_thinker_provider_text_result(
@@ -172,6 +199,7 @@ def emit_lalm_thinker_audio_native_evidence_for_turn(
         thinker_emission=provider_result.thinker_emission,
         validation_failed_event=provider_result.validation_failed_event,
         failure_category=None if provider_result.success else "provider_output_validation_failed",
+        thinker_latency_metadata=thinker_latency_metadata,
     )
 
 

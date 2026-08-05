@@ -8,6 +8,7 @@ import wave
 
 from voice_agent.adapters.asr_live_transport import AsrLiveProviderCallMetadata
 from voice_agent.adapters.asr_fake_transport import FakeAsrProviderResponse, FakeAsrTransport
+from voice_agent.adapters.adapter_timing import AdapterTimingSnapshot
 from voice_agent.adapters.lalm_thinker_live_transport import LALMThinkerLiveTransportError
 from voice_agent.adapters.lalm_thinker_runtime_adapter import LALM_THINKER_RUNTIME_MODEL_ALIAS
 from voice_agent.runtime.mvp5_live_voice_evidence import (
@@ -181,6 +182,99 @@ def test_slow_injected_live_transports_start_asr_and_thinker_in_parallel(
     assert asr_transport.audio_bytes_seen == wav_bytes
     assert thinker_transport.audio_bytes_seen == wav_bytes
     assert thinker_transport.transient_input_text_seen is False
+
+
+def test_timing_aware_thinker_audio_transport_adds_safe_latency_debug(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "goal2-ttft.wav"
+    _write_wav_file(wav_path)
+    asr_transport = FakeAsrTransport(
+        (
+            FakeAsrProviderResponse.success(
+                asr_frame_ref="asr-frame://synthetic/mvp5/goal2/ttft",
+                text_ref="text://synthetic/mvp5/goal2/ttft",
+                audio_timestamps_ref=None,
+                streaming_status="unsupported_final_only",
+            ),
+        )
+    )
+    thinker_transport = _TimingThinkerAudioTransport(optional_available=True)
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp5-goal2-ttft",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(),
+            credential_env_var_name="MVP5_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+        ),
+        env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL"},
+        asr_transport=asr_transport,
+        thinker_transport=thinker_transport,
+    )
+
+    metadata = result.to_metadata()
+    latency_debug = metadata["latency_debug"]
+    assert metadata["status"] == "degraded_evidence_emitted"
+    assert latency_debug["thinker_provider_ttft_ms"] == 25
+    assert latency_debug["thinker_provider_full_response_ms"] == 80
+    assert latency_debug["thinker_provider_generation_ms"] == 55
+    assert latency_debug["thinker_ttft_available"] is True
+    assert latency_debug["thinker_ttft_source"] == "provider_stream_chunk"
+    rendered = json.dumps(metadata, sort_keys=True)
+    assert "provider_text" not in rendered
+    assert "DUMMY_TEST_CREDENTIAL" not in rendered
+    assert thinker_transport.call_count == 1
+
+
+def test_malicious_thinker_timing_metadata_stays_out_of_latency_debug(
+    tmp_path: Path,
+) -> None:
+    wav_path = tmp_path / "goal2-malicious-ttft.wav"
+    _write_wav_file(wav_path)
+    asr_transport = FakeAsrTransport(
+        (
+            FakeAsrProviderResponse.success(
+                asr_frame_ref="asr-frame://synthetic/mvp5/goal2/malicious-ttft",
+                text_ref="text://synthetic/mvp5/goal2/malicious-ttft",
+                audio_timestamps_ref=None,
+                streaming_status="unsupported_final_only",
+            ),
+        )
+    )
+    thinker_transport = _TimingThinkerAudioTransport(
+        optional_available=True,
+        malicious_timing=True,
+    )
+
+    result = run_mvp5_live_voice_evidence(
+        local_wav=wav_path,
+        config=MVP5LiveVoiceEvidenceConfig(
+            run_id="mvp5-goal2-malicious-ttft",
+            live_provider=True,
+            allow_local_wav=True,
+            approval_packet=_approval_packet(),
+            credential_env_var_name="MVP5_TEST_PROVIDER_KEY",
+            requested_provider_calls=2,
+            max_provider_calls=2,
+        ),
+        env={"MVP5_TEST_PROVIDER_KEY": "DUMMY_TEST_CREDENTIAL"},
+        asr_transport=asr_transport,
+        thinker_transport=thinker_transport,
+    )
+
+    metadata = result.to_metadata()
+    latency_debug = metadata["latency_debug"]
+    rendered = json.dumps(metadata, sort_keys=True)
+    assert latency_debug["thinker_provider_ttft_ms"] == 25
+    assert latency_debug["thinker_ttft_source"] == "provider_stream_chunk"
+    assert "raw_provider_response_included" not in latency_debug
+    assert "secret_included" not in latency_debug
+    assert "token=synthetic-leak" not in rendered
 
 
 def test_missing_optional_model_fields_are_degraded_and_explicitly_unavailable(
@@ -428,6 +522,45 @@ class _FakeThinkerAudioTransport:
         return json.dumps(skeleton, separators=(",", ":"), sort_keys=True)
 
 
+class _TimingThinkerAudioTransport(_FakeThinkerAudioTransport):
+    def __init__(self, *, malicious_timing: bool = False, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.malicious_timing = malicious_timing
+
+    def complete_audio_with_timing(
+        self,
+        *,
+        request_payload: object,
+        audio_bytes: bytes,
+        audio_format: str,
+        credential_handle: object,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+        turn_ingress_monotonic_ms: int,
+    ) -> object:
+        assert turn_ingress_monotonic_ms >= 0
+        provider_text = self.complete_audio(
+            request_payload=request_payload,
+            audio_bytes=audio_bytes,
+            audio_format=audio_format,
+            credential_handle=credential_handle,
+            credential_value=credential_value,
+            adapter_request_id=adapter_request_id,
+            timeout_ms=timeout_ms,
+            model_alias=model_alias,
+        )
+        timing: object = _MaliciousTiming() if self.malicious_timing else _timing_snapshot()
+        return _TimingCompletion(provider_text=provider_text, timing=timing)
+
+
+class _TimingCompletion:
+    def __init__(self, *, provider_text: str, timing: object) -> None:
+        self.provider_text = provider_text
+        self.timing = timing
+
+
 class _SlowAsrLiveTransport:
     def __init__(self, *, delay_seconds: float) -> None:
         self.delay_seconds = delay_seconds
@@ -564,3 +697,37 @@ def _write_wav_file(
         wav_file.setframerate(sample_rate_hz)
         wav_file.writeframes(silent_frame * frame_count)
     return path.read_bytes()
+
+
+def _timing_snapshot() -> AdapterTimingSnapshot:
+    return AdapterTimingSnapshot(
+        adapter_start_offset_ms=0,
+        provider_request_start_offset_ms=0,
+        provider_first_chunk_offset_ms=25,
+        provider_full_response_offset_ms=80,
+        adapter_event_emit_offset_ms=85,
+        provider_ttft_ms=25,
+        provider_full_response_ms=80,
+        provider_generation_ms=55,
+        stream_decode_ms=0,
+        parse_validate_emit_ms=0,
+        total_ms=85,
+        timing_mode="streaming",
+        ttft_available=True,
+        ttft_source="provider_stream_chunk",
+    )
+
+
+class _MaliciousTiming:
+    def to_prefixed_metadata(self, prefix: str) -> dict[str, object]:
+        assert prefix == "thinker"
+        return {
+            "thinker_provider_ttft_ms": 25,
+            "thinker_provider_full_response_ms": 80,
+            "thinker_provider_generation_ms": 55,
+            "thinker_ttft_available": True,
+            "thinker_ttft_source": "provider_stream_chunk",
+            "raw_provider_response_included": True,
+            "secret_included": True,
+            "raw_provider_body": "token=synthetic-leak",
+        }

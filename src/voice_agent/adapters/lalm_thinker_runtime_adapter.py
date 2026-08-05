@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import os
+import time
 from typing import Any
 
 from voice_agent.adapters.lalm_thinker_binding import bind_lalm_thinker_request
@@ -17,9 +18,12 @@ from voice_agent.adapters.lalm_thinker_profile import (
 )
 from voice_agent.adapters.lalm_thinker_skeleton import (
     LALMThinkerCandidateValidationError,
+    build_lalm_thinker_live_request_payload,
     emit_lalm_thinker_live_provider_result,
+    emit_lalm_thinker_provider_text_result,
     emit_lalm_thinker_request_failed,
 )
+from voice_agent.adapters.lalm_thinker_timing_metadata import sanitize_thinker_timing_metadata
 from voice_agent.adapters.thinker_contract import ThinkerSemanticFrameEmission
 from voice_agent.runtime.adapter_callback_boundary import AdapterCallbackAppendBoundary
 
@@ -38,6 +42,7 @@ class LALMThinkerRuntimeAdapterResult:
     request_failed_event: dict[str, Any] | None = None
     failure_category: str | None = None
     failure_ref: str | None = None
+    thinker_latency_metadata: dict[str, Any] | None = None
 
     def to_metadata(self) -> dict[str, Any]:
         metadata: dict[str, Any] = {
@@ -60,6 +65,8 @@ class LALMThinkerRuntimeAdapterResult:
             metadata["failure_category"] = self.failure_category
         if self.failure_ref is not None:
             metadata["failure_ref"] = self.failure_ref
+        if self.thinker_latency_metadata is not None:
+            metadata.update(self.thinker_latency_metadata)
         return metadata
 
 
@@ -176,25 +183,74 @@ class LALMThinkerRuntimeAdapter:
             credential_ref=LALM_THINKER_RUNTIME_CREDENTIAL_REF,
         )
         try:
-            provider_result = emit_lalm_thinker_live_provider_result(
-                transport=self._transport,
-                credential_handle=credential_handle,
-                credential_value=credential_value,
-                model_alias=self._model_alias,
-                timeout_ms=self._timeout_ms,
-                boundary=self._boundary,
-                adapter_id=self._adapter_id,
-                binding=binding,
-                success_event_id=f"evt_lalm_thinker_runtime_{event_slug}_semantic_frame",
-                validation_failed_event_id=(
-                    f"evt_lalm_thinker_runtime_{event_slug}_validation_failed"
-                ),
-                caused_by_event_id=event_id,
-                created_monotonic_ms=created_monotonic_ms,
-                created_wall_clock_ms=created_wall_clock_ms,
-                turn_committed_event=turn_committed_event,
-                transient_input_text=transient_input_text,
-            )
+            complete_with_timing = getattr(self._transport, "complete_with_timing", None)
+            thinker_latency_metadata: dict[str, Any] | None = None
+            if callable(complete_with_timing):
+                request_payload = build_lalm_thinker_live_request_payload(
+                    binding=binding,
+                    transient_input_text=transient_input_text,
+                )
+                completion = complete_with_timing(
+                    request_payload=request_payload,
+                    credential_handle=credential_handle,
+                    credential_value=credential_value,
+                    adapter_request_id=binding.adapter_request_id,
+                    timeout_ms=self._timeout_ms,
+                    model_alias=self._model_alias,
+                    turn_ingress_monotonic_ms=created_monotonic_ms,
+                )
+                provider_text = getattr(completion, "provider_text", None)
+                timing = getattr(completion, "timing", None)
+                if timing is not None:
+                    thinker_latency_metadata = sanitize_thinker_timing_metadata(timing)
+                if not isinstance(provider_text, str):
+                    raise LALMThinkerCandidateValidationError(
+                        "provider_response_text_missing",
+                        ("provider_response_text_missing",),
+                    )
+                parse_validate_emit_started_ms = _monotonic_ms()
+                provider_result = emit_lalm_thinker_provider_text_result(
+                    boundary=self._boundary,
+                    adapter_id=self._adapter_id,
+                    provider_text=provider_text,
+                    expected_binding=binding,
+                    success_event_id=f"evt_lalm_thinker_runtime_{event_slug}_semantic_frame",
+                    validation_failed_event_id=(
+                        f"evt_lalm_thinker_runtime_{event_slug}_validation_failed"
+                    ),
+                    caused_by_event_id=event_id,
+                    created_monotonic_ms=created_monotonic_ms,
+                    created_wall_clock_ms=created_wall_clock_ms,
+                    turn_committed_event=turn_committed_event,
+                )
+                parse_validate_emit_finished_ms = _monotonic_ms()
+                if thinker_latency_metadata is not None:
+                    _apply_runtime_parse_emit_timing(
+                        thinker_latency_metadata,
+                        created_monotonic_ms=created_monotonic_ms,
+                        parse_validate_emit_started_ms=parse_validate_emit_started_ms,
+                        parse_validate_emit_finished_ms=parse_validate_emit_finished_ms,
+                    )
+            else:
+                provider_result = emit_lalm_thinker_live_provider_result(
+                    transport=self._transport,
+                    credential_handle=credential_handle,
+                    credential_value=credential_value,
+                    model_alias=self._model_alias,
+                    timeout_ms=self._timeout_ms,
+                    boundary=self._boundary,
+                    adapter_id=self._adapter_id,
+                    binding=binding,
+                    success_event_id=f"evt_lalm_thinker_runtime_{event_slug}_semantic_frame",
+                    validation_failed_event_id=(
+                        f"evt_lalm_thinker_runtime_{event_slug}_validation_failed"
+                    ),
+                    caused_by_event_id=event_id,
+                    created_monotonic_ms=created_monotonic_ms,
+                    created_wall_clock_ms=created_wall_clock_ms,
+                    turn_committed_event=turn_committed_event,
+                    transient_input_text=transient_input_text,
+                )
         except LALMThinkerLiveTransportError as exc:
             return self._emit_request_failed_result(
                 adapter_request_id=adapter_request_id,
@@ -204,6 +260,7 @@ class LALMThinkerRuntimeAdapter:
                 event_slug=event_slug,
                 failure_category=exc.category,
                 timeout_ms=self._timeout_ms,
+                thinker_latency_metadata=thinker_latency_metadata,
             )
         except LALMThinkerCandidateValidationError as exc:
             return self._emit_request_failed_result(
@@ -214,6 +271,7 @@ class LALMThinkerRuntimeAdapter:
                 event_slug=event_slug,
                 failure_category=exc.category,
                 timeout_ms=self._timeout_ms,
+                thinker_latency_metadata=thinker_latency_metadata,
             )
 
         if provider_result.success:
@@ -221,6 +279,7 @@ class LALMThinkerRuntimeAdapter:
                 success=True,
                 adapter_request_id=adapter_request_id,
                 thinker_emission=provider_result.thinker_emission,
+                thinker_latency_metadata=thinker_latency_metadata,
             )
         return LALMThinkerRuntimeAdapterResult(
             success=False,
@@ -228,6 +287,7 @@ class LALMThinkerRuntimeAdapter:
             validation_failed_event=provider_result.validation_failed_event,
             failure_category="provider_output_validation_failed",
             failure_ref=_runtime_failure_ref("provider_output_validation_failed"),
+            thinker_latency_metadata=thinker_latency_metadata,
         )
 
     def _emit_request_failed_result(
@@ -240,6 +300,7 @@ class LALMThinkerRuntimeAdapter:
         event_slug: str,
         failure_category: str,
         timeout_ms: int | None,
+        thinker_latency_metadata: dict[str, Any] | None = None,
     ) -> LALMThinkerRuntimeAdapterResult:
         safe_category = _safe_failure_category(failure_category)
         event = emit_lalm_thinker_request_failed(
@@ -260,6 +321,7 @@ class LALMThinkerRuntimeAdapter:
             request_failed_event=event,
             failure_category=safe_category,
             failure_ref=_runtime_failure_ref(safe_category),
+            thinker_latency_metadata=thinker_latency_metadata,
         )
 
 
@@ -300,6 +362,24 @@ def _runtime_failure_ref(category: str) -> str:
     return f"validation://synthetic/lalm-thinker/runtime/{_slug(category)}"
 
 
+def _apply_runtime_parse_emit_timing(
+    metadata: dict[str, Any],
+    *,
+    created_monotonic_ms: int,
+    parse_validate_emit_started_ms: int,
+    parse_validate_emit_finished_ms: int,
+) -> None:
+    parse_validate_emit_ms = max(0, parse_validate_emit_finished_ms - parse_validate_emit_started_ms)
+    adapter_event_emit_offset_ms = parse_validate_emit_finished_ms - created_monotonic_ms
+    adapter_start_offset_ms = metadata.get("thinker_adapter_start_offset_ms", 0)
+    if not isinstance(adapter_start_offset_ms, int) or isinstance(adapter_start_offset_ms, bool):
+        adapter_start_offset_ms = 0
+    adapter_start_ms = created_monotonic_ms + adapter_start_offset_ms
+    metadata["thinker_parse_validate_emit_ms"] = parse_validate_emit_ms
+    metadata["thinker_adapter_event_emit_offset_ms"] = adapter_event_emit_offset_ms
+    metadata["thinker_total_ms"] = max(0, parse_validate_emit_finished_ms - adapter_start_ms)
+
+
 def _require_safe_token(value: object, field: str) -> str:
     if not isinstance(value, str) or value == "":
         raise ValueError(f"{field} must be a non-empty string")
@@ -311,3 +391,7 @@ def _require_safe_token(value: object, field: str) -> str:
 
 def _slug(value: str) -> str:
     return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-") or "unknown"
+
+
+def _monotonic_ms() -> int:
+    return int(time.monotonic() * 1000)

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Qwen Audio Realtime Web Spike</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">ISOLATED MODEL SPIKE</p>
+          <h1>Qwen Audio Realtime</h1>
+          <p class="subtitle">持续麦克风 → 本地 Gateway → 实时字幕与流式音频</p>
+        </div>
+        <div class="badge-row" aria-label="运行状态">
+          <span id="connectionBadge" class="badge neutral">Disconnected</span>
+          <span id="outputModeBadge" class="badge neutral">awaiting server</span>
+          <span id="qualityBadge" class="badge healthy">healthy</span>
+        </div>
+      </header>
+
+      <section class="panel controls" aria-labelledby="connectionTitle">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">SESSION</p>
+            <h2 id="connectionTitle">连接与收音</h2>
+          </div>
+          <span id="activityBadge" class="activity idle" aria-live="polite">Idle</span>
+        </div>
+
+        <div class="control-grid">
+          <label>
+            Provider（由服务端 --provider 决定）
+            <select id="providerSelect" disabled aria-label="服务端 Provider 状态">
+              <option value="unknown" selected>awaiting server</option>
+              <option value="fake">fake（本地合成）</option>
+              <option value="real">real（百炼）</option>
+            </select>
+          </label>
+          <label>
+            对话模式
+            <select id="modeSelect">
+              <option value="headset_full_duplex" selected>headset_full_duplex</option>
+              <option value="speaker_safe">speaker_safe</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="button-row">
+          <button id="connectBtn" class="primary" type="button">Connect</button>
+          <button id="disconnectBtn" type="button" disabled>Disconnect</button>
+          <button id="startMicBtn" class="accent" type="button" disabled>Start microphone</button>
+          <button id="stopMicBtn" type="button" disabled>Stop microphone</button>
+          <button id="cancelBtn" class="danger" type="button" disabled>Cancel response</button>
+        </div>
+
+        <div id="modeNotice" class="notice headset" role="status">
+          <strong>请佩戴耳机。</strong>
+          headset_full_duplex 会持续上传麦克风音频并支持插话；浏览器回声消除不等同于 playback-reference AEC。
+        </div>
+
+        <div class="mic-row">
+          <div>
+            <span class="label">麦克风权限</span>
+            <strong id="micPermission">not_requested</strong>
+          </div>
+          <div class="level-wrap">
+            <span class="label">输入电平</span>
+            <progress id="inputLevel" max="1" value="0"></progress>
+            <span id="inputLevelText">0%</span>
+          </div>
+          <div>
+            <span class="label">丢弃输入帧</span>
+            <strong id="dropCount">0</strong>
+          </div>
+          <div>
+            <span class="label">播放缓冲（当前 / 本轮峰值 / soft / hard）</span>
+            <strong id="playbackBuffer">0 / 0 / — / — ms</strong>
+          </div>
+          <div>
+            <span class="label">播放器输出丢弃</span>
+            <strong id="outputDropCount">0 samples / 0 ms</strong>
+          </div>
+          <div>
+            <span class="label">Gateway 输出丢弃</span>
+            <strong id="gatewayDropCount">0</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel conversation-panel" aria-labelledby="conversationTitle">
+        <div class="section-heading compact">
+          <div>
+            <p class="section-kicker">LIVE CONVERSATION</p>
+            <h2 id="conversationTitle">实时对话</h2>
+          </div>
+          <button id="conversationLatestBtn" class="small conversation-latest" type="button" hidden>
+            回到最新
+          </button>
+        </div>
+        <div
+          id="conversationTranscript"
+          class="conversation-transcript"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-label="用户与助手实时对话"
+          tabindex="0"
+        >
+          <p class="conversation-placeholder">尚无对话。连接并开始讲话后，实时字幕会显示在这里。</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="latencyTitle">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">LOCAL OBSERVABILITY</p>
+            <h2 id="latencyTitle">延迟与流控</h2>
+          </div>
+          <span class="small-note">本地 monotonic clock；服务端 metrics 可覆盖</span>
+        </div>
+        <div class="metric-grid">
+          <div class="metric">
+            <span>首个用户转写</span>
+            <strong id="metricUserTranscript">—</strong>
+          </div>
+          <div class="metric">
+            <span>speech_stopped → assistant text</span>
+            <strong id="metricAssistantTranscript">—</strong>
+          </div>
+          <div class="metric">
+            <span>speech_stopped → audio</span>
+            <strong id="metricAudio">—</strong>
+          </div>
+          <div class="metric">
+            <span>speech_started → playback clear</span>
+            <strong id="metricClear">—</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel timeline-panel" aria-labelledby="timelineTitle">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">EPHEMERAL / METADATA ONLY</p>
+            <h2 id="timelineTitle">事件时间线</h2>
+          </div>
+          <button id="clearTimelineBtn" class="small" type="button">Clear</button>
+        </div>
+        <ol id="timeline" class="timeline" aria-live="polite">
+          <li class="placeholder">等待事件</li>
+        </ol>
+      </section>
+
+      <footer>
+        音频只在内存中以有界队列流转，不持久化。本页不会接收或显示 API Key。
+      </footer>
+    </main>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

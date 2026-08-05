@@ -6,7 +6,7 @@ import pytest
 
 from tests.adapters.test_mvp3_adapter_profiles import mvp3_real_capability
 from voice_agent.adapters.capabilities import (
-    BOOLEAN_CAPABILITY_FIELDS,
+    ALL_BOOLEAN_CAPABILITY_FIELDS,
     CapabilityValidationError,
     validate_capability_matrix,
 )
@@ -32,6 +32,18 @@ def test_lalm_thinker_profile_is_default_real_runtime_metadata_without_secret_ma
     assert matrix["deployment_mode"] == "remote_api"
     assert matrix["output_mode"] == "real"
     assert matrix["supports_structured_json"] is True
+    assert matrix["supports_schema_validation"] is True
+    assert matrix["supports_fast_interaction_output"] is False
+    assert matrix["supports_route_hint"] is False
+    assert matrix["supports_route_prelude"] is False
+    assert matrix["supports_foreground_act"] is False
+    assert matrix["supports_reply_candidate"] is False
+    assert matrix["supports_reply_delta_streaming"] is False
+    assert matrix["supports_final_fast_evidence"] is False
+    assert matrix["supports_provider_stream_timing"] is True
+    assert matrix["supports_ttft_observation"] is True
+    assert matrix["supports_risk_tags"] is False
+    assert matrix["supports_confidence"] is False
     assert matrix["endpoint"] == "provider-url://dashscope/openai-compatible-chat-completions"
     assert matrix["config_ref"] == "config://runtime/lalm-thinker/dashscope"
     assert matrix["latency_class"] == "remote_api_http"
@@ -55,9 +67,18 @@ def test_lalm_thinker_profile_is_default_real_runtime_metadata_without_secret_ma
         "supports_tts_pause_resume",
         "supports_semantic_close",
         "supports_assistant_directedness",
+        "supports_fast_interaction_output",
+        "supports_route_hint",
+        "supports_route_prelude",
+        "supports_foreground_act",
+        "supports_reply_candidate",
+        "supports_reply_delta_streaming",
+        "supports_final_fast_evidence",
+        "supports_risk_tags",
+        "supports_confidence",
     }
     assert expected_unsupported <= unsupported
-    assert unsupported == {field for field in BOOLEAN_CAPABILITY_FIELDS if matrix[field] is False}
+    assert unsupported == {field for field in ALL_BOOLEAN_CAPABILITY_FIELDS if matrix[field] is False}
 
     rendered = repr(matrix).lower()
     assert "api_key" not in rendered

@@ -390,3 +390,17 @@ ADR-016:
 - committed fast foreground output 是否总是包装成 `SPOKEN_PLAN_EMITTED(source=fast_foreground)` 再交给 Talker，还是文本 UI 可以直接消费 `FOREGROUND_OUTPUT_COMMITTED`？
 - Fast Foreground Gate 的第一版 confidence threshold 是否按语言、输入 modality 或 active SlowTask state 分桶？
 - 低风险 webSearch 前台摘要是否需要单独 gate，还是一律交给 SlowTask / Composer？
+
+## ADR-018 Topology Compatibility Addendum
+
+ADR-017 recognizes both `atomic_single_call` and
+`speculative_candidate_parallel_route`. A missing
+`fast_interaction_topology` means `atomic_single_call`.
+
+For `speculative_candidate_parallel_route`, the local Fast Interaction
+Orchestrator owns the composite normalized
+`FAST_INTERACTION_OUTPUT_EMITTED`. It joins separately recorded Qwen,
+route-evidence, candidate-safety, context-snapshot, provider-generation,
+transcript-digest, and PCM-manifest provenance. The Local Router remains the
+only RouterDecision and TaskFocusState authority, and the Fast Foreground Gate
+remains the only release authority.

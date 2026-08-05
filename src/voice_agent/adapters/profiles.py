@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
+import hashlib
+import json
 from typing import Any
 
 from voice_agent.adapters.capabilities import (
@@ -54,6 +56,66 @@ def validate_mvp3_adapter_profile_set(
             _validate_mvp3_real_profile(matrix)
 
     return matrices
+
+
+def validate_slice3b1_adapter_profile_set(
+    profiles: Iterable[AdapterCapability | Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    matrices = validate_adapter_profile_set(profiles)
+    required_types = {
+        "duplex_model",
+        "asr",
+        "route_evidence",
+        "fast_interaction",
+    }
+    present_types = {str(matrix["adapter_type"]) for matrix in matrices}
+    if not required_types <= present_types:
+        raise AdapterProfileValidationError(
+            f"Slice 3B.1 missing adapter types: {sorted(required_types - present_types)}"
+        )
+    for adapter_type in required_types:
+        if sum(matrix["adapter_type"] == adapter_type for matrix in matrices) != 1:
+            raise AdapterProfileValidationError(
+                f"Slice 3B.1 requires exactly one {adapter_type} profile"
+            )
+    for matrix in matrices:
+        if matrix["output_mode"] != "mock":
+            raise AdapterProfileValidationError(
+                "Slice 3B.1 profiles must use output_mode=mock"
+            )
+        if matrix["provider_free_test_support"] is not True:
+            raise AdapterProfileValidationError(
+                "Slice 3B.1 profiles require provider_free_test_support=true"
+            )
+        if matrix["real_live_support"] is not False:
+            raise AdapterProfileValidationError(
+                "Slice 3B.1 profiles require real_live_support=false"
+            )
+    qwen = next(matrix for matrix in matrices if matrix["adapter_type"] == "duplex_model")
+    if qwen["supports_provider_native_audio_release"] is not False:
+        raise AdapterProfileValidationError(
+            "Slice 3B.1 native provider audio release must remain disabled"
+        )
+    return tuple(
+        sorted(
+            matrices,
+            key=lambda matrix: (str(matrix["adapter_type"]), str(matrix["adapter_id"])),
+        )
+    )
+
+
+def capability_matrix_digest(matrices: Iterable[Mapping[str, Any]]) -> str:
+    canonical_matrices = sorted(
+        (deepcopy(dict(matrix)) for matrix in matrices),
+        key=lambda matrix: (str(matrix["adapter_type"]), str(matrix["adapter_id"])),
+    )
+    encoded = json.dumps(
+        canonical_matrices,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def build_capability_snapshot(

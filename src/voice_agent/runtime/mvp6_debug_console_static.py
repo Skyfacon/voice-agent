@@ -127,7 +127,12 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     .stage strong { font-size: 13px; }
     .stage span { color: var(--muted); overflow-wrap: anywhere; }
     .muted { color: var(--muted); font-size: 13px; }
-    .answer {
+    .qaField {
+      display: grid;
+      gap: 6px;
+    }
+    .qaField > strong { font-size: 13px; }
+    .qaText {
       min-height: 42px;
       padding: 10px;
       border: 1px solid var(--line-soft);
@@ -213,16 +218,26 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
       </details>
       <label class="checkRow"><input id="saveQaHistory" type="checkbox" checked> Save QA history locally</label>
       <label class="checkRow"><input id="showModelIo" type="checkbox"> Show model I/O for this run</label>
-      <p class="muted">QA history is local-only and may contain ASR user text.</p>
+      <p class="muted">QA history is local-only and stores metadata refs, route decisions, gate decisions, and latency.</p>
     </section>
 
     <section class="grid">
       <h2>Latest Result</h2>
-      <div id="answerDisplay" class="answer">No run yet</div>
+      <div class="qaField">
+        <strong>Question</strong>
+        <div id="questionDisplay" class="qaText">No run yet</div>
+      </div>
+      <div class="qaField">
+        <strong>Answer</strong>
+        <div id="answerDisplay" class="qaText">No run yet</div>
+      </div>
+      <div id="qaStatus" class="muted">QA: waiting</div>
       <div class="stage"><strong>local_audio_gate</strong><span id="stage-local_audio_gate">waiting</span></div>
       <div class="stage"><strong>asr</strong><span id="stage-asr">waiting</span></div>
+      <div class="stage"><strong>fast_interaction</strong><span id="stage-fast_interaction">waiting</span></div>
       <div class="stage"><strong>thinker</strong><span id="stage-thinker">waiting</span></div>
       <div class="stage"><strong>router</strong><span id="stage-router">waiting</span></div>
+      <div class="stage"><strong>foreground_gate</strong><span id="stage-foreground_gate">waiting</span></div>
       <div class="stage"><strong>qa_history</strong><span id="stage-qa_history">waiting</span></div>
       <h2>Latency</h2>
       <pre id="latencyPanel">{}</pre>
@@ -233,6 +248,10 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
         <div class="modelIoSection">
           <h3>ASR Output Text</h3>
           <pre id="modelIoAsrText"></pre>
+        </div>
+        <div class="modelIoSection">
+          <h3>Fast Interaction</h3>
+          <pre id="modelIoFastInteraction"></pre>
         </div>
         <div class="modelIoSection">
           <h3>Thinker System Prompt</h3>
@@ -266,7 +285,7 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     let recordedBuffers = [];
     let draftBlob = null;
     let recordingStartedAt = 0;
-    const STAGE_NAMES = ['local_audio_gate', 'asr', 'thinker', 'router', 'qa_history'];
+    const STAGE_NAMES = ['local_audio_gate', 'asr', 'fast_interaction', 'thinker', 'router', 'foreground_gate', 'qa_history'];
 
     async function loadStatus() {
       const response = await fetch('/api/status');
@@ -355,7 +374,9 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     }
 
     function renderResult(payload) {
+      document.getElementById('questionDisplay').textContent = payload.question_text || '(' + (payload.question_status || 'unavailable') + ')';
       document.getElementById('answerDisplay').textContent = payload.answer_display || payload.status;
+      document.getElementById('qaStatus').textContent = 'QA: ' + (payload.qa_status || 'unavailable');
       setStages(payload.status === 'completed' ? 'waiting' : 'not_run');
       for (const stage of payload.pipeline || []) {
         const element = document.getElementById('stage-' + stage.stage);
@@ -369,11 +390,12 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
     function renderModelIoDebug(modelIo) {
       const panel = document.getElementById('modelIoPanel');
       const empty = document.getElementById('modelIoEmpty');
-      const hasModelIo = modelIo && typeof modelIo === 'object' && (modelIo.asr || modelIo.thinker);
+      const hasModelIo = modelIo && typeof modelIo === 'object' && (modelIo.asr || modelIo.fast_interaction || modelIo.thinker);
       panel.classList.toggle('hidden', !hasModelIo);
       empty.classList.toggle('hidden', hasModelIo);
       if (!hasModelIo) {
         setText('modelIoAsrText', '');
+        setText('modelIoFastInteraction', '');
         setText('modelIoThinkerSystem', '');
         setText('modelIoThinkerRequest', '');
         setText('modelIoThinkerOutput', '');
@@ -381,43 +403,30 @@ MVP6_DEBUG_CONSOLE_HTML = """<!doctype html>
         return;
       }
       modelIo.asr = modelIo.asr || {};
+      modelIo.fast_interaction = modelIo.fast_interaction || {};
       modelIo.thinker = modelIo.thinker || {};
-      setText('modelIoAsrText', modelIo.asr.provider_text || '(not available)');
-      setText('modelIoThinkerSystem', modelIo.thinker.system_message || '(not available)');
-      setText('modelIoThinkerRequest', formatThinkerRequestPayload(modelIo.thinker.request_body));
-      setText('modelIoThinkerOutput', modelIo.thinker.provider_text || '(not available)');
+      setText('modelIoAsrText', formatModelIoSummary(modelIo.asr));
+      setText('modelIoFastInteraction', formatModelIoSummary(modelIo.fast_interaction));
+      setText('modelIoThinkerSystem', formatModelIoSummary(modelIo.thinker));
+      setText('modelIoThinkerRequest', modelIo.thinker.request_payload_available ? 'metadata only; request payload redacted' : '(not available)');
+      setText('modelIoThinkerOutput', modelIo.thinker.provider_output_available ? 'metadata only; provider output redacted' : '(not available)');
       setText('modelIoMetadata', JSON.stringify(buildModelIoMetadata(modelIo), null, 2));
     }
 
-    function formatThinkerRequestPayload(requestBody) {
-      if (!requestBody || typeof requestBody !== 'object') return '(not available)';
-      const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
-      const userMessage = messages.find((message) => message && message.role === 'user');
-      if (!userMessage || typeof userMessage.content !== 'string') {
-        return JSON.stringify(requestBody, null, 2);
-      }
-      try {
-        return JSON.stringify(JSON.parse(userMessage.content), null, 2);
-      } catch (_error) {
-        return userMessage.content;
-      }
+    function formatModelIoSummary(summary) {
+      if (!summary || typeof summary !== 'object') return '(not available)';
+      if (summary.content_redacted !== true) return '(not available)';
+      const count = Number.isInteger(summary.provider_output_char_count) ? summary.provider_output_char_count : 0;
+      return 'metadata only; content redacted; provider chars: ' + count;
     }
 
     function buildModelIoMetadata(modelIo) {
       return {
         saved_to_history: modelIo.saved_to_history === true,
-        asr: stripModelIoContent(modelIo.asr || {}, ['provider_text']),
-        thinker: stripModelIoContent(modelIo.thinker || {}, ['system_message', 'provider_text'])
+        asr: modelIo.asr || {},
+        fast_interaction: modelIo.fast_interaction || {},
+        thinker: modelIo.thinker || {}
       };
-    }
-
-    function stripModelIoContent(source, omittedKeys) {
-      const omitted = new Set(omittedKeys);
-      const result = {};
-      for (const [key, value] of Object.entries(source || {})) {
-        if (!omitted.has(key)) result[key] = value;
-      }
-      return result;
     }
 
     function setText(id, value) {

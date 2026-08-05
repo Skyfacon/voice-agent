@@ -17,6 +17,12 @@ from voice_agent.interaction.policy import (
 from voice_agent.state.playback_state import PlaybackState
 
 
+@dataclass(frozen=True, slots=True)
+class InteractionEpochSnapshot:
+    playback_epoch: int
+    interaction_state_version: int
+
+
 @dataclass(frozen=True)
 class TextIngressCommitResult:
     turn_opened: dict[str, Any]
@@ -42,6 +48,40 @@ MOCK_BARGE_IN_POLICY_REASON = "mock_barge_in_confidence_allows_truncate"
 class InteractionController:
     def __init__(self, journal: InMemoryEventJournal) -> None:
         self._journal = journal
+        self._playback_epoch = 0
+        self._interaction_state_version = 0
+
+    @property
+    def journal(self) -> InMemoryEventJournal:
+        """The controller-owned session journal used by its collaborators."""
+        return self._journal
+
+    def current_epoch_snapshot(self) -> InteractionEpochSnapshot:
+        return InteractionEpochSnapshot(
+            playback_epoch=self._playback_epoch,
+            interaction_state_version=self._interaction_state_version,
+        )
+
+    def advance_playback_epoch_for_provider_rebuild(
+        self,
+        *,
+        provider_session_generation: int,
+        reason: str,
+    ) -> InteractionEpochSnapshot:
+        if (
+            isinstance(provider_session_generation, bool)
+            or not isinstance(provider_session_generation, int)
+            or provider_session_generation < 1
+        ):
+            raise ValueError("provider_session_generation must be a positive integer")
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("reason must be a non-empty string")
+        return self._advance_playback_epoch()
+
+    def _advance_playback_epoch(self) -> InteractionEpochSnapshot:
+        self._playback_epoch += 1
+        self._interaction_state_version += 1
+        return self.current_epoch_snapshot()
 
     def commit_text_ingress(
         self,
@@ -206,11 +246,33 @@ class InteractionController:
     ) -> BargeInTruncateRequestResult:
         _validate_barge_in_candidate_event(barge_in_candidate_event)
         _validate_non_negative_offset(cutoff_playback_offset_ms, field_name="cutoff_playback_offset_ms")
+        _validate_non_negative_offset(
+            created_monotonic_ms,
+            field_name="created_monotonic_ms",
+        )
+        _validate_non_negative_offset(
+            created_wall_clock_ms,
+            field_name="created_wall_clock_ms",
+        )
 
         audio_span_id = str(barge_in_candidate_event["audio_span_id"])
         playback_span_id = str(barge_in_candidate_event["playback_span_id"])
         candidate_playback_offset_ms = int(barge_in_candidate_event["playback_offset_ms"])
-        _validate_active_playback_span(self._journal.events(), playback_span_id)
+        prior_events = self._journal.events()
+        _validate_journaled_barge_in_candidate(
+            prior_events,
+            barge_in_candidate_event,
+        )
+        _validate_pending_event_ids(
+            self._journal,
+            interrupt_event_id=interrupt_event_id,
+            truncate_request_event_id=truncate_request_event_id,
+        )
+        _validate_active_playback_span(prior_events, playback_span_id)
+
+        # All validation is complete before this irreversible controller state
+        # transition, so rejected candidates never consume an epoch.
+        epoch = self._advance_playback_epoch()
 
         confidence_summary = {
             "echo_likelihood": barge_in_candidate_event["echo_likelihood"],
@@ -230,6 +292,8 @@ class InteractionController:
             playback_offset_ms=candidate_playback_offset_ms,
             policy_reason=MOCK_BARGE_IN_POLICY_REASON,
             confidence_summary=confidence_summary,
+            playback_epoch=epoch.playback_epoch,
+            interaction_state_version=epoch.interaction_state_version,
         )
         truncate_requested = self._journal.append(
             event_name="TTS_TRUNCATE_REQUESTED",
@@ -243,6 +307,8 @@ class InteractionController:
             playback_span_id=playback_span_id,
             cutoff_playback_offset_ms=cutoff_playback_offset_ms,
             interrupt_candidate_event_id=str(interrupt_candidate["event_id"]),
+            playback_epoch=epoch.playback_epoch,
+            interaction_state_version=epoch.interaction_state_version,
         )
 
         return BargeInTruncateRequestResult(
@@ -309,6 +375,64 @@ def _validate_active_playback_span(events: list[dict[str, Any]], playback_span_i
         playback_state.reduce_event(event)
     if playback_state.current_playback_span_id != playback_span_id or playback_state.phase != "PLAYING":
         raise ValueError("BARGE_IN_CANDIDATE requires active playback before requesting truncate")
+
+
+def _validate_journaled_barge_in_candidate(
+    events: list[dict[str, Any]],
+    candidate: Mapping[str, Any],
+) -> None:
+    candidate_id = str(candidate["event_id"])
+    authoritative = next(
+        (
+            event
+            for event in events
+            if event.get("event_id") == candidate_id
+            and event.get("event_name") == "BARGE_IN_CANDIDATE"
+        ),
+        None,
+    )
+    if authoritative is None:
+        raise ValueError(
+            "request_truncate_for_barge_in requires an appended "
+            "BARGE_IN_CANDIDATE"
+        )
+    for field in (
+        "audio_span_id",
+        "playback_span_id",
+        "playback_offset_ms",
+        "echo_likelihood",
+        "vad_confidence",
+        "barge_in_confidence",
+    ):
+        if candidate.get(field) != authoritative.get(field):
+            raise ValueError(
+                "request_truncate_for_barge_in candidate does not match journal"
+            )
+
+
+def _validate_pending_event_ids(
+    journal: InMemoryEventJournal,
+    *,
+    interrupt_event_id: str,
+    truncate_request_event_id: str,
+) -> None:
+    if not isinstance(interrupt_event_id, str) or not interrupt_event_id:
+        raise ValueError("interrupt_event_id must be a non-empty string")
+    if (
+        not isinstance(truncate_request_event_id, str)
+        or not truncate_request_event_id
+    ):
+        raise ValueError(
+            "truncate_request_event_id must be a non-empty string"
+        )
+    if interrupt_event_id == truncate_request_event_id:
+        raise ValueError(
+            "interrupt_event_id and truncate_request_event_id must be distinct"
+        )
+    if journal.has_event_id(interrupt_event_id):
+        raise ValueError("interrupt_event_id is already journaled")
+    if journal.has_event_id(truncate_request_event_id):
+        raise ValueError("truncate_request_event_id is already journaled")
 
 
 def _validate_non_negative_offset(value: object, *, field_name: str) -> None:

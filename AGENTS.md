@@ -139,6 +139,14 @@ Reject or flag any change that:
 - relies on Python threads or async scheduling order to advance critical state
 - runs blocking network/model/tool/audio/CPU work inside the event loop, reducer, replay runner, or Interaction Controller
 - introduces native or sidecar components that bypass adapters, Tool Executor, Event Journal, or canonical event names
+- lets Route Evidence act as Router authority
+- treats provider context as authoritative memory
+- emits audible PCM before the Fast Foreground Gate
+- adds per-turn independent PCM back-transcription on the low-latency path
+- releases native PCM without a promoted profile and exact online correlation/digests
+- injects stale, raw, or untrusted SlowTask material into Qwen
+- retains an undelivered assistant suffix as delivered history
+- introduces cross-session durable memory in Post-ADR-017 / MVP6.x Slice 3B
 
 ## ADR Index
 

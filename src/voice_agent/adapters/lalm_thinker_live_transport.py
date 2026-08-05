@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 import json
@@ -10,6 +10,7 @@ import urllib.request
 from typing import Any
 from urllib.parse import unquote
 
+from voice_agent.adapters.adapter_timing import AdapterTimingRecorder, AdapterTimingSnapshot
 from voice_agent.adapters.capabilities import CREDENTIAL_LIKE_REF_PATTERN
 from voice_agent.adapters.lalm_thinker_binding import (
     LALM_THINKER_CANDIDATE_SCHEMA_VERSION,
@@ -86,6 +87,12 @@ class LALMThinkerCredentialHandle:
         }
 
 
+@dataclass(frozen=True)
+class LALMThinkerProviderCompletion:
+    provider_text: str
+    timing: AdapterTimingSnapshot
+
+
 def resolve_lalm_thinker_live_model_io_debug(adapter_request_id: str) -> dict[str, Any] | None:
     _require_safe_token(adapter_request_id, "adapter_request_id")
     value = _LOCAL_THINKER_MODEL_IO_BY_ADAPTER_REQUEST_ID.get(adapter_request_id)
@@ -120,6 +127,33 @@ class LALMThinkerLiveDirectHTTPTransport:
         timeout_ms: int,
         model_alias: str,
     ) -> str:
+        return self.complete_with_timing(
+            request_payload=request_payload,
+            credential_handle=credential_handle,
+            credential_value=credential_value,
+            adapter_request_id=adapter_request_id,
+            timeout_ms=timeout_ms,
+            model_alias=model_alias,
+            turn_ingress_monotonic_ms=0,
+        ).provider_text
+
+    def complete_with_timing(
+        self,
+        *,
+        request_payload: Mapping[str, Any],
+        credential_handle: LALMThinkerCredentialHandle,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+        turn_ingress_monotonic_ms: int,
+        now_ms: Callable[[], int] | None = None,
+    ) -> LALMThinkerProviderCompletion:
+        timing = AdapterTimingRecorder(
+            turn_ingress_monotonic_ms=turn_ingress_monotonic_ms,
+            now_ms=now_ms,
+        )
+        timing.mark_adapter_started()
         validate_lalm_thinker_credential_handle(credential_handle)
         _require_present_credential_value(credential_value)
         _require_safe_token(adapter_request_id, "adapter_request_id")
@@ -136,16 +170,17 @@ class LALMThinkerLiveDirectHTTPTransport:
             model_alias=model_alias,
             request_body=request_body,
         )
-        provider_text = self._complete_streaming_request_body(
+        completion = self._complete_streaming_request_body_with_timing(
             request_body=request_body,
             credential_value=credential_value,
             timeout_ms=timeout_ms,
+            timing=timing,
         )
         _store_lalm_thinker_model_io_response(
             adapter_request_id=adapter_request_id,
-            provider_text=provider_text,
+            provider_text=completion.provider_text,
         )
-        return provider_text
+        return completion
 
     def complete_audio(
         self,
@@ -159,6 +194,37 @@ class LALMThinkerLiveDirectHTTPTransport:
         timeout_ms: int,
         model_alias: str,
     ) -> str:
+        return self.complete_audio_with_timing(
+            request_payload=request_payload,
+            audio_bytes=audio_bytes,
+            audio_format=audio_format,
+            credential_handle=credential_handle,
+            credential_value=credential_value,
+            adapter_request_id=adapter_request_id,
+            timeout_ms=timeout_ms,
+            model_alias=model_alias,
+            turn_ingress_monotonic_ms=0,
+        ).provider_text
+
+    def complete_audio_with_timing(
+        self,
+        *,
+        request_payload: Mapping[str, Any],
+        audio_bytes: bytes,
+        audio_format: str,
+        credential_handle: LALMThinkerCredentialHandle,
+        credential_value: str,
+        adapter_request_id: str,
+        timeout_ms: int,
+        model_alias: str,
+        turn_ingress_monotonic_ms: int,
+        now_ms: Callable[[], int] | None = None,
+    ) -> LALMThinkerProviderCompletion:
+        timing = AdapterTimingRecorder(
+            turn_ingress_monotonic_ms=turn_ingress_monotonic_ms,
+            now_ms=now_ms,
+        )
+        timing.mark_adapter_started()
         validate_lalm_thinker_credential_handle(credential_handle)
         _require_present_credential_value(credential_value)
         _require_safe_token(adapter_request_id, "adapter_request_id")
@@ -179,16 +245,17 @@ class LALMThinkerLiveDirectHTTPTransport:
             model_alias=model_alias,
             request_body=request_body,
         )
-        provider_text = self._complete_streaming_request_body(
+        completion = self._complete_streaming_request_body_with_timing(
             request_body=request_body,
             credential_value=credential_value,
             timeout_ms=timeout_ms,
+            timing=timing,
         )
         _store_lalm_thinker_model_io_response(
             adapter_request_id=adapter_request_id,
-            provider_text=provider_text,
+            provider_text=completion.provider_text,
         )
-        return provider_text
+        return completion
 
     def _complete_request_body(
         self,
@@ -254,6 +321,23 @@ class LALMThinkerLiveDirectHTTPTransport:
         credential_value: str,
         timeout_ms: int,
     ) -> str:
+        timing = AdapterTimingRecorder(turn_ingress_monotonic_ms=0)
+        timing.mark_adapter_started()
+        return self._complete_streaming_request_body_with_timing(
+            request_body=request_body,
+            credential_value=credential_value,
+            timeout_ms=timeout_ms,
+            timing=timing,
+        ).provider_text
+
+    def _complete_streaming_request_body_with_timing(
+        self,
+        *,
+        request_body: Mapping[str, Any],
+        credential_value: str,
+        timeout_ms: int,
+        timing: AdapterTimingRecorder,
+    ) -> LALMThinkerProviderCompletion:
         request = urllib.request.Request(
             self._provider_url,
             data=json.dumps(request_body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
@@ -265,8 +349,10 @@ class LALMThinkerLiveDirectHTTPTransport:
         )
         timeout_seconds = timeout_ms / 1000
         text_parts: list[str] = []
+        first_content_chunk_seen = False
 
         try:
+            timing.mark_provider_request_started()
             with self._opener.open(request, timeout=timeout_seconds) as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8").strip()
@@ -276,9 +362,14 @@ class LALMThinkerLiveDirectHTTPTransport:
                     if data == "[DONE]":
                         break
                     chunk_payload = json.loads(data)
+                    ttft_delta = _extract_provider_stream_ttft_delta(chunk_payload)
+                    if not first_content_chunk_seen and ttft_delta is not None and ttft_delta != "":
+                        first_content_chunk_seen = True
+                        timing.mark_provider_first_chunk()
                     text_delta = _extract_provider_stream_text_delta(chunk_payload)
                     if text_delta is not None:
                         text_parts.append(text_delta)
+                timing.mark_provider_full_response()
         except TimeoutError as exc:
             raise LALMThinkerLiveTransportError(
                 "provider timeout",
@@ -323,7 +414,10 @@ class LALMThinkerLiveDirectHTTPTransport:
                     "provider_response_stream_delta_content_missing",
                 ),
             )
-        return provider_text
+        return LALMThinkerProviderCompletion(
+            provider_text=provider_text,
+            timing=timing.finish(parse_validate_emit_ms=0),
+        )
 
     def to_metadata(self) -> dict[str, Any]:
         return {
@@ -636,6 +730,21 @@ def _extract_provider_stream_text_delta(response_payload: Mapping[str, Any]) -> 
             message = first_choice.get("message")
             if isinstance(message, Mapping) and isinstance(message.get("content"), str):
                 return str(message["content"])
+
+    output = response_payload.get("output")
+    if isinstance(output, Mapping) and isinstance(output.get("text"), str):
+        return str(output["text"])
+    return None
+
+
+def _extract_provider_stream_ttft_delta(response_payload: Mapping[str, Any]) -> str | None:
+    choices = response_payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first_choice = choices[0]
+        if isinstance(first_choice, Mapping):
+            delta = first_choice.get("delta")
+            if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
+                return str(delta["content"])
 
     output = response_payload.get("output")
     if isinstance(output, Mapping) and isinstance(output.get("text"), str):

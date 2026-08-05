@@ -252,3 +252,13 @@ MVP-0 replay 场景必须验证：
 - `TURN_INGRESS_REJECTED` 是否需要保留 redacted trace，还是只保留 metadata？
 - Duplex 输出是否区分 candidate 与 verdict，例如 `semantic_close_candidate` vs `semantic_close_verdict`？
 - Interaction / Turn Controller 对低置信度 directedness 的默认策略是 reject、hold，还是 ask clarification？
+
+## ADR-018 Accepted Addendum
+
+For Post-ADR-017 / MVP6.x Slice 3B:
+
+- provider smart-turn generation before `TURN_INGRESS_COMMITTED` is
+  quarantined;
+- provider speculation cannot start Route Evidence or control-plane
+  consumption;
+- final ASR and Route Evidence remain causally after local turn commit.

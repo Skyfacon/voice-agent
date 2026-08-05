@@ -8,6 +8,11 @@ from voice_agent.adapters.lalm_thinker_routing_profiles import (
     get_default_lalm_thinker_routing_profile,
 )
 from voice_agent.router.router import MVP1Router, RouterContext, TaskFocusSnapshot
+from voice_agent.runtime.fast_foreground_gate import (
+    CandidatePolicyDecision,
+    FastForegroundGateContext,
+    run_fast_foreground_gate,
+)
 from voice_agent.runtime.session import start_mvp0_session
 
 
@@ -23,6 +28,9 @@ class RoutingGoldenCase:
     focus_confidence: float = 0.86
     active_task: bool = False
     directedness: str = "ASSUMED_DIRECTED"
+    use_fast_interaction: bool = False
+    expected_foreground_gate_decision: str | None = None
+    expected_output_basis: str | None = None
 
 
 def run_mvp6_routing_golden_eval() -> dict[str, Any]:
@@ -65,6 +73,18 @@ def _golden_cases() -> tuple[RoutingGoldenCase, ...]:
             task_like=False,
             complexity_hint="simple",
             evidence_uncertainty="low",
+        ),
+        RoutingGoldenCase(
+            case_id="zh_foreground_story_fast_interaction",
+            expected_task_focus="FOREGROUND_CHAT",
+            expected_router_decision="FAST_ONLY",
+            thinker_task_focus_hint=None,
+            task_like=False,
+            complexity_hint="simple",
+            evidence_uncertainty="low",
+            use_fast_interaction=True,
+            expected_foreground_gate_decision="passed",
+            expected_output_basis="reply_candidate",
         ),
         RoutingGoldenCase(
             case_id="zh_complex_new_task",
@@ -127,24 +147,88 @@ def _evaluate_case(case: RoutingGoldenCase) -> dict[str, Any]:
         created_wall_clock_ms=1700000001000,
     )
     turn = _append_synthetic_audio_turn(startup.journal, case)
-    asr_event = _append_synthetic_asr_event(startup.journal, turn, case)
-    thinker_event = _append_synthetic_thinker_event(startup.journal, turn, case)
+    asr_event = None
+    thinker_event = None
+    fast_event = None
+    candidate_event = None
+    if case.use_fast_interaction:
+        fast_event = _append_synthetic_fast_interaction_event(startup.journal, turn, case)
+        candidate_event = _append_synthetic_foreground_candidate_event(
+            startup.journal,
+            fast_event,
+            case,
+        )
+    else:
+        asr_event = _append_synthetic_asr_event(startup.journal, turn, case)
+        thinker_event = _append_synthetic_thinker_event(startup.journal, turn, case)
     result = MVP1Router(startup.journal).emit_decision(
         turn_committed_event=turn,
         asr_frame_event=asr_event,
         thinker_frame_event=thinker_event,
+        fast_interaction_output_event=fast_event,
         router_context=_router_context(case),
         event_id=f"evt_mvp6_routing_eval_{case.case_id}_router_decision",
         task_focus_state_event_id=f"evt_mvp6_routing_eval_{case.case_id}_focus_state",
         created_monotonic_ms=1300,
         created_wall_clock_ms=1700000001300,
     )
+    gate_result = None
+    if fast_event is not None and candidate_event is not None:
+        gate_result = run_fast_foreground_gate(
+            startup.journal,
+            candidate_event=candidate_event,
+            fast_interaction_output_event=fast_event,
+            router_decision_event=result.router_decision_event,
+            context=FastForegroundGateContext(
+                authority_mode="trusted_synthetic_eval",
+                authority_binding_status="bound",
+                interaction_state="TURN_COMMITTED",
+                interaction_state_ref=(
+                    f"interaction-state://synthetic/mvp6-routing/{case.case_id}"
+                ),
+                task_focus=str(result.router_decision_event["task_focus"]),
+                task_focus_snapshot_ref=(
+                    f"task-focus://synthetic/mvp6-routing/{case.case_id}"
+                ),
+                has_active_slowtask=case.active_task,
+                active_task_id=(
+                    f"task_mvp6_routing_active_{case.case_id}"
+                    if case.active_task
+                    else None
+                ),
+                active_slowtask_lifecycle=("PLANNING" if case.active_task else None),
+                pending_confirmation=False,
+                pending_confirmation_id=None,
+                pending_confirmation_scope=None,
+                capability_snapshot_ref=(
+                    f"capability://synthetic/mvp6-routing/{case.case_id}"
+                ),
+                capability_health_status="ready",
+                capability_output_mode=str(fast_event.get("output_mode", "mock")),
+                capability_verification_status="provider_free_verified",
+                candidate_policy_decision=CandidatePolicyDecision.trusted_synthetic(),
+                schema_valid=True,
+                confidence_threshold=0.8,
+            ),
+            event_id_prefix=f"evt_mvp6_routing_eval_{case.case_id}_foreground_gate",
+            created_monotonic_ms=1302,
+            created_wall_clock_ms=1700000001302,
+        )
 
     actual_task_focus = str(result.router_decision_event["task_focus"])
     actual_router_decision = str(result.router_decision_event["router_decision"])
+    actual_gate_decision = _foreground_gate_decision(gate_result)
+    actual_output_basis = (
+        str(gate_result.committed_event["output_basis"])
+        if gate_result is not None and gate_result.committed_event is not None
+        else None
+    )
+    event_names = [str(event["event_name"]) for event in startup.journal.events()]
     passed = (
         actual_task_focus == case.expected_task_focus
         and actual_router_decision == case.expected_router_decision
+        and actual_gate_decision == case.expected_foreground_gate_decision
+        and actual_output_basis == case.expected_output_basis
     )
     return {
         "case_id": case.case_id,
@@ -152,6 +236,14 @@ def _evaluate_case(case: RoutingGoldenCase) -> dict[str, Any]:
         "actual_task_focus": actual_task_focus,
         "expected_router_decision": case.expected_router_decision,
         "actual_router_decision": actual_router_decision,
+        "expected_foreground_gate_decision": case.expected_foreground_gate_decision,
+        "actual_foreground_gate_decision": actual_gate_decision,
+        "expected_output_basis": case.expected_output_basis,
+        "actual_output_basis": actual_output_basis,
+        "fast_interaction_output_mode": (
+            str(fast_event["output_mode"]) if fast_event is not None else None
+        ),
+        "event_names": event_names,
         "passed": passed,
     }
 
@@ -275,6 +367,83 @@ def _append_synthetic_thinker_event(
         evidence_uncertainty=case.evidence_uncertainty,
         **fields,
     )
+
+
+def _append_synthetic_fast_interaction_event(
+    journal: Any,
+    turn: dict[str, Any],
+    case: RoutingGoldenCase,
+) -> dict[str, Any]:
+    suffix = case.case_id
+    return journal.append(
+        event_name="FAST_INTERACTION_OUTPUT_EMITTED",
+        event_id=f"evt_mvp6_routing_eval_{suffix}_fast_interaction",
+        source_module="fast_interaction_adapter",
+        caused_by_event_id=str(turn["event_id"]),
+        created_monotonic_ms=1201,
+        created_wall_clock_ms=1700000001201,
+        trace_redaction_level="metadata_only",
+        adapter_id="mvp63_fast_interaction_runtime",
+        adapter_type="fast_interaction",
+        adapter_request_id=f"adapter_request_mvp6_routing_eval_{suffix}_fast_interaction",
+        turn_id=str(turn["turn_id"]),
+        utterance_id=str(turn["utterance_id"]),
+        input_modality="audio",
+        input_mode="audio_native",
+        fast_interaction_input_mode="audio_native",
+        source_event_ids=(str(turn["event_id"]),),
+        route_hint_ref=f"route-hint://synthetic/mvp6/routing-eval/{suffix}",
+        route_prelude_ref=f"route-prelude://synthetic/mvp6/routing-eval/{suffix}",
+        route_decision_hint="FAST_ONLY",
+        task_focus_hint="FOREGROUND_CHAT",
+        foreground_act="ANSWER",
+        final_fast_evidence_ref=f"fast-evidence://synthetic/mvp6/routing-eval/{suffix}",
+        risk_tags=("none",),
+        risk_class="LOW",
+        confidence=case.focus_confidence,
+        schema_name="voice_agent.fast_interaction.output.v1",
+        normalization_status="normalized",
+        output_mode="real",
+    )
+
+
+def _append_synthetic_foreground_candidate_event(
+    journal: Any,
+    fast_event: dict[str, Any],
+    case: RoutingGoldenCase,
+) -> dict[str, Any]:
+    suffix = case.case_id
+    return journal.append(
+        event_name="FOREGROUND_REPLY_CANDIDATE_EMITTED",
+        event_id=f"evt_mvp6_routing_eval_{suffix}_foreground_candidate",
+        source_module="foreground_buffer",
+        caused_by_event_id=str(fast_event["event_id"]),
+        created_monotonic_ms=1202,
+        created_wall_clock_ms=1700000001202,
+        trace_redaction_level="metadata_only",
+        candidate_id=f"candidate_mvp6_routing_eval_{suffix}",
+        fast_interaction_output_event_id=str(fast_event["event_id"]),
+        turn_id=str(fast_event["turn_id"]),
+        utterance_id=str(fast_event["utterance_id"]),
+        input_mode=str(fast_event["input_mode"]),
+        fast_interaction_input_mode=str(fast_event["fast_interaction_input_mode"]),
+        source_event_ids=(str(fast_event["event_id"]),),
+        candidate_ref=f"foreground-candidate://synthetic/mvp6/routing-eval/{suffix}",
+        candidate_status="complete",
+        risk_tags=("none",),
+        confidence=case.focus_confidence,
+    )
+
+
+def _foreground_gate_decision(gate_result: Any) -> str | None:
+    if gate_result is None:
+        return None
+    event_name = gate_result.gate_event.get("event_name")
+    if event_name == "FOREGROUND_ACT_GATE_PASSED":
+        return "passed"
+    if event_name == "FOREGROUND_ACT_GATE_FAILED":
+        return "failed"
+    return None
 
 
 def _router_context(case: RoutingGoldenCase) -> RouterContext:

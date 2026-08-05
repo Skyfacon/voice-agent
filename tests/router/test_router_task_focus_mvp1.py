@@ -176,6 +176,124 @@ def test_mvp1_router_accepts_real_asr_transcript_output_as_asr_evidence() -> Non
 
 
 @pytest.mark.parametrize(
+    ("input_mode", "caused_by_source"),
+    (
+        ("audio_native", "turn"),
+        ("asr_text_fallback", "asr"),
+    ),
+)
+def test_mvp1_router_accepts_fast_interaction_input_mode_causality(
+    input_mode: str,
+    caused_by_source: str,
+) -> None:
+    startup, turn_committed, asr_event, _thinker_event = _committed_turn_with_mock_frames(
+        suffix=f"fast_interaction_{input_mode}",
+    )
+    fast_event = startup.journal.append(
+        event_name="FAST_INTERACTION_OUTPUT_EMITTED",
+        event_id=f"evt_mvp1_slice2_fast_interaction_{input_mode}",
+        source_module="fast_interaction_adapter",
+        caused_by_event_id=(
+            turn_committed["event_id"] if caused_by_source == "turn" else asr_event["event_id"]
+        ),
+        created_monotonic_ms=1035,
+        created_wall_clock_ms=1700000001035,
+        trace_redaction_level="metadata_only",
+        adapter_id="mvp63_fast_interaction_runtime",
+        adapter_type="fast_interaction",
+        adapter_request_id=f"adapter_request_mvp1_slice2_fast_interaction_{input_mode}",
+        turn_id=turn_committed["turn_id"],
+        utterance_id=turn_committed["utterance_id"],
+        route_hint_ref=f"route-hint://synthetic/mvp1/slice2/{input_mode}",
+        route_prelude_ref=f"route-prelude://synthetic/mvp1/slice2/{input_mode}",
+        foreground_act="ANSWER",
+        final_fast_evidence_ref=f"fast-evidence://synthetic/mvp1/slice2/{input_mode}",
+        schema_name="voice_agent.fast_interaction.output.v1",
+        normalization_status="normalized",
+        output_mode="real",
+        input_modality=turn_committed["input_modality"],
+        input_mode=input_mode,
+        fast_interaction_input_mode=input_mode,
+        source_event_ids=(
+            (turn_committed["event_id"],)
+            if input_mode == "audio_native"
+            else (turn_committed["event_id"], asr_event["event_id"])
+        ),
+        route_decision_hint="FAST_ONLY",
+        task_focus_hint="FOREGROUND_CHAT",
+        risk_tags=("low_risk",),
+        risk_class="LOW",
+        confidence=0.91,
+    )
+
+    result = MVP1Router(startup.journal).emit_decision(
+        turn_committed_event=turn_committed,
+        asr_frame_event=asr_event,
+        fast_interaction_output_event=fast_event,
+        router_context=RouterContext(task_focus_snapshot=TaskFocusSnapshot()),
+        event_id=f"evt_mvp1_slice2_fast_interaction_{input_mode}_router_decision",
+        task_focus_state_event_id=f"evt_mvp1_slice2_fast_interaction_{input_mode}_focus_state",
+        created_monotonic_ms=1040,
+        created_wall_clock_ms=1700000001040,
+    )
+
+    assert result.router_decision_event["router_decision"] == "FAST_ONLY"
+    assert result.router_decision_event["fast_interaction_output_event_id"] == fast_event["event_id"]
+    assert result.router_decision_event["route_decision_hint"] == "FAST_ONLY"
+
+
+def test_mvp1_router_accepts_audio_native_fast_interaction_without_asr() -> None:
+    startup, turn_committed, _asr_event, _thinker_event = _committed_turn_with_mock_frames(
+        suffix="fast_interaction_audio_native_no_asr",
+    )
+    fast_event = startup.journal.append(
+        event_name="FAST_INTERACTION_OUTPUT_EMITTED",
+        event_id="evt_mvp1_slice2_fast_interaction_audio_native_no_asr",
+        source_module="fast_interaction_adapter",
+        caused_by_event_id=turn_committed["event_id"],
+        created_monotonic_ms=1035,
+        created_wall_clock_ms=1700000001035,
+        trace_redaction_level="metadata_only",
+        adapter_id="mvp63_fast_interaction_runtime",
+        adapter_type="fast_interaction",
+        adapter_request_id="adapter_request_mvp1_slice2_fast_interaction_audio_native_no_asr",
+        turn_id=turn_committed["turn_id"],
+        utterance_id=turn_committed["utterance_id"],
+        route_hint_ref="route-hint://synthetic/mvp1/slice2/audio-native-no-asr",
+        route_prelude_ref="route-prelude://synthetic/mvp1/slice2/audio-native-no-asr",
+        foreground_act="ANSWER",
+        final_fast_evidence_ref="fast-evidence://synthetic/mvp1/slice2/audio-native-no-asr",
+        schema_name="voice_agent.fast_interaction.output.v1",
+        normalization_status="normalized",
+        output_mode="real",
+        input_modality=turn_committed["input_modality"],
+        input_mode="audio_native",
+        fast_interaction_input_mode="audio_native",
+        source_event_ids=(turn_committed["event_id"],),
+        route_decision_hint="FAST_ONLY",
+        task_focus_hint="FOREGROUND_CHAT",
+        risk_tags=("low_risk",),
+        risk_class="LOW",
+        confidence=0.91,
+    )
+
+    result = MVP1Router(startup.journal).emit_decision(
+        turn_committed_event=turn_committed,
+        fast_interaction_output_event=fast_event,
+        router_context=RouterContext(task_focus_snapshot=TaskFocusSnapshot()),
+        event_id="evt_mvp1_slice2_fast_interaction_audio_native_no_asr_router_decision",
+        task_focus_state_event_id="evt_mvp1_slice2_fast_interaction_audio_native_no_asr_focus_state",
+        created_monotonic_ms=1040,
+        created_wall_clock_ms=1700000001040,
+    )
+
+    assert result.router_decision_event["router_decision"] == "FAST_ONLY"
+    assert result.router_decision_event["fast_interaction_output_event_id"] == fast_event["event_id"]
+    assert result.router_decision_event["evidence_ref_policy"] == "preserve_fast_ref"
+    assert "asr_frame_event_id" not in result.router_decision_event
+
+
+@pytest.mark.parametrize(
     "hint,expected_decision,expected_focus",
     [
         ("ACTIVE_TASK_PATCH", "PATCH_ACTIVE_SLOW_TASK", "ACTIVE_TASK_PATCH"),
