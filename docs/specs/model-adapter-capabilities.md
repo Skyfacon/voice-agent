@@ -287,3 +287,66 @@ Executable readiness gate:
 - MVP-3 runtime assembly 必须验证 ASR、Thinker、Slow LLM、TTS 各自至少有一个 required real profile。
 - MVP-3 runtime assembly 必须记录 `ADAPTER_CAPABILITY_SNAPSHOT_RECORDED`，且 snapshot 包含 adapter ids/types、deployment modes、output modes、capability version。
 - MVP-3 adapter health/error/degradation events 必须在 canonical event registry 中可验证。
+
+## 10. ADR-018 Post-ADR-017 / MVP6.x Slice 3B Profiles
+
+The accepted Route Evidence Adapter uses `adapter_type=route_evidence` and
+declares exactly these route/candidate-safety capability terms:
+
+```text
+supports_route_schema
+supports_task_focus
+supports_foreground_act_hint
+supports_ack_kind
+supports_candidate_safety_schema
+supports_prohibited_claim_detection
+supports_strict_json_validation
+supports_risk_tags
+supports_confidence
+```
+
+ASR profiles that perform the non-blocking native-audio shadow declare:
+
+```text
+supports_candidate_output_audio_shadow_verification
+```
+
+Qwen role/session profiles declare independently:
+
+```text
+supports_smart_turn
+supports_streaming_asr
+supports_provider_response_cancellation
+supports_provider_item_create
+supports_provider_item_delete_ack
+supports_manual_response_while_idle
+supports_text_only_response_override
+supports_candidate_quarantine
+supports_provider_native_audio_release
+supports_provider_context_readiness
+supports_context_rebuild
+```
+
+These profiles keep `documentation_support`,
+`provider_free_test_support`, `real_live_support`, and
+`status=real|mock|fallback|degraded` as separate fields. No field implies
+another.
+
+The Slice 3B.1 `ScriptedFakeQwenWire` profile is explicitly provider-free:
+
+```text
+status=mock
+output_mode=mock
+provider_free_test_support=true
+real_live_support=false
+supports_smart_turn=true
+supports_streaming_asr=true
+supports_candidate_quarantine=true
+supports_provider_native_audio_release=false
+```
+
+The three `supports_* = true` values describe only the Fake's deterministic
+protocol behavior. They do not qualify a provider, model, endpoint, account,
+region, prompt/profile, latency, cancellation behavior, or native PCM. The
+Slice 3B.1 runtime additionally enforces `native_pcm_enabled=false`; that is a
+runtime promotion gate, not a capability-profile field.

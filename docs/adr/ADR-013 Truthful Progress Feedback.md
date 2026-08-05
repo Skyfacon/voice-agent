@@ -169,3 +169,9 @@ MVP-2 必须验证：
 - “我先看一下”这类低承诺 filler 是否归为 `STYLE_ONLY_ACK`？
 - frontend 是否也展示 progress event，还是只用于语音反馈？
 - 重复等待状态下，最多多久播报一次避免打扰？
+
+## ADR-018 Accepted Addendum
+
+`SlowToFastHandoffV1` binds `task_id`, `plan_version`, and `task_event_seq`.
+Only current grounded progress can produce a handoff. Coalescing cannot
+manufacture progress. Response Arbiter disposition is replayable.

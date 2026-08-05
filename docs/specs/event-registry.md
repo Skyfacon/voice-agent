@@ -270,3 +270,52 @@ ADR-017 foreground events are canonical ADR-002 journal events. They record adap
 | `SPOKEN_PLAN_CREATED` | `SPOKEN_PLAN_EMITTED` | 非 canonical label，映射到 canonical composer event。 |
 
 如果 `*_CREATED` 或 `STALE_TOOL_RESULT_RECORDED` 必须成为 journal event name，必须先更新 ADR-002。
+
+## 8. ADR-018 Canonical Events
+
+These nine accepted events use the common event envelope and remain
+metadata/ref-only:
+
+| event_name | payload_owner | required_fields | causal_links | replay meaning | raw-content exclusion |
+| --- | --- | --- | --- | --- | --- |
+| `ROUTE_EVIDENCE_OUTPUT_EMITTED` | Route Evidence Adapter | adapter/request IDs, committed turn/utterance IDs, final ASR ref, context projection ref, route/task-focus/foreground-act/ACK hints, risk, confidence, schema, normalization, output mode | final ASR and route context projection after the same committed turn; precedes Router decision | replays non-authoritative route evidence without rerunning a model | no raw prompt, transcript, PCM, provider body, secret, or credential |
+| `CANDIDATE_SAFETY_EVIDENCE_OUTPUT_EMITTED` | Route Evidence Adapter | adapter/request IDs, turn/utterance/response IDs, transcript digest, context projection ref, `SAFE|UNSAFE|UNCERTAIN`, categories, prohibited flags, confidence, schema, normalization, output mode | complete correlated candidate transcript and candidate-safety context projection; precedes Gate | replays independent safety evidence without replacing Gate authority | no candidate text, raw PCM, prompt, provider body, secret, credential, or raw task state |
+| `MODEL_CONTEXT_PROJECTION_EMITTED` | Context Assembler | projection/role/source IDs, context snapshot, source sequence, provider generation, bounded projection ref, policy version, redaction status, output mode | current reducer/journal snapshot ending at source sequence | replays the immutable bounded projection and stale-snapshot boundary | no raw prompt, provider payload, PCM, secret, credential, tool output, private reasoning, or unredacted real-user text |
+| `SLOW_TO_FAST_HANDOFF_EMITTED` | Slow-to-Fast Bridge | handoff kind/mode, task/plan/sequence IDs, source IDs, fact/must-say/forbidden refs, priority, expiry, redaction status | canonical current-plan progress, clarification, confirmation, commitment, degraded, or failure events | replays the current-plan fact boundary without rerunning SlowTask or Composer | no raw Slow LLM reasoning, tool output, web evidence, provider body, secret, credential, or stale evidence |
+| `SLOW_TO_FAST_HANDOFF_DISPOSITIONED` | Response Arbiter / Slow-to-Fast Bridge | handoff ID, disposition, optional arbitration/replacement IDs, current task/plan/sequence, reason | handoff emission; selection also follows arbitration | replays queue/coalesce/select/stale/expire/cancel/discard; only selected may reach Composer | no handoff facts, raw text, PCM, provider body, secret, credential, or task/tool content |
+| `RESPONSE_ARBITRATION_DECIDED` | Per-session Response Arbiter | arbitration ID, selected source type/ref, superseded refs, provider generation, playback epoch, interaction-state version, reason | candidate/handoff/interrupt/delivery condition requiring a user-facing choice | replays the selected and superseded user-facing sources | no response text, raw audio, provider payload, secret, credential, or task/tool content |
+| `PROVIDER_CONTEXT_STATE_CHANGED` | Qwen Realtime Adapter / Session Runtime | adapter ID, provider generation, from/to state, reason, source refs, bounded cleanup/delete/drop metadata, output mode | cleanup ack/failure, correlation/shadow failure, rebuild, or Connect close | replays readiness, frame-drop window, cleanup, rebuild, and provider generation | no microphone frames, raw PCM, deleted content, provider body, session secret, credential, or authorization header |
+| `CANDIDATE_AUDIO_SHADOW_VERIFICATION_EMITTED` | Independent ASR Adapter / Candidate Audio Verifier | adapter/request and turn/utterance/response IDs, transcript and PCM-manifest digests, audio format/duration refs, independent transcript ref/digest, equivalence metadata, output mode | complete PCM manifest and candidate transcript; live shadow follows release and never gates that turn | replays qualification or non-blocking shadow outcome and later-turn disablement | digests/refs only; `CANDIDATE_AUDIO_SHADOW_VERIFICATION_EMITTED` never contains PCM |
+| `ASSISTANT_DELIVERY_DISPOSITIONED` | Delivery Reconciler / Talker Runtime | assistant/output/token/span refs, `PENDING` to `FULL|TRUNCATED|NOT_STARTED`, actual stop offset status, cleanup status, source refs | finish/commit, truncate, start failure, arbitration, epoch, rebuild, or interruption | replays exactly one terminal delivery outcome and the history boundary | refs/metadata only; `ASSISTANT_DELIVERY_DISPOSITIONED` never contains provider payloads |
+
+Compatibility rule:
+
+```text
+missing fast_interaction_topology => atomic_single_call
+fast_interaction_topology=speculative_candidate_parallel_route
+  => separate Qwen, route-evidence, candidate-safety, context-snapshot,
+     provider-generation, transcript-digest, and PCM-manifest provenance
+```
+
+## 9. ADR-018 Existing-Event Amendments
+
+These fields are conditional and additive. Historical events without
+`fast_interaction_topology` retain ADR-017 `atomic_single_call` meaning.
+
+| existing event | conditional parallel-topology amendment |
+| --- | --- |
+| `ASR_TRANSCRIPT_OUTPUT_EMITTED` | Qwen-backed turns add `provider_session_generation`, opaque `qwen_input_item_ref`, and `qwen_input_content_index`; the event is emitted only after local `TURN_INGRESS_COMMITTED` and the correlated provider transcription final have both occurred. |
+| `FAST_INTERACTION_OUTPUT_EMITTED` | With `fast_interaction_topology=speculative_candidate_parallel_route`, `source_module` and `payload_owner` are the local Fast Interaction Orchestrator. Add separate Qwen candidate adapter/request refs, route-evidence event/request refs, candidate-safety event/request refs, optional audio-shadow ref, `context_snapshot_id`, `provider_session_generation`, and normalization status. |
+| `FOREGROUND_REPLY_CANDIDATE_EMITTED` | Add topology, exact `qwen_response_id`, `qwen_output_item_id`, `qwen_output_index`, `qwen_content_index`, provider generation, context snapshot, `candidate_transcript_digest`, `candidate_pcm_manifest_digest`, audio format/duration, and optional shadow-event ref. |
+| `FOREGROUND_ACT_GATE_PASSED` | Add topology, candidate-check policy and individual results, provider generation, context snapshot, route/candidate-safety refs, exact correlation/digest results, and immutable `release_token_ref`. |
+| `FOREGROUND_ACT_GATE_FAILED` | Add the same topology, policy/check, generation, snapshot, evidence, correlation/digest, and optional release-token metadata needed to replay the fail-closed reason. |
+| `FOREGROUND_OUTPUT_COMMITTED` | Add topology and unchanged `release_token_ref`; provider-native PCM uses `user_visible_channel=audio_pending`. |
+| `PLAYBACK_SPAN_STARTED` | For provider-native PCM add unchanged `release_token_ref`, provider generation, response/output-item/output-index/content-index correlation, and playback epoch before first-byte delivery. |
+| `PLAYBACK_COMMITTED`, `PLAYBACK_FINISHED` | Add unchanged `release_token_ref` and preserve the actual delivery-offset chain used by `FULL` or `TRUNCATED` reconciliation. |
+| `TTS_TRUNCATED` | Add optional release-token and delivery-reconciliation refs plus causal linkage to terminal delivery disposition and provider cleanup. |
+
+Raw Qwen WebSocket events are adapter-local protocol messages. Do not register
+provider-specific names such as `QWEN_RESPONSE_CREATED`,
+`QWEN_AUDIO_DELTA_RECEIVED`, or `QWEN_ITEM_DELETED`; normalize only material
+control, evidence, cleanup, Gate, and delivery facts into the canonical events
+above.

@@ -27,6 +27,7 @@ accepted register。
 | ADR-015 | Repository Governance and AGENTS.md Rules | accepted | MVP-0 / MVP-1 / MVP-2 / MVP-3 | `docs/adr/ADR-015 Repository Governance and AGENTS.md Rules.md` |
 | ADR-016 | SlowTask Lifecycle and Confirmation State Contract | accepted | MVP-1 / MVP-2 | `docs/adr/ADR-016 SlowTask Lifecycle and Confirmation State Contract.md` |
 | ADR-017 | Fast Interaction Adapter and Foreground Act Contract | accepted | MVP-3+ / MVP6 fast foreground | `docs/adr/ADR-017 Fast Interaction Adapter and Foreground Act Contract.md` |
+| ADR-018 | Single-session Qwen Realtime, Parallel Route Evidence, and Slow-to-Fast Context Projection | accepted | Post-ADR-017 / MVP6.x Slice 3B | `docs/adr/ADR-018 Single-session Qwen Realtime Parallel Route Evidence and Slow-to-Fast Context Projection.md` |
 
 ## 使用规则
 

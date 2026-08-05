@@ -227,3 +227,10 @@ MVP-2 必须验证：
 - 低风险闲聊 / 轻问答绕过 SemanticCommitment 的条件由 ADR-017 Fast Foreground Gate 定义；开放点只剩 fast foreground output 是否总是包装成 SpokenPlan。
 - Composer 多次失败后的 degraded response 模板如何定义？
 - `must_say_fields` 是否允许在多段 SpokenPlan 中分步覆盖？
+
+## ADR-018 Accepted Addendum
+
+For Post-ADR-017 / MVP6.x Slice 3B, same-session Composer uses a distinct
+prompt/profile and context projection. Phase-one Composer output is text-only.
+SlowTask immutable facts and `must_say_fields` remain authoritative. Approved
+text goes through existing truthfulness/coverage checks before TTS.
