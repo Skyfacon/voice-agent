@@ -7,6 +7,11 @@ import json
 import re
 from typing import Any
 
+from voice_agent.privacy.redaction import (
+    is_safe_release_token_id,
+    is_safe_release_token_ref,
+)
+
 
 DIGEST_SCHEMA_VERSION = "1.0"
 SAFE_SENSITIVE_METADATA_KEYS = frozenset(
@@ -20,6 +25,8 @@ SAFE_SENSITIVE_METADATA_KEYS = frozenset(
         "authorization_basis",
         "authorization_event_id",
         "secret_kind",
+        "release_token_id",
+        "release_token_ref",
     }
 )
 RAW_OR_SENSITIVE_KEY_PATTERN = re.compile(
@@ -55,6 +62,7 @@ def state_digest(
     spoken_plan_state: Any | None = None,
     spoken_plan_check_state: Any | None = None,
     foreground_authority: Any | None = None,
+    qwen_parallel_state: Any | None = None,
 ) -> dict[str, Any]:
     digest_without_overall: dict[str, Any] = {
         "digest_schema_version": DIGEST_SCHEMA_VERSION,
@@ -75,6 +83,10 @@ def state_digest(
     if foreground_authority is not None:
         digest_without_overall["foreground_authority_hash"] = stable_hash(
             foreground_authority
+        )
+    if qwen_parallel_state is not None:
+        digest_without_overall["qwen_parallel_state_hash"] = stable_hash(
+            qwen_parallel_state
         )
     return {
         **digest_without_overall,
@@ -98,11 +110,14 @@ def canonical_digest_payload(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return canonical_digest_payload(asdict(value))
     if isinstance(value, Mapping):
-        return {
-            str(key): canonical_digest_payload(child)
-            for key, child in sorted(value.items(), key=lambda item: str(item[0]))
-            if not _is_sensitive_digest_key(str(key))
-        }
+        canonical: dict[str, Any] = {}
+        for key, child in sorted(value.items(), key=lambda item: str(item[0])):
+            key_text = str(key)
+            if _is_sensitive_digest_key(key_text):
+                continue
+            _validate_safe_sensitive_metadata(key_text, child)
+            canonical[key_text] = canonical_digest_payload(child)
+        return canonical
     if isinstance(value, (list, tuple)):
         return [canonical_digest_payload(item) for item in value]
     return value
@@ -112,3 +127,14 @@ def _is_sensitive_digest_key(key: str) -> bool:
     if key in SAFE_SENSITIVE_METADATA_KEYS:
         return False
     return RAW_OR_SENSITIVE_KEY_PATTERN.search(key) is not None
+
+
+def _validate_safe_sensitive_metadata(key: str, value: Any) -> None:
+    if key == "release_token_id" and (
+        not isinstance(value, str) or not is_safe_release_token_id(value)
+    ):
+        raise ValueError("release_token_id is not safe digest metadata")
+    if key == "release_token_ref" and (
+        not isinstance(value, str) or not is_safe_release_token_ref(value)
+    ):
+        raise ValueError("release_token_ref is not safe digest metadata")
